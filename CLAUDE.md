@@ -2,37 +2,11 @@
 
 Apply these standards when writing, reviewing, or refactoring code in any PAI Python project.
 
----
-
-## Using this template
-
-When starting a new project from this template, complete these steps in order.
-
-**1. Global find-and-replace** (in the order shown — `myproject` last to avoid partial matches):
-
-| Find | Replace with | Notes |
-|---|---|---|
-| `agri-template` | your GitHub repository name | badge/logo URLs in `README.md`, comment in `.github/workflows/ci.yml`, issue template links |
-| `pai-myproject` | your distribution name (kebab-case, e.g. `pai-ag-emb`) | `pyproject.toml` `[project]` name and `[project.scripts]`, PyPI badge URLs |
-| `PAI MyProject` | your human-readable project name | `pyproject.toml` description, `docs/conf.py`, `docs/index.rst`, `docs/modules.rst` |
-| `myproject` | your project namespace (snake_case, e.g. `ag_emb`) | all Python source files, all `docs/` files, `pyproject.toml` |
-
-The `precisionai` top-level namespace package is **fixed** across all PAI Python projects — never rename it. Your project lives at `precisionai/<namespace>/`.
-
-**2. Update `pyproject.toml`:**
-- `description` — one-line description of what this project does
-- `dependencies` — remove FastAPI/uvicorn if not building an API; add domain-specific deps
-- `keywords`, `classifiers`, `[project.urls]` — adjust for your domain and repository
-
-**3. Replace the hello-world scaffold** in `precisionai/<namespace>/` with real domain logic, following the layer rules documented in [Project layout](#project-layout) below.
-
-**4. Update `docs/`** — `conf.py` project name and header, `index.rst` and `modules.rst` autodoc references.
-
-**5. Review `LICENSE.md`** — update the copyright year if needed. The license is Apache 2.0.
-
-**6. Seed `CHANGELOG.md`** with your first release notes under `[Unreleased]` — see [Releasing](#releasing).
-
-**7. Remove this section** from `CLAUDE.md` once setup is complete.
+This repository (`dataviz`) was migrated from an existing, working application rather than
+started from this template, so it does not meet every rule below yet — see CONTRIBUTING.md's
+**Known gaps** section for the specific, tracked deviations (test coverage, a ruff/pyright
+backlog, Flask instead of FastAPI, colocated tests). Everything else in this document is the
+standard new code should follow.
 
 ---
 

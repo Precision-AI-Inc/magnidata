@@ -1,10 +1,13 @@
-PAI MyProject
-=============
+PAI DataViz
+===========
 
-Welcome to the **PAI MyProject** documentation.
+Welcome to the **PAI DataViz** documentation.
 
-- The **Getting started** chapter is the project README: installation, API usage, and example scripts.
-- The **Module Reference** chapter documents the full ``precisionai.myproject`` API — metrics, services, schemas, and routes.
+- The **Getting started** chapter is the project README: installation, running the API
+  and dashboard, and the feature-extraction/embeddings CLI.
+- The **Module Reference** chapter documents the ``precisionai.agriviz`` Python package
+  — the Flask API and the feature-extraction/embeddings toolkit. The React dashboard is
+  documented separately in ``precisionai/agriviz/dashboard``.
 
 Contents
 --------

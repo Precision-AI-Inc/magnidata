@@ -1,0 +1,108 @@
+/* ═══════════════════════════════════════════════════════════
+   Precision AI — CSV Feature Explorer
+   All brand colors, surfaces, text, borders, spacing, and radii come from the
+   shared Precision AI design-token layer (index.html links
+   https://embeddings.precision.ai/ui/tokens.css) — including light/dark theme
+   switching and the --c-* aliases this file already used. Nothing is redefined
+   here; that file is the single source of truth, so this app never drifts from
+   the other Precision AI surfaces (Landing, Explorer, Portal).
+═══════════════════════════════════════════════════════════ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+
+body {
+  background: var(--c-bg);
+  color: var(--c-t1);
+  font-family: var(--font);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbars ──────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 5px; height: 5px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: var(--c-border-2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--c-t3); }
+
+/* ── Utility classes ─────────────────────────────────────── */
+.surface      { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 10px; }
+.surface-sm   { background: var(--c-surface); border: 1px solid var(--c-border); border-radius: 7px; }
+.btn-primary  {
+  background: var(--c-accent); color: #fff; border: none;
+  padding: 6px 14px; border-radius: 7px; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  transition: background .15s;
+}
+.btn-primary:hover { background: var(--c-accent-h); }
+.btn-ghost {
+  background: transparent; color: var(--c-t2); border: 1px solid var(--c-border);
+  padding: 5px 12px; border-radius: 7px; font-size: 12px; font-weight: 500;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  transition: background .15s, border-color .15s;
+}
+.btn-ghost:hover { background: var(--c-raised); border-color: var(--c-border-2); }
+.btn-icon {
+  background: transparent; border: none; padding: 5px;
+  border-radius: 6px; cursor: pointer; color: var(--c-t3);
+  display: inline-flex; align-items: center; transition: background .15s, color .15s;
+}
+.btn-icon:hover { background: var(--c-raised); color: var(--c-t1); }
+
+/* ── Range slider ────────────────────────────────────────── */
+input[type=range] { accent-color: var(--c-accent); }
+
+/* ── Tab bar ─────────────────────────────────────────────── */
+.tab-bar {
+  display: flex; align-items: stretch; gap: 0; padding: 0;
+  background: var(--c-surface);
+  border-bottom: 2px solid var(--c-border);
+  border-radius: 0 !important;   /* override any inline borderRadius */
+  overflow-x: auto;              /* tabs stay reachable on narrow screens */
+}
+.tab-item { flex-shrink: 0; }    /* scroll the bar instead of squishing tabs */
+.tab-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 9px 18px; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; color: var(--c-t3); border: none; background: transparent;
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  transition: color .15s, border-color .15s, background .15s;
+  white-space: nowrap;
+}
+.tab-item:hover { color: var(--c-t1); background: var(--c-hover); }
+.tab-item[data-active="true"] {
+  color: var(--c-accent); border-bottom-color: var(--c-accent);
+  font-weight: 600; background: transparent;
+}
+
+/* ── Modal backdrop / box ────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0; background: rgba(1,55,85,.55);
+  backdrop-filter: blur(4px); z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  background: var(--c-surface); border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(1,55,85,.35); overflow: hidden;
+}
+
+/* ── Loading spinner ─────────────────────────────────────── */
+.loading-spinner {
+  width: 36px; height: 36px; margin: 0 auto;
+  border: 3px solid var(--c-border); border-top-color: var(--c-accent);
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Play button ─────────────────────────────────────────── */
+.play-btn {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--c-accent-light); border: 1.5px solid var(--c-accent);
+  color: var(--c-accent); cursor: pointer; display: flex; align-items: center;
+  justify-content: center; flex-shrink: 0; transition: background .15s, transform .1s;
+}
+.play-btn:hover { background: var(--c-accent); color: #fff; transform: scale(1.1); }

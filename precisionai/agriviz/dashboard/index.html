@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/png" href="/logo.png" />
+    <title>Precision AI — Visual Intelligence Framework</title>
+
+    <!-- Apply a persisted theme before paint (shared 'pai-theme' key across every
+         Precision AI surface — see https://embeddings.precision.ai/ui/tokens.css);
+         absent = follow the OS `prefers-color-scheme`. Copied verbatim from the
+         reference site so behavior matches exactly. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('pai-theme');
+          if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- Inter webfont (brand spec: Inter with a system fallback stack). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <!-- The one shared Precision AI design-token layer (brand palette, light+dark,
+         focus ring, shared app-shell header) — the same file the reference site
+         and the other Precision AI surfaces (Portal, the "real" AgriViz) link. -->
+    <link rel="stylesheet" href="https://embeddings.precision.ai/ui/tokens.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

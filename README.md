@@ -1,145 +1,131 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Precision-AI-Inc/agri-template/main/docs/assets/logo.png" alt="Precision AI Logo" width="120"/>
+  <img src="https://raw.githubusercontent.com/Precision-AI-Inc/dataviz/main/docs/assets/logo.png" alt="Precision AI Logo" width="120"/>
 </p>
 
-# PAI Agricultural Project Template
+# dataviz
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
-[![PyPI](https://img.shields.io/pypi/v/pai-myproject.svg?include_prereleases)](https://pypi.org/project/pai-myproject/)
-[![Python](https://img.shields.io/pypi/pyversions/pai-myproject.svg?include_prereleases)](https://pypi.org/project/pai-myproject/)
+[![PyPI](https://img.shields.io/pypi/v/pai-dataviz.svg?include_prereleases)](https://pypi.org/project/pai-dataviz/)
+[![Python](https://img.shields.io/pypi/pyversions/pai-dataviz.svg?include_prereleases)](https://pypi.org/project/pai-dataviz/)
 
 ---
 
-> **Template repository.** Replace every occurrence of `myproject` / `pai-myproject` / `PAI MyProject` with your actual project name, and update the badge/logo URLs above to point to your repository on GitHub. Leave the `precisionai` top-level namespace as-is.
+An interactive visual-query dashboard for exploring image datasets: a deterministic
+feature-extraction pipeline, a Flask API, and a React/Three.js dashboard for browsing
+images, segmentation masks, and embeddings — including a live 3D PCA/t-SNE/cluster
+view over a dataset's embedding space.
 
-This repository is the canonical starting point for new Precision AI Python projects. It ships with:
+- **`precisionai/agriviz/tools/`** — a domain-agnostic feature extractor: turns a folder of
+  images (optionally with COCO-format segmentation annotations) into a single CSV of
+  per-image complexity/quality/coverage metrics, plus an optional embeddings generator
+  (DINOv2 by default) producing a matching JSON.
+- **`precisionai/agriviz/api/`** — a Flask API serving images/masks/overlays, dataset
+  listing and CSV/embeddings access, server-side PCA/t-SNE/LLE projection and clustering
+  over embeddings, and an in-app dataset-build pipeline (upload your own images, or
+  one-click "demo" builds of COCO128 / AgriStress-500).
+- **`precisionai/agriviz/dashboard/`** — the React + Vite + Three.js portal: parallel
+  coordinates, histograms, a data table, an image/mask/overlay preview, and the 3D
+  embeddings view.
 
-- A working `precisionai/myproject/` package demonstrating the full layer stack: metrics → services → schemas → API (FastAPI included as one example; remove or replace it for non-API projects)
-- **Pre-commit hooks** that enforce ruff lint/format, pyright type checking, and ≥ 90% test coverage on every commit
-- **GitHub Actions** CI/CD — pre-commit + test matrix on every PR, PyPI + GitHub Release publishing on tag push
-- **Sphinx** documentation scaffolding (HTML + LaTeX/PDF)
-- A standalone **example script** and a complete **test suite** to validate the template is functional out of the box
-
-Coding standards, naming conventions, and tooling configuration are governed by [CLAUDE.md](CLAUDE.md). All new code in any PAI project must conform to those standards.
-
----
-
-## Quickstart — rename the template
-
-Global find-and-replace in this order (`myproject` last to avoid partial matches):
-
-| Find | Replace with |
-|---|---|
-| `agri-template` | your GitHub repository name |
-| `pai-myproject` | your distribution name (kebab-case, e.g. `pai-ag-emb`) |
-| `PAI MyProject` | your human-readable project name |
-| `myproject` | your project namespace (snake_case, e.g. `ag_emb`) |
-
-The `precisionai` top-level package is fixed across all PAI Python projects — do not rename it.
-
-Then:
-
-1. Update `pyproject.toml` `description` and `dependencies` for your domain.
-2. Replace `precisionai/myproject/` business logic with your domain logic.
-3. Update `docs/conf.py` header string and `docs/index.rst` / `docs/modules.rst` autodoc references.
-4. Update `CHANGELOG.md` with your first release notes.
-5. Remove the **Using this template** section from `CLAUDE.md`.
-
-See [CLAUDE.md](CLAUDE.md) for the full step-by-step template setup guide.
+Coding standards, naming conventions, and tooling configuration for the Python side are
+governed by [CLAUDE.md](CLAUDE.md). This repository was migrated from an existing,
+working application rather than started from a blank template — see
+[CONTRIBUTING.md](CONTRIBUTING.md#known-gaps) for the specific places it doesn't yet meet
+every standard there.
 
 ---
 
-## Installation
+## Quickstart — run the full stack
+
+```bash
+git clone git@github.com:Precision-AI-Inc/dataviz.git
+cd dataviz
+docker compose up --build
+#   portal -> http://localhost:5175
+#   api    -> http://localhost:5051/api/health
+```
+
+The dataset catalog (`precisionai/agriviz/confi.yaml`) ships empty. From the portal's
+"Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or
+AgriStress-500 — no external data required), or upload your own images. See
+[`precisionai/agriviz/README.md`](precisionai/agriviz/README.md) for the full breakdown
+of the app's layout, data mounts, and how to register a permanent catalog entry.
+
+---
+
+## Installation (Python package only)
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 
-# Runtime only
-pip install -r requirements.txt
+# API + feature-extraction toolkit
+pip install -e .
 
-# Full development (tests, pre-commit, type checking)
+# + offline embeddings generation and learned image-quality scoring (torch/timm/pyiqa)
+pip install -e ".[ml]"
+
+# Full development install (tests, pre-commit, type checking)
 pip install -e ".[dev]"
 pre-commit install
+```
+
+The dashboard is a separate Node/Vite app (Node 18+) — see
+[`precisionai/agriviz/dashboard`](precisionai/agriviz/dashboard):
+
+```bash
+cd precisionai/agriviz/dashboard
+npm install
+npm run dev   # proxies /api to http://localhost:5051 by default — see vite.config.ts
 ```
 
 ---
 
 ## Running the API server
 
-```bash
-# Default: host 0.0.0.0, port 8000
-pai-myproject
-
-# Or explicitly
-python -m precisionai.myproject.api.app --host 0.0.0.0 --port 8000 --no-reload
-
-# Interactive docs
-open http://localhost:8000/docs
-```
-
-### `POST /v1/hello`
-
-```json
-{
-  "name": "Precision AI",
-  "shout": false
-}
-```
-
-Response:
-
-```json
-{
-  "greeting": "Hello, Precision AI!",
-  "word_count": 3,
-  "char_count": 20
-}
-```
-
----
-
-## Python SDK usage
-
-```python
-from precisionai.myproject.services.hello import say_hello, describe
-from precisionai.myproject.metrics.compute import word_count, char_count
-
-# Call the service layer directly (no HTTP)
-greeting = say_hello("Precision AI")
-print(greeting)                  # Hello, Precision AI!
-
-result = describe("Precision AI", shout=True)
-print(result["greeting"])        # HELLO, PRECISION AI!
-print(result["word_count"])      # 3
-print(result["char_count"])      # 21
-```
-
----
-
-## Standalone example script
+The primary path is Docker Compose (see Quickstart above). To run it directly instead —
+note this must be run **from within `precisionai/agriviz/api/`**, not as an installed
+package: its modules use flat, sibling-style imports (`import db`, `import local_files`)
+matching how `Dockerfile.api` copies them into the container, so `python -m
+precisionai.agriviz.api.app` will not work.
 
 ```bash
-python examples/example.py
-python examples/example.py --name "Precision AI" --shout
+cd precisionai/agriviz/api
+pip install -r requirements.txt
+python app.py          # default: host 0.0.0.0, port 5050 (override with API_PORT)
 ```
+
+`./start.sh` does the same, plus creating/activating a local `.venv` first.
+
+## Feature extraction & embeddings CLI
+
+```bash
+python -m precisionai.agriviz.tools.features --input data/mydata.csv --output out.csv
+python -m precisionai.agriviz.tools.embeddings --input data/mydata.csv --output data/mydata.json
+```
+
+See [`precisionai/agriviz/tools/README.md`](precisionai/agriviz/tools/README.md) for the
+full column schema and flags, and
+[`precisionai/agriviz/docs/data-contract.md`](precisionai/agriviz/docs/data-contract.md)
+for the CSV/embeddings-JSON formats the dashboard consumes — including how to bring your
+own data that conforms.
+[`precisionai/agriviz/docs/recipes/from-images-to-dashboard.md`](precisionai/agriviz/docs/recipes/from-images-to-dashboard.md)
+walks through turning a raw folder of images into a dashboard-ready dataset end to end.
 
 ---
 
 ## Testing
 
 ```bash
-# Run all tests with coverage report
-python -m pytest
-
-# Run a specific module
-pytest tests/test_hello.py
-
-# Run tests matching a keyword
-pytest -k "shout"
+python -m pytest                                          # run all tests with coverage report
+pytest precisionai/agriviz/tools/test_features.py          # run a specific module
+pytest -k "coverage"                                        # run tests matching a keyword
 ```
 
-Coverage must remain at or above **90%** — enforced by pytest and the pre-commit hook.
+Tests are colocated with the module they cover (`precisionai/agriviz/**/test_*.py`), not
+under a top-level `tests/` — see [CONTRIBUTING.md](CONTRIBUTING.md#known-gaps). Coverage
+is enforced at 60% (measured at 63.2% at migration time), short of the org's 90% target —
+also tracked there.
 
 ---
 
@@ -148,10 +134,10 @@ Coverage must remain at or above **90%** — enforced by pytest and the pre-comm
 | Hook | What it checks |
 |---|---|
 | File hygiene | Large files (> 1800 KB), trailing whitespace, merge conflicts, private keys, debug statements, BOM removal |
-| `ruff` | Linting and import sorting (auto-fix) |
+| `ruff` | Linting and import sorting (auto-fix) on the files you touch |
 | `ruff-format` | Code formatting (auto-fix) |
 | `pyright` | Static type checking |
-| `pytest` | Full test suite with ≥ 90% coverage |
+| `pytest` | Full test suite with a coverage floor |
 
 Run all hooks manually without committing:
 
@@ -164,21 +150,20 @@ pre-commit run --all-files
 ## Project layout
 
 ```
-precisionai/myproject/
-  api/
-    routes/         # FastAPI route handlers (thin — delegate to services)
-    config.py       # Environment-variable configuration only
-    app.py          # FastAPI app factory + CLI entry point
-  schemas/          # Pydantic v2 request/response models
-  services/         # Business logic
-  metrics/          # Pure computation modules (no I/O)
-    __init__.py     # Re-exports only — no logic
-docs/               # Sphinx (HTML + LaTeX/PDF)
-tests/              # Mirrors package structure
-examples/           # Standalone runnable scripts
+precisionai/agriviz/
+  api/          Flask API — images/masks/overlays, dataset listing, embedding
+                projection/clustering, in-app dataset builds
+  tools/        Feature extractor (images [+ COCO annotations] -> CSV) and
+                embeddings generator (images -> JSON) — see tools/README.md
+  scripts/      Standalone dataset-preparation scripts (e.g. the COCO128 demo)
+  dashboard/    React + Vite + Three.js portal, served by nginx in Docker
+  docs/         data-contract.md and recipes/ — file formats and end-to-end guides
+  confi.yaml    Dataset registry (which CSVs the portal lists)
+Dockerfile.api, Dockerfile.dashboard, docker-compose.yml   at the repo root
+docs/           Sphinx (HTML + LaTeX/PDF) for the Python package
 ```
 
-See [CLAUDE.md](CLAUDE.md) for the full coding standard covering imports, docstrings, type hints, testing, and what to avoid.
+See [CLAUDE.md](CLAUDE.md) for the full coding standard covering imports, docstrings, type hints, testing, and what to avoid — and [CONTRIBUTING.md](CONTRIBUTING.md#known-gaps) for where this repo currently deviates from it.
 
 ---
 
@@ -192,16 +177,6 @@ make clean      # Remove build artefacts
 ```
 
 Dependencies: `pip install -r docs/requirements.txt`
-
----
-
-## Environment variables
-
-| Variable | Default | Description |
-|---|---|---|
-| `PAI_APP_ENV` | `development` | Application environment (`development`, `staging`, `production`) |
-
-Add project-specific variables to `precisionai/myproject/api/config.py` following the same pattern.
 
 ---
 
@@ -219,7 +194,7 @@ To report a security vulnerability, see [SECURITY.md](SECURITY.md). Do not open 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, branching, and PR guidelines, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations. [CLAUDE.md](CLAUDE.md) documents the code style and conventions enforced in this repo.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, branching, and PR guidelines, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations. [CLAUDE.md](CLAUDE.md) documents the code style and conventions this repo targets.
 
 ---
 

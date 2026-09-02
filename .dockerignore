@@ -1,0 +1,11 @@
+# Applies to the repo-root build context (currently just the `api` service —
+# see docker-compose.yml). Keeps the context upload small; none of this is ever
+# COPYed by Dockerfile.api anyway.
+.git
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+precisionai/agriviz/dashboard/node_modules
+precisionai/agriviz/dashboard/dist
+precisionai/agriviz/api/.venv

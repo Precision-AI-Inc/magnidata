@@ -1,0 +1,158 @@
+.help-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  gap: 48px;
+  padding: 48px 24px 80px;
+}
+
+.help-toc {
+  flex-shrink: 0;
+  width: 190px;
+  position: sticky;
+  top: 48px;
+  align-self: flex-start;
+  display: none;
+}
+
+@media (min-width: 900px) {
+  .help-toc { display: block; }
+}
+
+.help-toc-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--c-t3);
+  margin-bottom: 10px;
+}
+
+.help-toc nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-left: 2px solid var(--c-border);
+}
+
+.help-toc-link {
+  text-align: left;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  margin-left: -2px;
+  padding: 6px 0 6px 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--c-t3);
+  cursor: pointer;
+}
+
+.help-toc-link:hover { color: var(--c-t1); }
+
+.help-toc-link--active {
+  color: var(--c-accent);
+  border-left-color: var(--c-accent);
+  font-weight: 600;
+}
+
+.help-content {
+  width: 100%;
+  max-width: 680px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--c-t2);
+}
+
+.help-page-header {
+  margin-bottom: 36px;
+}
+
+.help-page-header h1 {
+  margin: 0 0 8px;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  color: var(--c-t1);
+}
+
+.help-page-header p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--c-t3);
+}
+
+.help-content section {
+  margin-bottom: 40px;
+  scroll-margin-top: 24px;
+}
+
+.help-content h2 {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--c-t1);
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.help-content h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--c-t1);
+  margin: 22px 0 8px;
+}
+
+.help-content p {
+  margin: 0 0 12px;
+}
+
+.help-content ul,
+.help-content ol {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}
+
+.help-content li {
+  margin-bottom: 6px;
+}
+
+.help-content code {
+  background: var(--c-raised);
+  border: 1px solid var(--c-border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  color: var(--c-accent);
+}
+
+.help-content pre {
+  background: var(--c-raised);
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+}
+
+.help-content pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--c-t1);
+}
+
+.help-cta {
+  margin-top: 4px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  border: none;
+  background: var(--c-accent);
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}

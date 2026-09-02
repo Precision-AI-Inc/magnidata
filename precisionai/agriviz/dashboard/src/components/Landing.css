@@ -1,0 +1,178 @@
+.landing-root {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 72px 24px;
+}
+
+/* ── Hero — MagniData, the main workspace ──────────────────────────── */
+.landing-hero {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 40px;
+  padding: 36px 32px 30px;
+  border-radius: 18px;
+  border: 1px solid var(--c-border);
+  background:
+    radial-gradient(480px 260px at 88% 12%, rgba(41, 204, 165, 0.14), transparent 62%),
+    linear-gradient(135deg, var(--c-surface) 0%, var(--c-bg) 100%);
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.landing-hero:hover {
+  border-color: var(--pai-green);
+  box-shadow: var(--shadow, 0 8px 24px rgba(0,0,0,0.08));
+  transform: translateY(-2px);
+}
+
+.landing-hero-motif {
+  position: absolute;
+  right: -8%;
+  top: -12%;
+  width: 60%;
+  height: auto;
+  pointer-events: none;
+}
+
+.landing-hero-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  color: #fff;
+  background: linear-gradient(140deg, var(--pai-teal, #006A7C) 0%, var(--pai-green, #29CCA5) 100%);
+}
+
+.landing-hero-body {
+  position: relative;
+}
+
+.landing-hero-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--c-accent);
+  margin-bottom: 8px;
+}
+
+.landing-hero h1 {
+  margin: 0 0 8px;
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: -.02em;
+  color: var(--c-t1);
+}
+
+.landing-hero-tagline {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--c-accent);
+}
+
+.landing-hero-desc {
+  margin: 0;
+  max-width: 44ch;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--c-t3);
+}
+
+.landing-hero-cta {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 20px;
+  padding: 9px 16px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--c-accent);
+}
+
+.landing-more-label {
+  width: 100%;
+  max-width: 600px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--c-t3);
+  margin-bottom: 8px;
+}
+
+.landing-cards {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  width: 100%;
+  max-width: 600px;
+}
+
+.landing-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  padding: 18px;
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+  background: var(--c-surface);
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.landing-card:hover {
+  border-color: var(--pai-green);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08));
+  transform: translateY(-1px);
+}
+
+.landing-card-icon {
+  color: var(--c-accent);
+  margin-bottom: 10px;
+}
+
+.landing-card-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--c-t1);
+  margin-bottom: 4px;
+}
+
+.landing-card-desc {
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--c-t3);
+  margin-bottom: 12px;
+}
+
+.landing-card-link {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--c-accent);
+}
+
+@media (max-width: 480px) {
+  .landing-cards { grid-template-columns: 1fr; }
+}

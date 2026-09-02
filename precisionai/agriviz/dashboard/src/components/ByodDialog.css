@@ -1,0 +1,185 @@
+.byod-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.byod-panel {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: 12px;
+  width: 460px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+}
+
+.byod-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--c-border);
+}
+
+.byod-header h3 {
+  margin: 0;
+  flex: 1;
+  font-size: 14px;
+  color: var(--c-t1);
+}
+
+.byod-back,
+.byod-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--c-t3);
+  padding: 4px;
+  display: flex;
+}
+
+.byod-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.byod-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--c-border);
+  background: var(--c-raised);
+  color: var(--c-t1);
+  cursor: pointer;
+  text-align: left;
+}
+
+.byod-choice:hover {
+  border-color: var(--c-accent);
+}
+
+.byod-choice-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.byod-choice-desc {
+  font-size: 11.5px;
+  color: var(--c-t3);
+  margin-top: 2px;
+}
+
+.byod-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--c-t2);
+}
+
+.byod-field input,
+.byod-field select {
+  font-size: 12px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--c-border);
+  background: var(--c-raised);
+  color: var(--c-t1);
+  outline: none;
+}
+
+.byod-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed var(--c-border);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--c-t2);
+  font-size: 12px;
+}
+
+.byod-hint {
+  font-size: 12px;
+  color: var(--c-t3);
+}
+
+.byod-error {
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.byod-demo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.byod-demo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--c-border);
+  background: var(--c-raised);
+}
+
+.byod-demo-row--disabled {
+  opacity: 0.6;
+}
+
+.byod-demo-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--c-t1);
+}
+
+.byod-demo-desc {
+  font-size: 11px;
+  color: var(--c-t3);
+  margin-top: 2px;
+}
+
+.byod-demo-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--c-accent);
+}
+
+.byod-submit {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+  color: var(--c-t1);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.byod-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.byod-submit--primary {
+  padding: 9px 12px;
+  border-color: var(--c-accent);
+  background: var(--c-accent);
+  color: #fff;
+}

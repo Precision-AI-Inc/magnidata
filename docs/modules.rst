@@ -1,74 +1,88 @@
 Module Reference
-================
+=================
 
-API documentation for the ``precisionai.myproject`` package — metrics, services, schemas, and routes.
+API documentation for the ``precisionai.agriviz`` package. The Flask API
+(``precisionai.agriviz.api``) uses flat, sibling-style imports by design — matching how
+``Dockerfile.api`` deploys it — so it can't be run as an installed console script; see
+README.md for how to run it. The React dashboard (``precisionai/agriviz/dashboard``) is
+not part of this Python package and is not documented here.
 
-precisionai.myproject.metrics
-------------------------------
+precisionai.agriviz.tools
+--------------------------
 
-Top-level re-exports from the metrics package.
+The feature-extraction and embeddings toolkit — pure, importable modules.
 
-.. automodule:: precisionai.myproject.metrics
+.. automodule:: precisionai.agriviz.tools.features
    :members:
    :undoc-members:
    :show-inheritance:
 
-precisionai.myproject.metrics.compute
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Pure computation utilities (stateless functions, no I/O).
-
-.. automodule:: precisionai.myproject.metrics.compute
+.. automodule:: precisionai.agriviz.tools.embeddings
    :members:
    :undoc-members:
    :show-inheritance:
 
-precisionai.myproject.services.hello
---------------------------------------
-
-Business logic for greeting operations.
-
-.. automodule:: precisionai.myproject.services.hello
+.. automodule:: precisionai.agriviz.tools.embedding_models
    :members:
    :undoc-members:
    :show-inheritance:
 
-precisionai.myproject.schemas.hello
---------------------------------------
-
-Pydantic request and response schemas for the hello endpoint.
-
-.. automodule:: precisionai.myproject.schemas.hello
+.. automodule:: precisionai.agriviz.tools.coco_labels
    :members:
    :undoc-members:
    :show-inheritance:
 
-precisionai.myproject.api.routes.hello
-------------------------------------------
-
-FastAPI route handler for ``POST /v1/hello``.
-
-.. automodule:: precisionai.myproject.api.routes.hello
+.. automodule:: precisionai.agriviz.tools.pixel_features
    :members:
    :undoc-members:
    :show-inheritance:
 
-precisionai.myproject.api.config
-------------------------------------
-
-Environment-variable configuration.
-
-.. automodule:: precisionai.myproject.api.config
+.. automodule:: precisionai.agriviz.tools.instance_features
    :members:
    :undoc-members:
    :show-inheritance:
 
-precisionai.myproject.api.app
-------------------------------------
+.. automodule:: precisionai.agriviz.tools.quality_features
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
-FastAPI application factory and CLI entry point.
+.. automodule:: precisionai.agriviz.tools.nima
+   :members:
+   :undoc-members:
+   :show-inheritance:
 
-.. automodule:: precisionai.myproject.api.app
+.. automodule:: precisionai.agriviz.tools.metadata_join
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.agriviz.tools.image_source
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.agriviz.tools.staging
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.agriviz.tools.provenance
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.agriviz.tools.schema
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+precisionai.agriviz.scripts
+-----------------------------
+
+Standalone dataset-preparation scripts.
+
+.. automodule:: precisionai.agriviz.scripts.prepare_coco128_dashboard
    :members:
    :undoc-members:
    :show-inheritance:

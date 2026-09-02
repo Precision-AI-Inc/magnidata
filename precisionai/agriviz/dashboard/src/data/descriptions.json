@@ -1,0 +1,149 @@
+{
+  "about": {
+    "description": "Plain-language guide to every column in this image complexity dataset. Each image has been measured in many ways to estimate how 'hard' it is to work with — both for a person drawing the outlines and for a computer trying to recognize the objects in it.",
+    "how_to_read_values": "Most measurements are scores between 0 and 1, where 0 means 'not at all' and 1 means 'completely' or 'as much as possible'. A few are plain counts or real-world units (like pixels or meters), and a handful are just labels or file paths. The 'scale' field tells you which is which.",
+    "total_columns": 25
+  },
+
+  "groups": {
+    "Basic info": "Where the image lives and its basic size.",
+    "How hard to outline": "Measures of how tricky the object edges and shapes are to trace.",
+    "How crowded": "Measures of how many objects there are and how much they overlap.",
+    "Object types": "Measures about the different kinds of objects in the image.",
+    "Photo quality": "Measures of blur, brightness, and lighting problems.",
+    "Object colors": "Measures based on the colors of the objects.",
+    "Background": "Measures of how busy or distracting the background and surroundings are.",
+    "Object shapes": "Measures of how irregular the object shapes are.",
+    "Annotation coverage": "Checks of how completely the objects were outlined.",
+    "Camera & sensor info": "Facts about the camera and how the photo was taken (from the camera's own records).",
+    "Final scores": "The overall difficulty rating and grouping."
+  },
+
+  "columns": {
+    "image_path": {
+      "group": "Basic info",
+      "plain_meaning": "The location of the photo file on the computer.",
+      "scale": "Text (file location)"
+    },
+    "width": {
+      "group": "Basic info",
+      "plain_meaning": "How wide the photo is, measured in pixels (dots).",
+      "scale": "Count (pixels)"
+    },
+    "height": {
+      "group": "Basic info",
+      "plain_meaning": "How tall the photo is, measured in pixels (dots).",
+      "scale": "Count (pixels)"
+    },
+    "instance_count": {
+      "group": "How crowded",
+      "plain_meaning": "The raw number of separate object shapes found — including tiny specks that may be mistakes in the outline.",
+      "scale": "Count (number of shapes)"
+    },
+    "real_instance_count": {
+      "group": "How crowded",
+      "plain_meaning": "The number of real object shapes after throwing out the tiny specks that are likely outlining mistakes. This is the trustworthy count.",
+      "scale": "Count (number of objects)"
+    },
+    "mean_instance_area_ratio": {
+      "group": "How crowded",
+      "plain_meaning": "The average size of an object in the photo, compared to the whole image. Small values mean lots of little objects.",
+      "scale": "0 to 1 (higher = bigger objects)"
+    },
+    "instance_area_std": {
+      "group": "How crowded",
+      "plain_meaning": "How much the object sizes differ from each other. High values mean the photo mixes big and small objects together.",
+      "scale": "0 to 1 (higher = more size variety)"
+    },
+    "overlap_ratio": {
+      "group": "How crowded",
+      "plain_meaning": "How much the objects touch or pile on top of each other. High values mean a tangled, crowded scene where objects merge together — one of the hardest things to separate.",
+      "scale": "0 to 1 (higher = more overlapping objects)"
+    },
+    "class_count": {
+      "group": "Object types",
+      "plain_meaning": "How many different kinds of things (object types, categories, etc.) are labeled in the photo.",
+      "scale": "Count (number of types)"
+    },
+    "smallest_class_ratio": {
+      "group": "Object types",
+      "plain_meaning": "How balanced the object types are. Low values mean one type barely shows up compared to the others — rare types are easy to miss.",
+      "scale": "0 to 1 (lower = more lopsided)"
+    },
+    "class_entropy": {
+      "group": "Object types",
+      "plain_meaning": "How evenly the different object types are mixed. High values mean a rich, varied mix of types; low means one type dominates.",
+      "scale": "0 to 1 (higher = more even mix)"
+    },
+    "blur_laplacian": {
+      "group": "Photo quality",
+      "plain_meaning": "How sharp and in-focus the photo is. High values mean a crisp photo; low values mean it's blurry or out of focus.",
+      "scale": "0 to 1 (higher = sharper photo)"
+    },
+    "overexpose_ratio": {
+      "group": "Photo quality",
+      "plain_meaning": "How much of the photo is too bright and washed out, like a blown-out white sky. Bright spots hide object detail.",
+      "scale": "0 to 1 (higher = more washed-out areas)"
+    },
+    "underexpose_ratio": {
+      "group": "Photo quality",
+      "plain_meaning": "How much of the photo is too dark, like deep shadows where you can't see detail. Dark spots can hide and merge objects together.",
+      "scale": "0 to 1 (higher = more too-dark areas)"
+    },
+    "shadow_edge_ratio": {
+      "group": "Photo quality",
+      "plain_meaning": "How many shadow lines cut across the photo. Shadow edges can look like fake object edges and cause confusion.",
+      "scale": "0 to 1 (higher = more shadow lines)"
+    },
+    "mean_pairwise_color_dist": {
+      "group": "Object colors",
+      "plain_meaning": "How much the colors vary within a single labeled object. When objects are tangled together, one outline accidentally grabs colors from several objects, so this goes up. It's one of the best signs of a tangled, hard image.",
+      "scale": "0 to 1 (higher = more tangled/mixed colors)"
+    },
+    "interclass_color_sim": {
+      "group": "Object colors",
+      "plain_meaning": "How similar different object types look in color. High values mean two categories look almost the same — easy to mix up. (Only meaningful when there's more than one type.)",
+      "scale": "0 to 1 (higher = look-alike categories)"
+    },
+    "green_mass": {
+      "group": "Annotation coverage",
+      "plain_meaning": "A measure of how much of a specific reference color (green) appears in the photo overall — a general color-based proxy for how much of the labeled foreground is present.",
+      "scale": "Number (higher = more of that color present)"
+    },
+    "annotated_px_count": {
+      "group": "Annotation coverage",
+      "plain_meaning": "How many dots (pixels) were marked as an object in the outline.",
+      "scale": "Count (pixels)"
+    },
+    "green_annotation_ratio": {
+      "group": "Annotation coverage",
+      "plain_meaning": "Whether the green-colored regions in the photo were fully outlined. Values near 1 mean the outlining covered those areas well; low values mean there are green regions that nobody outlined — a sign of a possible mistake.",
+      "scale": "0 to 1 (higher = more complete outlining)"
+    },
+    "wb_r_gain": {
+      "group": "Camera & sensor info",
+      "plain_meaning": "How much the camera boosted the red tones to balance the colors. A technical color-correction setting.",
+      "scale": "Number (color adjustment)"
+    },
+    "wb_b_gain": {
+      "group": "Camera & sensor info",
+      "plain_meaning": "How much the camera boosted the blue tones to balance the colors. A technical color-correction setting.",
+      "scale": "Number (color adjustment)"
+    },
+    "wb_rb_ratio": {
+      "group": "Camera & sensor info",
+      "plain_meaning": "The balance between red and blue color correction. It hints at the warmth or coolness of the lighting and whether colors drifted between photos.",
+      "scale": "Number (red-to-blue balance)"
+    },
+    "complexity_score": {
+      "group": "Final scores",
+      "plain_meaning": "The overall difficulty rating for the image, combining all the measurements above into one number. Values near 1 mean the image is hard in many ways at once — for both people and computers. This is the main number used to rank images from easy to hard.",
+      "scale": "0 to 1 (higher = harder image)"
+    },
+    "category": {
+      "group": "Final scores",
+      "plain_meaning": "Which kind of difficulty best describes this image, as a group number from 1 to 10. For example, one group is for tangled, crowded scenes, another for poor lighting, and so on. Group 10 is special: it means the image is hard in several different ways at the same time.",
+      "scale": "Label (group 1 to 10)"
+    }
+  }
+}

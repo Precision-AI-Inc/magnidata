@@ -358,4 +358,3 @@ function ColCard({ entry, isHidden, onToggle }: {
     </div>
   )
 }
-

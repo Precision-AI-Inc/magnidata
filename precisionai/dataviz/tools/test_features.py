@@ -4,8 +4,9 @@
 """Unit tests for the feature extractor. Synthetic in-memory COCO + PNG only —
 no disk datalake, no network, no torch/pyiqa (NIMA is skipped).
 
-Run:  .venv-agriviz/bin/python -m pytest precisionai/agriviz/tools/test_features.py -q
+Run:  .venv-dataviz/bin/python -m pytest precisionai/dataviz/tools/test_features.py -q
 """
+
 import csv
 import json
 import os
@@ -16,6 +17,7 @@ from PIL import Image
 
 from . import coco_labels, image_source, pixel_features, quality_features
 from .features import process_row
+from .metadata_join import camera_angle_category
 from .schema import OUTPUT_COLUMNS
 
 
@@ -34,8 +36,10 @@ def make_dataset(root, stem, rgb, annotations, categories, metadata=None, write_
     if write_label:
         coco = {
             "images": [{"id": 1, "file_name": stem + ".png", "height": h, "width": w}],
-            "annotations": [{"id": i + 1, "image_id": 1, "category_id": c, "segmentation": [seg]}
-                            for i, (c, seg) in enumerate(annotations)],
+            "annotations": [
+                {"id": i + 1, "image_id": 1, "category_id": c, "segmentation": [seg]}
+                for i, (c, seg) in enumerate(annotations)
+            ],
             "categories": categories,
         }
         with open(os.path.join(ds, "labels", stem + ".json"), "w") as f:
@@ -62,7 +66,7 @@ def test_coverage_half(tmp_path):
     rgb = np.zeros((100, 100, 3), np.uint8)
     img = make_dataset(tmp_path, "s", rgb, [(1, _rect(0, 0, 50, 100))], CATS)
     row = pr(img)
-    assert row["green_annotation_ratio"] == pytest.approx(0.5, abs=0.03)
+    assert row["annotation_ratio"] == pytest.approx(0.5, abs=0.03)
     assert row["annotated_px_count"] > 0
 
 
@@ -86,7 +90,7 @@ def test_overlap_ratio(tmp_path):
 
 
 def test_interclass_color_sim_identical(tmp_path):
-    rgb = np.full((100, 100, 3), 120, np.uint8)            # uniform colour
+    rgb = np.full((100, 100, 3), 120, np.uint8)  # uniform colour
     anns = [(1, _rect(0, 0, 50, 100)), (2, _rect(50, 0, 100, 100))]
     img = make_dataset(tmp_path, "s", rgb, anns, CATS)
     row = pr(img)
@@ -121,37 +125,42 @@ def test_white_balance_neutral():
 def test_determinism(tmp_path):
     rng = np.linspace(0, 255, 100 * 100 * 3).reshape(100, 100, 3).astype(np.uint8)
     img = make_dataset(tmp_path, "s", rng, [(1, _rect(10, 10, 80, 80))], CATS)
-    assert process_row(img) == process_row(img)             # (row, err) tuple equality
+    assert process_row(img) == process_row(img)  # (row, err) tuple equality
 
 
 def test_missing_label_continues(tmp_path):
     rgb = np.full((40, 40, 3), 200, np.uint8)
     img = make_dataset(tmp_path, "s", rgb, [], CATS, write_label=False)
-    row, err = process_row(img)                             # must not raise
-    assert "label_not_found" in err                         # error reported out-of-band
-    assert row["green_annotation_ratio"] == ""              # COCO column blank
-    assert row["width"] == 40                               # RGB-only features still set
+    row, err = process_row(img)  # must not raise
+    assert "label_not_found" in err  # error reported out-of-band
+    assert row["annotation_ratio"] == ""  # COCO column blank
+    assert row["width"] == 40  # RGB-only features still set
 
 
 def test_metadata_join_and_angle(tmp_path):
     rgb = np.zeros((40, 40, 3), np.uint8)
-    meta = {"id": "s", "gsd": "0.0151", "angle": "-1.0",
-            "crop_name": "canola", "camera_view": "oblique", "weed_density": "high"}
+    meta = {
+        "id": "s",
+        "gsd": "0.0151",
+        "angle": "-1.0",
+        "crop_name": "canola",
+        "camera_view": "oblique",
+        "domain_metric": "high",
+    }
     img = make_dataset(tmp_path, "s", rgb, [(1, _rect(0, 0, 20, 40))], CATS, metadata=meta)
     row = pr(img)
     assert row["gsd"] == pytest.approx(0.0151)
-    assert row["camera_angle"] == "oriented"                # camera_view=oblique -> oriented
-    assert row["weed_density"] == "high"
-    assert "crop_stage" not in row                           # dropped from the schema
+    assert row["camera_angle"] == "oriented"  # camera_view=oblique -> oriented
+    assert row["domain_metric"] == "high"
+    assert "crop_stage" not in row  # dropped from the schema
 
 
 def test_camera_angle_categories():
-    from .metadata_join import camera_angle_category as cat
-    assert cat("", "nadir") == "nadir"
-    assert cat("60.0", "oblique") == "oriented"
-    assert cat("", "none") == "missing"
-    assert cat("3.0", "") == "nadir"                        # numeric fallback, near 0
-    assert cat("45.0", "") == "oriented"
+    assert camera_angle_category("", "nadir") == "nadir"
+    assert camera_angle_category("60.0", "oblique") == "oriented"
+    assert camera_angle_category("", "none") == "missing"
+    assert camera_angle_category("3.0", "") == "nadir"  # numeric fallback, near 0
+    assert camera_angle_category("45.0", "") == "oriented"
 
 
 def test_noise_sigma_clean_vs_noisy():
@@ -166,7 +175,7 @@ def test_noise_sigma_clean_vs_noisy():
 def test_colorfulness_gray_vs_vivid():
     gray = np.full((32, 32, 3), 128, np.uint8)
     vivid = np.zeros((32, 32, 3), np.uint8)
-    vivid[:, :16, 0] = 255          # red | blue split -> highly colorful
+    vivid[:, :16, 0] = 255  # red | blue split -> highly colorful
     vivid[:, 16:, 2] = 255
     assert quality_features.colorfulness(gray) == pytest.approx(0.0, abs=1e-6)
     assert quality_features.colorfulness(vivid) > 50.0
@@ -185,8 +194,7 @@ def test_quality_columns_populated(tmp_path):
     rgb = (np.indices((40, 40)).sum(0) % 2 * 255).astype(np.uint8)[:, :, None].repeat(3, 2)
     img = make_dataset(tmp_path, "s", rgb, [(1, _rect(0, 0, 20, 40))], CATS)
     row = pr(img)
-    for col in ("noise_sigma", "tenengrad", "rms_contrast", "dynamic_range",
-                "luma_entropy", "colorfulness"):
+    for col in ("noise_sigma", "tenengrad", "rms_contrast", "dynamic_range", "luma_entropy", "colorfulness"):
         assert isinstance(row[col], float)
 
 
@@ -197,7 +205,7 @@ def test_image_source_resolution(tmp_path, monkeypatch):
     (dl / "ds/images").mkdir(parents=True)
     (th / "ds/images").mkdir(parents=True)
     (dl / "ds/images/x.png").write_bytes(b"full")
-    (th / "ds/images/x.jpg").write_bytes(b"thumb")     # thumbnail is .jpg
+    (th / "ds/images/x.jpg").write_bytes(b"thumb")  # thumbnail is .jpg
     monkeypatch.setattr(image_source, "DATALAKE_ROOT", str(dl))
     monkeypatch.setattr(image_source, "THUMB_ROOTS", [("thumb720", str(th))])
     full = str(dl) + rel + ".png"
@@ -212,18 +220,19 @@ def test_image_source_resolution(tmp_path, monkeypatch):
 def test_coco_rasterize_scales_to_thumbnail(tmp_path):
     # full-res label is 100x100; coverage must survive rasterizing at half-res
     rgb = np.zeros((100, 100, 3), np.uint8)
-    img = make_dataset(tmp_path, "s", rgb, [(1, _rect(0, 0, 50, 100))], CATS)
+    make_dataset(tmp_path, "s", rgb, [(1, _rect(0, 0, 50, 100))], CATS)
     labels = coco_labels.parse(str(tmp_path / "ds1" / "labels" / "s.json"))
     full = coco_labels.rasterize_class_map(labels)
     half = coco_labels.rasterize_class_map(labels, target_wh=(50, 50))
-    assert full.shape == (100, 100) and half.shape == (50, 50)
+    assert full.shape == (100, 100)
+    assert half.shape == (50, 50)
     fg_full = coco_labels.foreground_from_class_map(full).mean()
     fg_half = coco_labels.foreground_from_class_map(half).mean()
-    assert fg_half == pytest.approx(fg_full, abs=0.03)   # coverage ratio preserved
+    assert fg_half == pytest.approx(fg_full, abs=0.03)  # coverage ratio preserved
 
 
 def test_schema_complete(tmp_path):
     rgb = np.zeros((20, 20, 3), np.uint8)
     img = make_dataset(tmp_path, "s", rgb, [(1, _rect(0, 0, 10, 20))], CATS)
     row = pr(img)
-    assert list(row.keys()) == OUTPUT_COLUMNS                # exact column set + order
+    assert list(row.keys()) == OUTPUT_COLUMNS  # exact column set + order

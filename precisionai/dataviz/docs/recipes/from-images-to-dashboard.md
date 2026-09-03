@@ -1,6 +1,6 @@
 # Recipe: images to dashboard dataset
 
-This recipe starts with any local folder of images and ends with an agriviz dataset
+This recipe starts with any local folder of images and ends with an dataviz dataset
 that can be loaded in the dashboard with:
 
 - a dashboard-ready multiparametric CSV
@@ -16,16 +16,16 @@ For a reproducible public sample dataset, use the helper script. It downloads th
 Ultralytics COCO128 zip, stages the images under `image_sets/coco128/`, converts
 YOLO labels to the COCO-style polygon JSON files used by the feature extractor,
 generates `data/coco128.csv`, generates DINOv2 embeddings at `data/coco128.json`,
-and registers the dataset in `precisionai/agriviz/confi.yaml`.
+and registers the dataset in `precisionai/dataviz/confi.yaml`.
 
 ```bash
-python -m precisionai.agriviz.scripts.prepare_coco128_dashboard --device cpu
+python -m precisionai.dataviz.scripts.prepare_coco128_dashboard --device cpu
 ```
 
 For a fast smoke test:
 
 ```bash
-python -m precisionai.agriviz.scripts.prepare_coco128_dashboard \
+python -m precisionai.dataviz.scripts.prepare_coco128_dashboard \
   --dataset-stem coco128_smoke \
   --dataset-name "COCO128 Smoke" \
   --limit 10 \
@@ -35,7 +35,7 @@ python -m precisionai.agriviz.scripts.prepare_coco128_dashboard \
 To prepare the full dataset and start the dashboard API/portal:
 
 ```bash
-python -m precisionai.agriviz.scripts.prepare_coco128_dashboard \
+python -m precisionai.dataviz.scripts.prepare_coco128_dashboard \
   --device cpu \
   --start-dashboard \
   --validate-api
@@ -74,8 +74,8 @@ preview.
 Use Python 3.12 when possible, matching the Docker/API runtime.
 
 ```bash
-python3.12 -m venv .venv-agriviz
-source .venv-agriviz/bin/activate
+python3.12 -m venv .venv-dataviz
+source .venv-dataviz/bin/activate
 python -m pip install --upgrade pip
 ```
 
@@ -83,13 +83,13 @@ For a CPU-only machine, install the pinned CPU PyTorch wheels first:
 
 ```bash
 pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
-pip install -r precisionai/agriviz/requirements.txt
+pip install -r precisionai/dataviz/requirements.txt
 ```
 
 On a GPU machine, the default package index is fine:
 
 ```bash
-pip install -r precisionai/agriviz/requirements.txt
+pip install -r precisionai/dataviz/requirements.txt
 ```
 
 ## 2. Choose the source folder and dataset name
@@ -266,7 +266,7 @@ the full quality panel and the most comparable `complexity_score`.
 export INPUT_CSV="image_sets/${DATASET_STEM}/${DATASET_STEM}_input.csv"
 export FEATURE_CSV="data/${DATASET_STEM}.csv"
 
-python -m precisionai.agriviz.tools.features \
+python -m precisionai.dataviz.tools.features \
   --input "$INPUT_CSV" \
   --output "$FEATURE_CSV" \
   --image-source fullres \
@@ -276,7 +276,7 @@ python -m precisionai.agriviz.tools.features \
 For a fast first pass:
 
 ```bash
-python -m precisionai.agriviz.tools.features \
+python -m precisionai.dataviz.tools.features \
   --input "$INPUT_CSV" \
   --output "$FEATURE_CSV" \
   --image-source fullres \
@@ -308,7 +308,7 @@ The default dashboard embeddings must be named `data/<DATASET_STEM>.json`.
 ```bash
 export EMBEDDINGS_JSON="data/${DATASET_STEM}.json"
 
-python -m precisionai.agriviz.tools.embeddings \
+python -m precisionai.dataviz.tools.embeddings \
   --input "$FEATURE_CSV" \
   --output "$EMBEDDINGS_JSON" \
   --model dinov2 \
@@ -321,7 +321,7 @@ This writes `data/<DATASET_STEM>.json.provenance.json` beside the embeddings fil
 Optional comparison embeddings use the same CSV stem plus a variant suffix:
 
 ```bash
-python -m precisionai.agriviz.tools.embeddings \
+python -m precisionai.dataviz.tools.embeddings \
   --input "$FEATURE_CSV" \
   --output "data/${DATASET_STEM}_dinov2_retry.json" \
   --model dinov2 \
@@ -333,7 +333,7 @@ The dashboard will list `dinov2_retry` in the 3D view's Compare menu.
 
 ## 6. Register the dataset
 
-Append the generated CSV to `precisionai/agriviz/confi.yaml`:
+Append the generated CSV to `precisionai/dataviz/confi.yaml`:
 
 ```bash
 python - <<'PY'
@@ -345,7 +345,7 @@ stem = os.environ["DATASET_STEM"]
 name = os.environ.get("DATASET_NAME", stem.replace("_", " ").title())
 description = os.environ.get("DATASET_DESCRIPTION", "Generated from a local image folder")
 source = f"data/{stem}.csv"
-path = Path("precisionai/agriviz/confi.yaml")
+path = Path("precisionai/dataviz/confi.yaml")
 text = path.read_text()
 
 if f"source: {source}" in text or f'source: "{source}"' in text:

@@ -2,15 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """SQLite notes database."""
+
 import os
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 
 DB_PATH = os.environ.get("DB_PATH", os.path.join(os.path.dirname(__file__), "notes.db"))
 
 
 @contextmanager
-def get_conn():
+def get_conn() -> Generator[sqlite3.Connection, None, None]:
+    """Open a connection to the notes database.
+
+    Yields a row-factory-enabled connection, committing changes on successful
+    exit and always closing the connection afterward.
+    """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -22,6 +29,7 @@ def get_conn():
 
 
 def init_db() -> None:
+    """Create the notes, created_datasets, and partitions tables if missing."""
     with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS notes (
@@ -61,47 +69,49 @@ def init_db() -> None:
 
 
 def list_created_datasets() -> list[dict]:
+    """Return all created datasets, most recently created first."""
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT * FROM created_datasets ORDER BY created_at DESC"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM created_datasets ORDER BY created_at DESC").fetchall()
         return [dict(r) for r in rows]
 
 
 def get_created_dataset(ds_id: int) -> dict | None:
+    """Return the created dataset with the given id, or None if it doesn't exist."""
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM created_datasets WHERE id = ?", (ds_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM created_datasets WHERE id = ?", (ds_id,)).fetchone()
         return dict(row) if row else None
 
 
 def get_created_dataset_by_source(source: str) -> dict | None:
+    """Return the created dataset with the given source path, or None if it doesn't exist."""
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM created_datasets WHERE source = ?", (source,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM created_datasets WHERE source = ?", (source,)).fetchone()
         return dict(row) if row else None
 
 
-def create_dataset_record(name, description, source, parent_source, emb_source, row_count) -> dict:
+def create_dataset_record(
+    name: str,
+    description: str,
+    source: str,
+    parent_source: str | None,
+    emb_source: str | None,
+    row_count: int,
+) -> dict:
+    """Insert a new created-dataset row and return the inserted record."""
     with get_conn() as conn:
         cur = conn.execute(
             """INSERT INTO created_datasets (name, description, source, parent_source, emb_source, row_count)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (name, description, source, parent_source, emb_source, row_count),
         )
-        row = conn.execute(
-            "SELECT * FROM created_datasets WHERE id = ?", (cur.lastrowid,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM created_datasets WHERE id = ?", (cur.lastrowid,)).fetchone()
         return dict(row)
 
 
 def delete_created_dataset(ds_id: int) -> dict | None:
+    """Delete the created dataset with the given id and return it, or None if it didn't exist."""
     with get_conn() as conn:
-        row = conn.execute(
-            "SELECT * FROM created_datasets WHERE id = ?", (ds_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM created_datasets WHERE id = ?", (ds_id,)).fetchone()
         if not row:
             return None
         conn.execute("DELETE FROM created_datasets WHERE id = ?", (ds_id,))
@@ -134,43 +144,39 @@ def commit_partitions(source: str, entries: list[dict]) -> int:
 
 
 def list_notes(stem: str | None = None) -> list[dict]:
+    """Return notes, optionally filtered by stem, most recently created first."""
     with get_conn() as conn:
         if stem:
-            rows = conn.execute(
-                "SELECT * FROM notes WHERE stem = ? ORDER BY created_at DESC", (stem,)
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM notes WHERE stem = ? ORDER BY created_at DESC", (stem,)).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT * FROM notes ORDER BY created_at DESC"
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM notes ORDER BY created_at DESC").fetchall()
         return [dict(r) for r in rows]
 
 
 def create_note(stem: str, image_path: str, note: str) -> dict:
+    """Insert a new note and return the inserted record."""
     with get_conn() as conn:
         cur = conn.execute(
             "INSERT INTO notes (stem, image_path, note) VALUES (?, ?, ?)",
             (stem, image_path, note),
         )
-        row = conn.execute(
-            "SELECT * FROM notes WHERE id = ?", (cur.lastrowid,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM notes WHERE id = ?", (cur.lastrowid,)).fetchone()
         return dict(row)
 
 
 def update_note(note_id: int, note: str) -> dict | None:
+    """Update a note's text and return the updated record, or None if it doesn't exist."""
     with get_conn() as conn:
         conn.execute(
             "UPDATE notes SET note = ?, updated_at = datetime('now') WHERE id = ?",
             (note, note_id),
         )
-        row = conn.execute(
-            "SELECT * FROM notes WHERE id = ?", (note_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM notes WHERE id = ?", (note_id,)).fetchone()
         return dict(row) if row else None
 
 
 def delete_note(note_id: int) -> bool:
+    """Delete a note by id and return whether a row was deleted."""
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
         return cur.rowcount > 0

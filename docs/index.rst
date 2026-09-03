@@ -5,9 +5,9 @@ Welcome to the **PAI DataViz** documentation.
 
 - The **Getting started** chapter is the project README: installation, running the API
   and dashboard, and the feature-extraction/embeddings CLI.
-- The **Module Reference** chapter documents the ``precisionai.agriviz`` Python package
+- The **Module Reference** chapter documents the ``precisionai.dataviz`` Python package
   — the Flask API and the feature-extraction/embeddings toolkit. The React dashboard is
-  documented separately in ``precisionai/agriviz/dashboard``.
+  documented separately in ``precisionai/dataviz/dashboard``.
 
 Contents
 --------

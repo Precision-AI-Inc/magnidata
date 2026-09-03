@@ -8,13 +8,14 @@
   belongs to exactly one class), which is the stable basis for look-alike-class
   colour similarity.
 """
+
 from __future__ import annotations
 
 import numpy as np
 
 from . import coco_labels as cl
 
-MIN_INSTANCE_PX = 64        # below this an annotation is treated as a fragment
+MIN_INSTANCE_PX = 64  # below this an annotation is treated as a fragment
 EPS = 1e-6
 
 
@@ -24,22 +25,39 @@ def _rgb_to_lab(rgb_255: np.ndarray) -> np.ndarray:
     m = rgb > 0.04045
     lin = np.where(m, ((rgb + 0.055) / 1.055) ** 2.4, rgb / 12.92)
     # sRGB -> XYZ (D65)
-    mat = np.array([[0.4124564, 0.3575761, 0.1804375],
-                    [0.2126729, 0.7151522, 0.0721750],
-                    [0.0193339, 0.1191920, 0.9503041]])
+    mat = np.array(
+        [[0.4124564, 0.3575761, 0.1804375], [0.2126729, 0.7151522, 0.0721750], [0.0193339, 0.1191920, 0.9503041]]
+    )
     xyz = lin @ mat.T
     white = np.array([0.95047, 1.0, 1.08883])
     xyz = xyz / white
     d = 6.0 / 29.0
-    f = np.where(xyz > d ** 3, np.cbrt(xyz), xyz / (3 * d * d) + 4.0 / 29.0)
+    f = np.where(xyz > d**3, np.cbrt(xyz), xyz / (3 * d * d) + 4.0 / 29.0)
     fx, fy, fz = f[:, 0], f[:, 1], f[:, 2]
-    L = 116.0 * fy - 16.0
+    l_star = 116.0 * fy - 16.0
     a = 500.0 * (fx - fy)
     b = 200.0 * (fy - fz)
-    return np.stack([L, a, b], axis=1)
+    return np.stack([l_star, a, b], axis=1)
 
 
 def instance_metrics(labels: cl.CocoLabels, rgb: np.ndarray, class_map: np.ndarray) -> dict:
+    """Compute per-image instance/overlap stats and class-colour-similarity metrics.
+
+    Parameters
+    ----------
+    labels : cl.CocoLabels
+        Parsed COCO annotations for the image.
+    rgb : np.ndarray
+        (H, W, 3) uint8 RGB pixels, at the same resolution as `class_map`.
+    class_map : np.ndarray
+        Rasterized per-pixel class-id map (background + offset category ids).
+
+    Returns
+    -------
+    dict
+        Instance count/area/overlap stats (schema.py's INSTANCES group) plus class
+        count/entropy and look-alike-class colour similarity (its CLASSES group).
+    """
     h, w = class_map.shape
     total = float(h * w)
 
@@ -53,7 +71,7 @@ def instance_metrics(labels: cl.CocoLabels, rgb: np.ndarray, class_map: np.ndarr
         if area == 0:
             continue
         areas.append(area)
-        covered += mask                       # accumulate to find multiply-covered pixels
+        covered += mask  # accumulate to find multiply-covered pixels
 
     areas_arr = np.asarray(areas, dtype=np.float64)
     fg_px = float((covered >= 1).sum())
@@ -72,8 +90,8 @@ def instance_metrics(labels: cl.CocoLabels, rgb: np.ndarray, class_map: np.ndarr
 
     # ── Class colour (look-alike) + class distribution from the class map ─────────
     bg_val = cl.BACKGROUND_CATEGORY_ID + cl.CLASS_MAP_OFFSET
-    fg_vals = [int(v) for v in np.unique(class_map) if v != 0 and v != bg_val]
-    fg_vals.sort()                              # deterministic class ordering
+    fg_vals = [int(v) for v in np.unique(class_map) if v not in (0, bg_val)]
+    fg_vals.sort()  # deterministic class ordering
 
     class_px = []
     mean_colors = []
@@ -99,15 +117,12 @@ def instance_metrics(labels: cl.CocoLabels, rgb: np.ndarray, class_map: np.ndarr
     if len(mean_colors) >= 2:
         lab = _rgb_to_lab(np.vstack(mean_colors))
         n = lab.shape[0]
-        dists = []
-        for i in range(n):
-            for j in range(i + 1, n):
-                dists.append(float(np.linalg.norm(lab[i] - lab[j])))
+        dists = [float(np.linalg.norm(lab[i] - lab[j])) for i in range(n) for j in range(i + 1, n)]
         dists_arr = np.asarray(dists, dtype=np.float64)
         out["mean_pairwise_color_dist"] = float(dists_arr.mean())
-        out["interclass_color_sim"] = float(1.0 / (1.0 + dists_arr.min()))   # high = mimic risk
+        out["interclass_color_sim"] = float(1.0 / (1.0 + dists_arr.min()))  # high = mimic risk
     else:
         out["mean_pairwise_color_dist"] = 0.0
-        out["interclass_color_sim"] = 0.0      # single (or no) foreground class => no mimic
+        out["interclass_color_sim"] = 0.0  # single (or no) foreground class => no mimic
 
     return out

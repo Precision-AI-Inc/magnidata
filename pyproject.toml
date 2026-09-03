@@ -66,12 +66,12 @@ dev = [
     "genbadge[coverage]>=1.1",
 ]
 
-# No [project.scripts] entry for the API: precisionai/agriviz/api/*.py use flat,
+# No [project.scripts] entry for the API: precisionai/dataviz/api/*.py use flat,
 # sibling-style imports (import db, import local_files) by design, since Dockerfile.api
 # copies them flat into the image root and runs `python app.py` directly — see that
 # file's own docstring. That means app.py can't be invoked as an installed console
 # script (its imports would fail once run from outside its own directory); run it via
-# `docker compose up` or `python app.py` from precisionai/agriviz/api/ instead — see
+# `docker compose up` or `python app.py` from precisionai/dataviz/api/ instead — see
 # README.md.
 
 [project.urls]
@@ -89,8 +89,8 @@ include = ["precisionai*"]
 # build reads its precomputed embeddings from this file, resolved relative to
 # scripts/prepare_coco128_dashboard.py's own installed location (see dataset_builder.py's
 # COCO128_EMBEDDINGS_ASSET). confi.yaml is the dataset registry the API reads.
-"precisionai.agriviz.scripts" = ["coco128_embeddings.json"]
-"precisionai.agriviz" = ["confi.yaml"]
+"precisionai.dataviz.scripts" = ["coco128_embeddings.json"]
+"precisionai.dataviz" = ["confi.yaml"]
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
@@ -98,11 +98,11 @@ local_scheme = "no-local-version"
 fallback_version = "0.0.0"
 
 # ── pytest ────────────────────────────────────────────────────────────────────
-# Tests are colocated with source (precisionai/agriviz/**/test_*.py), not under a
+# Tests are colocated with source (precisionai/dataviz/**/test_*.py), not under a
 # top-level tests/ — a deliberate deviation from the template's layout; see
 # CONTRIBUTING.md.
 [tool.pytest.ini_options]
-testpaths = ["precisionai/agriviz"]
+testpaths = ["precisionai/dataviz"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "--cov=precisionai --cov-report=term-missing --cov-fail-under=60"
@@ -172,6 +172,10 @@ ignore = [
     "ANN401",  # typing.Any is allowed for genuinely dynamic types
     "S311",    # pseudo-random generators are intentional in scientific code
     "S104",    # binding to 0.0.0.0 is intentional for a configurable server host
+    "S310",    # urlopen() audit — every call site validates the URL scheme first
+               # (see dataset_builder.py/local_files.py/prepare_coco128_dashboard.py);
+               # ruff does no control-flow analysis so it can't see the guard, but
+               # there is no code-level fix that clears this short of a literal URL.
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -180,6 +184,20 @@ ignore = [
 # so this matches by filename rather than directory.
 "**/test_*.py" = ["D", "PLR", "ANN", "S"]
 "docs/conf.py" = ["E402", "UP031", "ANN", "S"]
+# load_dotenv() must run, and DATA_ROOT/etc. must be read from the environment,
+# before importing db.py/local_files.py/dataset_builder.py (they read their own
+# env-derived config at import time) — the E402 this produces is unavoidable
+# without breaking local .env overrides.
+"precisionai/dataviz/api/app.py" = ["E402"]
+# prepare_coco128_dashboard.py: PLC0415 on the run_pipeline() import of tools.features/
+# embeddings is deliberate — it happens after a sys.path.insert() that makes the
+# package importable from an uninstalled checkout (this script's whole point per its
+# own docstring), so it structurally cannot move to module level. S603 is the
+# shutil.which("docker")-resolved subprocess call in start_dashboard(): ruff's S603
+# only treats a fully literal argument list as "trusted", so resolving the binary
+# portably (rather than hardcoding a path) always trips it, same underlying limitation
+# as the S310 case above.
+"precisionai/dataviz/scripts/prepare_coco128_dashboard.py" = ["PLC0415", "S603"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

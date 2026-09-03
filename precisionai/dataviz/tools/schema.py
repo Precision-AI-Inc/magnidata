@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Output schema for the feature-extraction tool — a curated, grouped column set.
+
 Domain-agnostic by design: every computed column describes generic objects/instances
 in an image, not any particular subject matter.
 
@@ -15,26 +16,25 @@ tied back to the exact column contract that produced it. Bumped to 2.0.0 for the
 curated schema.
 """
 
-FEATURE_SCHEMA_VERSION = "agriviz-features/2.1.0"
+FEATURE_SCHEMA_VERSION = "dataviz-features/2.1.0"
 
 # ── Identity ──────────────────────────────────────────────────────────────────────
 IDENTITY = ["image_path", "width", "height"]
 
 # ── Cluster labels carried through from the input CSV (enables 3D auto-clustering) ──
-# Populated from the input row when present (e.g. agri-benc's `cluster` / `cluster_l2`);
-# blank otherwise. The dashboard auto-detects `cluster` to colour/partition the 3D view.
+# Populated from the input row when present (e.g. the input CSV's own `cluster` /
+# `cluster_l2` columns); blank otherwise. The dashboard auto-detects `cluster` to
+# colour/partition the 3D view.
 CLUSTER = ["cluster", "cluster_l2"]
 
 # ── Foreground coverage / segmentation (RGB + COCO) ─────────────────────────────────
-COVERAGE = ["green_annotation_ratio", "annotated_px_count", "green_mass", "bg_coverage"]
+COVERAGE = ["annotation_ratio", "annotated_px_count", "fg_green_mean", "bg_coverage"]
 
 # ── Instances & entanglement (COCO) ─────────────────────────────────────────────────
-INSTANCES = ["instance_count", "real_instance_count", "mean_instance_area_ratio",
-             "instance_area_std", "overlap_ratio"]
+INSTANCES = ["instance_count", "real_instance_count", "mean_instance_area_ratio", "instance_area_std", "overlap_ratio"]
 
 # ── Class composition & look-alike colour (COCO + colour) ──────────────────────────
-CLASSES = ["class_count", "smallest_class_ratio", "class_entropy",
-           "mean_pairwise_color_dist", "interclass_color_sim"]
+CLASSES = ["class_count", "smallest_class_ratio", "class_entropy", "mean_pairwise_color_dist", "interclass_color_sim"]
 
 # ── Exposure / illumination (RGB) ───────────────────────────────────────────────────
 EXPOSURE = ["overexpose_ratio", "underexpose_ratio", "shadow_edge_ratio"]
@@ -56,16 +56,28 @@ COMPOSITE = ["complexity_score", "category"]
 
 # ── Camera metadata (trimmed; from images_metadata.csv) ─────────────────────────────
 # camera_angle is a category derived from the off-nadir angle + camera_view.
-CAMERA_META = ["gsd", "camera_angle"]   # camera_angle ∈ {nadir, oriented, missing}
+CAMERA_META = ["gsd", "camera_angle"]  # camera_angle ∈ {nadir, oriented, missing}
 
 # ── Optional domain-specific metadata passthrough (not computed) ───────────────────
-DOMAIN_METADATA = ["weed_density"]
+DOMAIN_METADATA = ["domain_metric"]
 
-OUTPUT_COLUMNS = (IDENTITY + CLUSTER + COVERAGE + INSTANCES + CLASSES + EXPOSURE + FOCUS
-                  + QUALITY_PANEL + WHITE_BALANCE + LEARNED_IQA + COMPOSITE
-                  + CAMERA_META + DOMAIN_METADATA)
+OUTPUT_COLUMNS = (
+    IDENTITY
+    + CLUSTER
+    + COVERAGE
+    + INSTANCES
+    + CLASSES
+    + EXPOSURE
+    + FOCUS
+    + QUALITY_PANEL
+    + WHITE_BALANCE
+    + LEARNED_IQA
+    + COMPOSITE
+    + CAMERA_META
+    + DOMAIN_METADATA
+)
 
 
 def blank_row() -> dict:
-    """A fresh output row with every column present and empty."""
+    """Return a fresh output row with every column present and empty."""
     return {c: "" for c in OUTPUT_COLUMNS}

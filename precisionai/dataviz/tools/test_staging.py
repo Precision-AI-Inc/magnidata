@@ -3,8 +3,9 @@
 
 """Unit tests for the upload-staging helper. No network, no torch.
 
-Run:  python -m pytest precisionai/agriviz/tools/test_staging.py -q
+Run:  python -m pytest precisionai/dataviz/tools/test_staging.py -q
 """
+
 import csv
 import hashlib
 import os
@@ -82,12 +83,13 @@ def test_checksums_file_has_one_line_per_image(tmp_path):
     stage_images(images, os.path.join(str(tmp_path), "s"))
 
     with open(os.path.join(str(tmp_path), "s", "checksums.sha256")) as f:
-        lines = [l for l in f.read().splitlines() if l.strip()]
+        lines = [line for line in f.read().splitlines() if line.strip()]
     assert len(lines) == 2
     assert lines[0].split()[0] == hashlib.sha256(b"AAAA").hexdigest()
 
 
 # ── Annotations ───────────────────────────────────────────────────────────────
+
 
 def test_no_annotations_means_no_labels_dir(tmp_path):
     images = [UploadedImage(relative_path="a.png", data=b"AAAA")]

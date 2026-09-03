@@ -6,6 +6,7 @@ colDescs.ts's EXTRA map) documents every column tools/schema.py's extractor
 currently emits, with no stale leftovers from a previous schema version (bar the
 runtime-derived columns allowlisted below). Pure file I/O + regex/JSON parsing:
 no torch/network."""
+
 import json
 import os
 import re
@@ -17,9 +18,9 @@ from .schema import OUTPUT_COLUMNS
 # legitimately documented even though they will never appear in OUTPUT_COLUMNS.
 DERIVED_COLUMNS = {"camera"}
 
-AGRIVIZ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DESCRIPTIONS_JSON = os.path.join(AGRIVIZ_ROOT, "dashboard", "src", "data", "descriptions.json")
-COL_DESCS_TS = os.path.join(AGRIVIZ_ROOT, "dashboard", "src", "data", "colDescs.ts")
+DATAVIZ_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DESCRIPTIONS_JSON = os.path.join(DATAVIZ_ROOT, "dashboard", "src", "data", "descriptions.json")
+COL_DESCS_TS = os.path.join(DATAVIZ_ROOT, "dashboard", "src", "data", "colDescs.ts")
 
 
 def _descriptions_keys() -> set[str]:
@@ -42,7 +43,5 @@ def test_dashboard_column_descriptions_match_current_schema():
     expected = set(OUTPUT_COLUMNS)
     missing = expected - documented
     stale = documented - expected - DERIVED_COLUMNS
-    assert not missing and not stale, (
-        f"schema/description drift — missing descriptions for: {sorted(missing)}; "
-        f"stale descriptions (not in current schema) for: {sorted(stale)}"
-    )
+    assert not missing, f"schema/description drift — missing descriptions for: {sorted(missing)}"
+    assert not stale, f"stale descriptions (not in current schema) for: {sorted(stale)}"

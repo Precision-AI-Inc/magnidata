@@ -7,10 +7,11 @@ pipeline never computes embeddings itself (no model/torch surface to fake here a
 COCO128's embeddings come from a shipped precomputed asset (also faked, see
 _patch_fake_coco128_pipeline) and AgriStress-500's from the CDN, bring-your-own.
 
-Run:  python -m pytest precisionai/agriviz/api/test_dataset_builder.py -q
-(from precisionai/agriviz/api/, or from the repo root — dataset_builder.py resolves the
+Run:  python -m pytest precisionai/dataviz/api/test_dataset_builder.py -q
+(from precisionai/dataviz/api/, or from the repo root — dataset_builder.py resolves the
 precisionai package path from its own file location, not from cwd/DATA_ROOT)
 """
+
 import csv
 import io
 import json
@@ -38,7 +39,7 @@ def isolated_env(tmp_path, monkeypatch):
     dataset_builder._jobs.clear()
     if dataset_builder._build_lock.locked():
         dataset_builder._build_lock.release()
-    yield
+    return
 
 
 def _fake_features_run(input_csv, output_csv, **kwargs):
@@ -55,6 +56,7 @@ def _wait_for_job(job_id, timeout=2.0):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         job = dataset_builder.get_job(job_id)
+        assert job is not None, f"job {job_id} not found in the job registry"
         if job["status"] in ("done", "error"):
             return job
         time.sleep(0.02)
@@ -62,6 +64,7 @@ def _wait_for_job(job_id, timeout=2.0):
 
 
 # ── Upload build: validation ─────────────────────────────────────────────────
+
 
 def test_start_upload_build_rejects_empty_name():
     with pytest.raises(dataset_builder.BuildValidationError):
@@ -94,12 +97,11 @@ def test_start_upload_build_rejects_oversized_when_annotations_push_over_cap():
 
 def test_start_upload_build_rejects_malformed_embeddings_json():
     with pytest.raises(dataset_builder.BuildValidationError):
-        dataset_builder.start_upload_build([UploadedImage("a.png", b"x")], [], b"not json",
-                                            "Name", "")
+        dataset_builder.start_upload_build([UploadedImage("a.png", b"x")], [], b"not json", "Name", "")
 
 
 def test_start_upload_build_rejects_embeddings_with_wrong_shape():
-    bad = json.dumps({"vectors": {}}).encode()   # missing the "embeddings" key
+    bad = json.dumps({"vectors": {}}).encode()  # missing the "embeddings" key
     with pytest.raises(dataset_builder.BuildValidationError):
         dataset_builder.start_upload_build([UploadedImage("a.png", b"x")], [], bad, "Name", "")
 
@@ -111,6 +113,7 @@ def test_start_upload_build_rejects_oversized_embeddings_file():
 
 
 # ── Upload build: end to end ──────────────────────────────────────────────────
+
 
 def test_upload_build_end_to_end_without_embeddings(monkeypatch):
     monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
@@ -142,6 +145,7 @@ def test_upload_build_stages_provided_embeddings_file(monkeypatch):
     assert job["status"] == "done"
     assert job["dataset"]["has_embeddings"] is True
     rec = db.get_created_dataset_by_source(job["dataset"]["source"])
+    assert rec is not None
     assert rec["emb_source"] == rec["source"].replace(".csv", ".json")
     with open(rec["emb_source"], "rb") as f:
         assert f.read() == FAKE_EMBEDDINGS
@@ -195,6 +199,7 @@ def test_upload_build_failure_cleans_up_and_reports_error(monkeypatch):
 
 # ── Demo registry ──────────────────────────────────────────────────────────────
 
+
 def test_demos_registry_has_both_demos_enabled():
     by_key = {d["key"]: d for d in dataset_builder.DEMOS}
     assert by_key["coco128"]["enabled"] is True
@@ -207,9 +212,14 @@ def test_start_demo_build_rejects_unknown_demo_key():
 
 
 def test_start_demo_build_rejects_disabled_demo_key(monkeypatch):
-    monkeypatch.setattr(dataset_builder, "DEMOS", dataset_builder.DEMOS + [
-        {"key": "future-demo", "name": "Future Demo", "description": "not yet", "enabled": False},
-    ])
+    monkeypatch.setattr(
+        dataset_builder,
+        "DEMOS",
+        [
+            *dataset_builder.DEMOS,
+            {"key": "future-demo", "name": "Future Demo", "description": "not yet", "enabled": False},
+        ],
+    )
     with pytest.raises(dataset_builder.BuildValidationError):
         dataset_builder.start_demo_build("future-demo")
 
@@ -232,8 +242,7 @@ def _patch_fake_coco128_pipeline(monkeypatch, tmp_path):
         with open(manifest, "w", newline="") as f:
             w = csv.DictWriter(f, fieldnames=["image_path", "cluster", "cluster_l2"])
             w.writeheader()
-            w.writerow({"image_path": "image_sets/coco128/images/x.jpg",
-                        "cluster": "all", "cluster_l2": "all"})
+            w.writerow({"image_path": "image_sets/coco128/images/x.jpg", "cluster": "all", "cluster_l2": "all"})
         return manifest, {"rows": 1}
 
     def fake_run_pipeline(args, root, manifest, data_dir=None):
@@ -291,13 +300,15 @@ def test_start_demo_build_fails_if_shipped_embeddings_dont_match_images(monkeypa
     job = _wait_for_job(job_id)
 
     assert job["status"] == "error"
-    assert db.get_created_dataset_by_source(f"{dataset_builder.USER_DATA_REL}/{dataset_builder.COCO128_STEM}.csv") is None
+    assert (
+        db.get_created_dataset_by_source(f"{dataset_builder.USER_DATA_REL}/{dataset_builder.COCO128_STEM}.csv") is None
+    )
 
 
 def test_start_demo_build_rejects_if_already_built():
-    db.create_dataset_record(dataset_builder.COCO128_NAME, "",
-                              f"data_user/{dataset_builder.COCO128_STEM}.csv",
-                              None, None, 1)
+    db.create_dataset_record(
+        dataset_builder.COCO128_NAME, "", f"data_user/{dataset_builder.COCO128_STEM}.csv", None, None, 1
+    )
     with pytest.raises(dataset_builder.BuildValidationError):
         dataset_builder.start_demo_build("coco128")
 
@@ -314,6 +325,7 @@ def test_start_demo_build_rejects_concurrent_build(monkeypatch, tmp_path):
 
 # ── AgriStress-500 demo build (Hugging Face images+masks, features computed locally,
 #    embeddings still brought in from the CDN) ──────────────────────────────────────
+
 
 def _tiny_png_bytes(color=(200, 50, 50)):
     buf = io.BytesIO()
@@ -417,9 +429,14 @@ def test_start_agristress_build_end_to_end(monkeypatch):
 
 
 def test_start_agristress_build_rejects_if_already_built():
-    db.create_dataset_record(dataset_builder.AGRISTRESS_NAME, "",
-                              f"data_user/{dataset_builder.AGRISTRESS_STEM}.csv",
-                              None, f"data_user/{dataset_builder.AGRISTRESS_STEM}.json", 1)
+    db.create_dataset_record(
+        dataset_builder.AGRISTRESS_NAME,
+        "",
+        f"data_user/{dataset_builder.AGRISTRESS_STEM}.csv",
+        None,
+        f"data_user/{dataset_builder.AGRISTRESS_STEM}.json",
+        1,
+    )
     with pytest.raises(dataset_builder.BuildValidationError):
         dataset_builder.start_demo_build("agristress500")
 

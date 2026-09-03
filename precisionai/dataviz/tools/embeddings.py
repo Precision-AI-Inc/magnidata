@@ -16,10 +16,11 @@ a second model run against the same dataset -> data/<stem>_<variant>.json
 (shows up as a "Compare" option).
 
 Usage:
-    python -m precisionai.agriviz.tools.embeddings \
+    python -m precisionai.dataviz.tools.embeddings \
         --input in.csv --output data/datalake_4k_dinov2.json \
         [--model dinov2] [--device cpu] [--limit N] [--image-source auto]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -27,26 +28,38 @@ import csv
 import json
 import os
 import sys
+from collections.abc import Iterable, Iterator
+from typing import Any
 
 import numpy as np
 from PIL import Image
 
 from . import image_source, provenance
-from .embedding_models import MODELS
+from .embedding_models import MODELS, EmbeddingModel
+
+# tqdm is part of the optional `[ml]` extra (see pyproject.toml), so it may not be
+# installed even when this module is imported — fall back to periodic stderr counts.
+try:
+    from tqdm import tqdm
+
+    _TQDM_AVAILABLE = True
+except ImportError:
+    tqdm = None
+    _TQDM_AVAILABLE = False
 
 
-def _progress(iterable, total):
+def _progress(iterable: Iterable[Any], total: int) -> Iterable[Any]:
     """Wrap with a tqdm bar if available; else fall back to periodic stderr counts."""
-    try:
-        from tqdm import tqdm
+    if _TQDM_AVAILABLE and tqdm is not None:
         return tqdm(iterable, total=total, unit="img", desc="embedding", file=sys.stderr)
-    except ImportError:
-        def gen():
-            for i, x in enumerate(iterable):
-                if (i + 1) % 50 == 0 or (i + 1) == total:
-                    print(f"  {i + 1}/{total}", file=sys.stderr)
-                yield x
-        return gen()
+
+    def gen() -> Iterator[Any]:
+        for i, x in enumerate(iterable):
+            if (i + 1) % 50 == 0 or (i + 1) == total:
+                print(f"  {i + 1}/{total}", file=sys.stderr)
+            yield x
+
+    return gen()
 
 
 class AllRowsFailedError(RuntimeError):
@@ -58,7 +71,9 @@ class AllRowsFailedError(RuntimeError):
     """
 
 
-def embed_row(image_path: str, model_entry, handle, image_mode: str = "auto"):
+def embed_row(
+    image_path: str, model_entry: EmbeddingModel, handle: Any, image_mode: str = "auto"
+) -> tuple[str, np.ndarray | None, str, str]:
     """Embed one image. Returns (basename, vector, source, error_str); never raises.
 
     ``vector`` is None when the image could not be resolved or read, and then
@@ -83,8 +98,23 @@ def embed_row(image_path: str, model_entry, handle, image_mode: str = "auto"):
     return basename, vec, source, ""
 
 
-def run(input_csv: str, output_json: str, model: str = "dinov2", device: str = "cpu",
-        limit: int | None = None, image_mode: str = "auto") -> int:
+def run(
+    input_csv: str,
+    output_json: str,
+    model: str = "dinov2",
+    device: str = "cpu",
+    limit: int | None = None,
+    image_mode: str = "auto",
+) -> int:
+    """Embed every image in `input_csv` with `model` and write the embeddings JSON.
+
+    Loads the requested model once, embeds each resolvable image, writes
+    ``{"embeddings": {...}}`` to `output_json` plus a provenance sidecar, and
+    returns the number of images successfully embedded. Raises
+    `AllRowsFailedError` instead of writing an empty output when every row of a
+    non-empty input failed, so a good pre-existing file at `output_json` survives
+    a misconfigured run.
+    """
     if model not in MODELS:
         raise ValueError(f"unknown model {model!r}; available: {sorted(MODELS)}")
     model_entry = MODELS[model]
@@ -131,7 +161,8 @@ def run(input_csv: str, output_json: str, model: str = "dinov2", device: str = "
             f"all {len(rows)} rows failed to embed — nothing written to {output_json} "
             f"(an existing file there was left untouched). See the per-row errors above; "
             f"a common cause is DATALAKE_ROOT / thumbnail roots pointing somewhere the "
-            f"input CSV's images do not exist.")
+            f"input CSV's images do not exist."
+        )
 
     with open(output_json, "w") as f:
         json.dump({"embeddings": embeddings}, f)
@@ -155,8 +186,11 @@ def run(input_csv: str, output_json: str, model: str = "dinov2", device: str = "
     # Best-effort checkpoint hashing (like nima.py's weight_paths()) is left for a
     # follow-up — timm/HF cache layout varies by download backend and model.
     prov = provenance.build(
-        input_csv, output_json, params,
-        f"agriviz-embeddings/{model}", weight_paths=[],
+        input_csv,
+        output_json,
+        params,
+        f"dataviz-embeddings/{model}",
+        weight_paths=[],
         version_modules=("numpy", "PIL", "torch", "timm"),
         determinism_notes=[
             "Vectors come from the configured embedding model's own preprocessing (which "
@@ -164,23 +198,29 @@ def run(input_csv: str, output_json: str, model: str = "dinov2", device: str = "
             "deterministic pixel features.",
             "Per-row image resolution (full-res vs. thumbnail fallback) affects what the "
             "model actually sees; see this sidecar's 'stats' for this run's source breakdown.",
-        ])
+        ],
+    )
     provenance.write(prov, output_json + ".provenance.json")
 
     print(f"Wrote {len(embeddings)} embeddings -> {output_json}", file=sys.stderr)
     return len(embeddings)
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description="Agriviz embeddings generator (CSV -> JSON).")
+def main(argv: list[str] | None = None) -> None:
+    """Parse CLI args and run the embeddings generator, exiting 1 on total failure."""
+    ap = argparse.ArgumentParser(description="Dataviz embeddings generator (CSV -> JSON).")
     ap.add_argument("--input", required=True, help="input CSV with an image_path column")
     ap.add_argument("--output", required=True, help="output embeddings JSON path")
     ap.add_argument("--model", default="dinov2", choices=sorted(MODELS), help="embedding model to use")
     ap.add_argument("--device", default="cpu", help="torch device (cpu/cuda)")
     ap.add_argument("--limit", type=int, default=None, help="process only the first N rows")
-    ap.add_argument("--image-source", dest="image_mode", choices=["auto", "fullres", "thumbnail"],
-                    default="auto", help="auto: full-res then thumbnail fallback (default); "
-                                         "fullres: full-res only; thumbnail: prefer thumbnails")
+    ap.add_argument(
+        "--image-source",
+        dest="image_mode",
+        choices=["auto", "fullres", "thumbnail"],
+        default="auto",
+        help="auto: full-res then thumbnail fallback (default); fullres: full-res only; thumbnail: prefer thumbnails",
+    )
     args = ap.parse_args(argv)
     try:
         run(args.input, args.output, args.model, args.device, args.limit, args.image_mode)

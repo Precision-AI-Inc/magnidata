@@ -6,7 +6,7 @@ Reference for the feature set that should drive dataset filtering/curation. Ever
 - **Model-based** — requires running a trained/pretrained model (segmentation, embedding, learned IQA).
 - **Compound** — derived by combining two or more atomic and/or model-based features into a new signal.
 
-Features marked *(existing)* already exist in `precisionai/agriviz/tools/`. Features marked *(new)* still need to be built.
+Features marked *(existing)* already exist in `precisionai/dataviz/tools/`. Features marked *(new)* still need to be built.
 
 ---
 
@@ -17,7 +17,7 @@ These should run first, since a bad verdict here corrupts every color-dependent 
 ### Has Annotations
 **Tier:** Atomic *(new)*
 **Source:** check at ingestion time whether a COCO annotation/mask file exists for the image, using the same sibling-file lookup convention `coco_labels.py` already relies on.
-**Answers:** whether this image has ground-truth labels at all. Gates which annotation-dependent features (class breakdown, `green_annotation_ratio`, instance stats) are valid versus which fall back to model-predicted equivalents.
+**Answers:** whether this image has ground-truth labels at all. Gates which annotation-dependent features (class breakdown, `annotation_ratio`, instance stats) are valid versus which fall back to model-predicted equivalents.
 
 ### Channel-Order Signals (RGB/BGR swap)
 **Tier:** Atomic *(existing — `rb_swap_check.py`, not yet wired into the pipeline)*
@@ -58,10 +58,10 @@ These should run first, since a bad verdict here corrupts every color-dependent 
 **Source:** (crop-annotated px + weed-annotated px) / (image area − annotated vegetation px), from COCO ground-truth polygons. Only populated when `has_annotations` is true.
 **Answers:** the same ratio computed from human-labeled ground truth instead of model prediction — a trustworthy reference wherever labels exist, and directly comparable to the model-based version to catch model failures or mislabeled data.
 
-### `green_annotation_ratio` / `green_mass`
+### `annotation_ratio` / `fg_green_mean`
 **Tier:** Atomic, label-dependent *(existing — `pixel_features.py`)*
-**Source:** mean pixel coverage/intensity over the COCO foreground mask.
-**Answers:** coarse annotated-foreground coverage; superseded in intent by the two green-on-brown ratios above, kept for backward compatibility.
+**Source:** pixel coverage / mean green-channel intensity over the COCO foreground mask.
+**Answers:** coarse annotated-foreground coverage and brightness; superseded in intent by the two green-on-brown ratios above, kept for backward compatibility.
 
 ### Weed-Density-vs-Crop Ratio
 **Tier:** Compound *(new)*

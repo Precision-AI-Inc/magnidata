@@ -4,6 +4,7 @@
 """Structural tests for the embedding-model registry. Does not call load() or
 embed() on the real entries — no model download, no network, no torch/timm
 required for this test to run."""
+
 from .embedding_models import MODELS, EmbeddingModel
 
 

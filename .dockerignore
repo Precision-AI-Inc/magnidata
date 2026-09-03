@@ -6,6 +6,6 @@
 **/*.pyc
 **/.pytest_cache
 **/.venv
-precisionai/agriviz/dashboard/node_modules
-precisionai/agriviz/dashboard/dist
-precisionai/agriviz/api/.venv
+precisionai/dataviz/dashboard/node_modules
+precisionai/dataviz/dashboard/dist
+precisionai/dataviz/api/.venv

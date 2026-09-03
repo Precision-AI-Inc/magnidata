@@ -5,11 +5,14 @@
 tiny synthetic fixture, and features/embeddings.run are monkeypatched to fast fakes so
 no torch/timm/pyiqa is required.
 
-Run:  python -m pytest precisionai/agriviz/scripts/test_prepare_coco128_dashboard.py -q
+Run:  python -m pytest precisionai/dataviz/scripts/test_prepare_coco128_dashboard.py -q
 """
+
 import argparse
 import csv
 import json
+import sys
+import types
 
 import numpy as np
 from PIL import Image
@@ -34,14 +37,21 @@ def _make_coco_root(root, n=2):
 
 def _args(**overrides):
     defaults = dict(
-        dataset_stem="coco128_test", limit=None, stage_mode="copy", cluster_by="dominant-class",
-        device="cpu", with_nima=False, no_embeddings=False, embedding_model="fake",
+        dataset_stem="coco128_test",
+        limit=None,
+        stage_mode="copy",
+        cluster_by="dominant-class",
+        device="cpu",
+        with_nima=False,
+        no_embeddings=False,
+        embedding_model="fake",
     )
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
 
 
 # ── YOLO-segment parsing + COCO polygon writing ──────────────────────────────
+
 
 def test_read_yolo_seg_labels_parses_polygon_points(tmp_path):
     label_path = tmp_path / "a.txt"
@@ -77,10 +87,10 @@ def test_write_coco_json_computes_real_polygon_bbox_and_area(tmp_path):
 
     doc = json.loads(out.read_text())
     ann = doc["annotations"][0]
-    assert ann["category_id"] == 1   # class 0 ("person") + 1 (background reserves 0)
+    assert ann["category_id"] == 1  # class 0 ("person") + 1 (background reserves 0)
     assert ann["segmentation"] == [[30.0, 30.0, 70.0, 30.0, 70.0, 70.0, 30.0, 70.0]]
     assert ann["bbox"] == [30.0, 30.0, 40.0, 40.0]
-    assert ann["area"] == 1600.0   # 40x40 square
+    assert ann["area"] == 1600.0  # 40x40 square
 
 
 def test_write_coco_json_no_instances_writes_empty_annotations(tmp_path):
@@ -117,7 +127,7 @@ def test_stage_coco128_custom_stage_root(tmp_path):
     coco_root = _make_coco_root(root)
     custom_root = root / "data_user" / "coco128_test_images"
 
-    manifest, stats = mod.stage_coco128(_args(), root, coco_root, stage_root=custom_root)
+    manifest, _stats = mod.stage_coco128(_args(), root, coco_root, stage_root=custom_root)
 
     assert manifest == custom_root / "coco128_test_input.csv"
     assert len(list((custom_root / "images").glob("*.jpg"))) == 2
@@ -127,6 +137,12 @@ def test_stage_coco128_custom_stage_root(tmp_path):
 
 
 def _fake_features_embeddings(monkeypatch):
+    # run_pipeline() import-checks torch/timm itself before calling embeddings.run
+    # (so a missing install fails with a clear message) — stub them in sys.modules
+    # too, so that preflight check passes without a real torch/timm install.
+    for module_name in ("torch", "timm"):
+        monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
+
     calls = {"features": [], "embeddings": []}
 
     def fake_features_run(input_csv, output_csv, **kwargs):
@@ -146,8 +162,8 @@ def _fake_features_embeddings(monkeypatch):
         calls["embeddings"].append((input_csv, output_json))
         return 0
 
-    monkeypatch.setattr("precisionai.agriviz.tools.features.run", fake_features_run)
-    monkeypatch.setattr("precisionai.agriviz.tools.embeddings.run", fake_embeddings_run)
+    monkeypatch.setattr("precisionai.dataviz.tools.features.run", fake_features_run)
+    monkeypatch.setattr("precisionai.dataviz.tools.embeddings.run", fake_embeddings_run)
     return calls
 
 
@@ -162,7 +178,9 @@ def test_run_pipeline_default_data_dir_unchanged(tmp_path, monkeypatch):
 
     assert feature_csv == root / "data" / "coco128_test.csv"
     assert embeddings_json == root / "data" / "coco128_test.json"
-    assert feature_csv.is_file() and embeddings_json.is_file()
+    assert feature_csv.is_file()
+    assert embeddings_json is not None
+    assert embeddings_json.is_file()
     assert len(calls["features"]) == 1
 
 

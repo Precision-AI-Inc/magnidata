@@ -4,8 +4,9 @@
 """Unit tests for the embeddings tool. Uses a fake in-memory embedding model —
 no real DINOv2 download, no torch/timm/network required.
 
-Run:  python -m pytest precisionai/agriviz/tools/test_embeddings.py -q
+Run:  python -m pytest precisionai/dataviz/tools/test_embeddings.py -q
 """
+
 import csv
 import json
 import os
@@ -24,8 +25,7 @@ def _fake_model(dim=4):
         return {"device": device}
 
     def embed(handle, rgb):
-        vec = np.array([rgb[..., 0].mean(), rgb[..., 1].mean(), rgb[..., 2].mean(), 1.0],
-                        dtype=np.float32)
+        vec = np.array([rgb[..., 0].mean(), rgb[..., 1].mean(), rgb[..., 2].mean(), 1.0], dtype=np.float32)
         return vec[:dim]
 
     return EmbeddingModel(name="fake", dim=dim, load=load, embed=embed)
@@ -81,7 +81,8 @@ def test_embed_row_unreadable_image_reports_reason(tmp_path):
     name, vec, source, err = embed_row(bad_path, model, handle)
 
     assert (name, vec, source) == ("bad.png", None, "fullres")
-    assert err.startswith("embed:") and err != "embed:"
+    assert err.startswith("embed:")
+    assert err != "embed:"
 
 
 def test_run_writes_embeddings_json_and_provenance(tmp_path, monkeypatch):
@@ -104,7 +105,7 @@ def test_run_writes_embeddings_json_and_provenance(tmp_path, monkeypatch):
 
     with open(out_path + ".provenance.json") as f:
         prov = json.load(f)
-    assert prov["feature_schema_version"] == "agriviz-embeddings/fake"
+    assert prov["feature_schema_version"] == "dataviz-embeddings/fake"
     assert prov["params"]["model"] == "fake"
 
     # Records what the run actually did, not just its declared config.
@@ -113,12 +114,13 @@ def test_run_writes_embeddings_json_and_provenance(tmp_path, monkeypatch):
     assert stats["embedded"] == 2
     assert stats["skipped"] == 0
     assert stats["sources"] == {"fullres": 2}
-    assert stats["observed_dim"] == 4        # observed, not the registry's declared dim
+    assert stats["observed_dim"] == 4  # observed, not the registry's declared dim
 
     # Embeddings-specific determinism notes, not the feature extractor's.
     notes = " ".join(prov["determinism_notes"]).lower()
     assert "resize" in notes
-    assert "nima" not in notes and "polygon" not in notes
+    assert "nima" not in notes
+    assert "polygon" not in notes
 
 
 def test_run_skips_missing_images(tmp_path, monkeypatch, capsys):
@@ -144,8 +146,7 @@ def test_run_skips_missing_images(tmp_path, monkeypatch, capsys):
 
     with open(out_path + ".provenance.json") as f:
         stats = json.load(f)["params"]["stats"]
-    assert stats == {"rows": 2, "embedded": 1, "skipped": 1,
-                     "sources": {"fullres": 1, "missing": 1}, "observed_dim": 4}
+    assert stats == {"rows": 2, "embedded": 1, "skipped": 1, "sources": {"fullres": 1, "missing": 1}, "observed_dim": 4}
 
 
 def test_run_total_failure_refuses_to_overwrite_existing_output(tmp_path, monkeypatch):
@@ -164,8 +165,8 @@ def test_run_total_failure_refuses_to_overwrite_existing_output(tmp_path, monkey
         run(csv_path, out_path, model="fake", device="cpu")
 
     with open(out_path) as f:
-        assert json.load(f) == existing      # untouched
-    assert not os.path.exists(prov_path)     # no sidecar for an unwritten output
+        assert json.load(f) == existing  # untouched
+    assert not os.path.exists(prov_path)  # no sidecar for an unwritten output
 
 
 def test_main_exits_nonzero_on_total_failure(tmp_path, monkeypatch):
@@ -197,11 +198,13 @@ def test_run_empty_input_csv_succeeds(tmp_path, monkeypatch):
         assert json.load(f) == {"embeddings": {}}
     with open(out_path + ".provenance.json") as f:
         stats = json.load(f)["params"]["stats"]
-    assert stats["rows"] == 0 and stats["embedded"] == 0 and stats["observed_dim"] is None
+    assert stats["rows"] == 0
+    assert stats["embedded"] == 0
+    assert stats["observed_dim"] is None
 
 
 def test_run_unknown_model_raises(tmp_path):
     csv_path = os.path.join(str(tmp_path), "in.csv")
     _write_csv(csv_path, [])
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="unknown model"):
         run(csv_path, os.path.join(str(tmp_path), "out.json"), model="not-a-model")

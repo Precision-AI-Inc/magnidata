@@ -95,8 +95,7 @@ latex_additional_files = ["assets/logo.png"] if os.path.isfile(_logo_path) else 
 _logo_latex = "logo" if latex_additional_files else ""
 
 _header_right = (
-    r"\raisebox{-0.2\height}{\includegraphics[height=0.45cm]{%s.png}}\quad PAI DataViz --- %s"
-    % (_logo_latex, version)
+    r"\raisebox{-0.2\height}{\includegraphics[height=0.45cm]{%s.png}}\quad PAI DataViz --- %s" % (_logo_latex, version)
     if _logo_latex
     else "PAI DataViz --- %s" % version
 )

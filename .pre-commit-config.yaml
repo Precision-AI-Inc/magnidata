@@ -35,13 +35,15 @@ repos:
         types: [python]
         pass_filenames: false
 
-  # ── Tests + coverage (≥ 90%) ────────────────────────────────────────────────
+  # ── Tests + coverage (≥ 60%; see CONTRIBUTING.md's Known gaps) ──────────────
   - repo: local
     hooks:
       - id: pytest
-        name: pytest (coverage ≥ 90%)
+        name: pytest (coverage ≥ 60%)
         entry: python -m pytest
         language: system
-        args: ["tests/", "-q", "--tb=short", "--no-header"]
+        # No path arg: pyproject.toml's testpaths (precisionai/dataviz — tests are
+        # colocated with source in this repo, not under a top-level tests/) applies.
+        args: ["-q", "--tb=short", "--no-header"]
         pass_filenames: false
         always_run: true

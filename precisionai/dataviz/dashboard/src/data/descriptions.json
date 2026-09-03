@@ -105,20 +105,20 @@
       "plain_meaning": "How similar different object types look in color. High values mean two categories look almost the same — easy to mix up. (Only meaningful when there's more than one type.)",
       "scale": "0 to 1 (higher = look-alike categories)"
     },
-    "green_mass": {
+    "fg_green_mean": {
       "group": "Annotation coverage",
-      "plain_meaning": "A measure of how much of a specific reference color (green) appears in the photo overall — a general color-based proxy for how much of the labeled foreground is present.",
-      "scale": "Number (higher = more of that color present)"
+      "plain_meaning": "The average brightness of the green color channel within the outlined (labeled) area. It reflects how bright that area is, not necessarily how 'green' it looks — a plain white or gray object can score just as high as a green one.",
+      "scale": "0 to 255 (higher = brighter green channel)"
     },
     "annotated_px_count": {
       "group": "Annotation coverage",
       "plain_meaning": "How many dots (pixels) were marked as an object in the outline.",
       "scale": "Count (pixels)"
     },
-    "green_annotation_ratio": {
+    "annotation_ratio": {
       "group": "Annotation coverage",
-      "plain_meaning": "Whether the green-colored regions in the photo were fully outlined. Values near 1 mean the outlining covered those areas well; low values mean there are green regions that nobody outlined — a sign of a possible mistake.",
-      "scale": "0 to 1 (higher = more complete outlining)"
+      "plain_meaning": "What share of the whole photo was outlined as an object. Values near 1 mean most of the photo was labeled; low values mean only a small part of the photo has any outline at all.",
+      "scale": "0 to 1 (higher = more of the photo outlined)"
     },
     "wb_r_gain": {
       "group": "Camera & sensor info",

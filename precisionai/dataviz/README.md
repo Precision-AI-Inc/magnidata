@@ -1,4 +1,4 @@
-# agriviz — release bundle
+# dataviz — release bundle
 
 Self-contained copy of the Precision AI visual-query stack plus the feature-extraction
 tool, so the whole thing can be built and run from this folder. This is the only copy
@@ -6,7 +6,7 @@ of the stack in the repo — the original top-level `dashboard/`, `confi.yaml`, 
 `docker-compose.yml` have been retired.
 
 ```
-agriviz/
+dataviz/
   api/         Flask API (images/masks/overlays, datasets, embedding compute)
   dashboard/   React + Vite portal, served by nginx
   tools/       Feature extractor (CSV/images -> CSV, see tools/README.md) + embeddings
@@ -55,7 +55,7 @@ VITE_API_PROXY_TARGET=http://localhost:5050 npm run dev
 
 ```bash
 pip install -r requirements.txt
-python -m precisionai.agriviz.tools.features --input data/agri-benc-0.0.3.csv --output out.csv
+python -m precisionai.dataviz.tools.features --input data/agri-benc-0.0.3.csv --output out.csv
 ```
 
 See `tools/README.md` for the full column schema, flags (`--skip-nima`, `--image-source`,
@@ -65,7 +65,7 @@ See `tools/README.md` for the full column schema, flags (`--skip-nima`, `--image
 
 ```bash
 pip install -r requirements.txt
-python -m precisionai.agriviz.tools.embeddings --input data/agri-benc-0.0.3.csv --output data/agri-benc-0.0.3.json
+python -m precisionai.dataviz.tools.embeddings --input data/agri-benc-0.0.3.csv --output data/agri-benc-0.0.3.json
 ```
 
 Default backbone is DINOv2 (see `tools/embedding_models.py` to add another). See
@@ -91,5 +91,5 @@ COCO128, converts its YOLO labels, extracts features, writes DINOv2 embeddings,
 and registers the dashboard dataset:
 
 ```bash
-python -m precisionai.agriviz.scripts.prepare_coco128_dashboard --device cpu
+python -m precisionai.dataviz.scripts.prepare_coco128_dashboard --device cpu
 ```

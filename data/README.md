@@ -1,14 +1,14 @@
 # data/
 
 Empty by default — this repo ships with no preloaded sample datasets (see
-`precisionai/agriviz/confi.yaml`, which lists none). It's mounted read-only into the API
+`precisionai/dataviz/confi.yaml`, which lists none). It's mounted read-only into the API
 container by `docker-compose.yml` at `/app/data`.
 
 To register a permanent catalog entry (as opposed to a user-uploaded or demo-built
 dataset — see the portal's "Bring Your Own Data" dialog for those), drop a feature CSV
 here (and, optionally, a same-stem `.json` embeddings sidecar) and list it in
-`../precisionai/agriviz/confi.yaml`. See
-[`../precisionai/agriviz/docs/data-contract.md`](../precisionai/agriviz/docs/data-contract.md)
+`../precisionai/dataviz/confi.yaml`. See
+[`../precisionai/dataviz/docs/data-contract.md`](../precisionai/dataviz/docs/data-contract.md)
 for the exact file formats.
 
 Large CSVs/JSON files added here should go through Git LFS (`.gitattributes` already

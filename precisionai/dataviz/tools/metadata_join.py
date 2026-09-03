@@ -9,6 +9,7 @@ oriented, missing} using ``camera_view`` (authoritative: nadir / oblique / none)
 the numeric ``angle`` (only ever ~35/60° for oblique, empty for nadir in this data) as
 a fallback.
 """
+
 from __future__ import annotations
 
 import csv
@@ -21,7 +22,7 @@ NADIR_DEG_TOL = 10.0
 # straight metadata -> output passthroughs (no transform)
 _PASSTHROUGH = [
     ("gsd", "gsd"),
-    ("weed_density", "weed_density"),
+    ("domain_metric", "domain_metric"),
 ]
 _NUMERIC = {"gsd"}
 
@@ -40,7 +41,7 @@ def _index_csv(csv_path: str) -> dict[str, dict]:
     return idx
 
 
-def _to_float(s: str):
+def _to_float(s: str) -> float | str:
     try:
         return float(s)
     except (TypeError, ValueError):
@@ -55,12 +56,13 @@ def camera_angle_category(angle_raw: str | None, view_raw: str | None) -> str:
     if view == "oblique":
         return "oriented"
     a = _to_float((angle_raw or "").strip())
-    if a == "":
+    if isinstance(a, str):
         return "missing"
     return "nadir" if abs(a) <= NADIR_DEG_TOL else "oriented"
 
 
 def metadata_csv_path(dataset_dir: str) -> str:
+    """Return the path to `dataset_dir`'s images_metadata.csv sidecar."""
     return os.path.join(dataset_dir, "metadata", "images_metadata.csv")
 
 

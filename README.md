@@ -15,15 +15,15 @@ feature-extraction pipeline, a Flask API, and a React/Three.js dashboard for bro
 images, segmentation masks, and embeddings — including a live 3D PCA/t-SNE/cluster
 view over a dataset's embedding space.
 
-- **`precisionai/agriviz/tools/`** — a domain-agnostic feature extractor: turns a folder of
+- **`precisionai/dataviz/tools/`** — a domain-agnostic feature extractor: turns a folder of
   images (optionally with COCO-format segmentation annotations) into a single CSV of
   per-image complexity/quality/coverage metrics, plus an optional embeddings generator
   (DINOv2 by default) producing a matching JSON.
-- **`precisionai/agriviz/api/`** — a Flask API serving images/masks/overlays, dataset
+- **`precisionai/dataviz/api/`** — a Flask API serving images/masks/overlays, dataset
   listing and CSV/embeddings access, server-side PCA/t-SNE/LLE projection and clustering
   over embeddings, and an in-app dataset-build pipeline (upload your own images, or
   one-click "demo" builds of COCO128 / AgriStress-500).
-- **`precisionai/agriviz/dashboard/`** — the React + Vite + Three.js portal: parallel
+- **`precisionai/dataviz/dashboard/`** — the React + Vite + Three.js portal: parallel
   coordinates, histograms, a data table, an image/mask/overlay preview, and the 3D
   embeddings view.
 
@@ -45,10 +45,10 @@ docker compose up --build
 #   api    -> http://localhost:5051/api/health
 ```
 
-The dataset catalog (`precisionai/agriviz/confi.yaml`) ships empty. From the portal's
+The dataset catalog (`precisionai/dataviz/confi.yaml`) ships empty. From the portal's
 "Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or
 AgriStress-500 — no external data required), or upload your own images. See
-[`precisionai/agriviz/README.md`](precisionai/agriviz/README.md) for the full breakdown
+[`precisionai/dataviz/README.md`](precisionai/dataviz/README.md) for the full breakdown
 of the app's layout, data mounts, and how to register a permanent catalog entry.
 
 ---
@@ -71,10 +71,10 @@ pre-commit install
 ```
 
 The dashboard is a separate Node/Vite app (Node 18+) — see
-[`precisionai/agriviz/dashboard`](precisionai/agriviz/dashboard):
+[`precisionai/dataviz/dashboard`](precisionai/dataviz/dashboard):
 
 ```bash
-cd precisionai/agriviz/dashboard
+cd precisionai/dataviz/dashboard
 npm install
 npm run dev   # proxies /api to http://localhost:5051 by default — see vite.config.ts
 ```
@@ -84,13 +84,13 @@ npm run dev   # proxies /api to http://localhost:5051 by default — see vite.co
 ## Running the API server
 
 The primary path is Docker Compose (see Quickstart above). To run it directly instead —
-note this must be run **from within `precisionai/agriviz/api/`**, not as an installed
+note this must be run **from within `precisionai/dataviz/api/`**, not as an installed
 package: its modules use flat, sibling-style imports (`import db`, `import local_files`)
 matching how `Dockerfile.api` copies them into the container, so `python -m
-precisionai.agriviz.api.app` will not work.
+precisionai.dataviz.api.app` will not work.
 
 ```bash
-cd precisionai/agriviz/api
+cd precisionai/dataviz/api
 pip install -r requirements.txt
 python app.py          # default: host 0.0.0.0, port 5050 (override with API_PORT)
 ```
@@ -100,16 +100,16 @@ python app.py          # default: host 0.0.0.0, port 5050 (override with API_POR
 ## Feature extraction & embeddings CLI
 
 ```bash
-python -m precisionai.agriviz.tools.features --input data/mydata.csv --output out.csv
-python -m precisionai.agriviz.tools.embeddings --input data/mydata.csv --output data/mydata.json
+python -m precisionai.dataviz.tools.features --input data/mydata.csv --output out.csv
+python -m precisionai.dataviz.tools.embeddings --input data/mydata.csv --output data/mydata.json
 ```
 
-See [`precisionai/agriviz/tools/README.md`](precisionai/agriviz/tools/README.md) for the
+See [`precisionai/dataviz/tools/README.md`](precisionai/dataviz/tools/README.md) for the
 full column schema and flags, and
-[`precisionai/agriviz/docs/data-contract.md`](precisionai/agriviz/docs/data-contract.md)
+[`precisionai/dataviz/docs/data-contract.md`](precisionai/dataviz/docs/data-contract.md)
 for the CSV/embeddings-JSON formats the dashboard consumes — including how to bring your
 own data that conforms.
-[`precisionai/agriviz/docs/recipes/from-images-to-dashboard.md`](precisionai/agriviz/docs/recipes/from-images-to-dashboard.md)
+[`precisionai/dataviz/docs/recipes/from-images-to-dashboard.md`](precisionai/dataviz/docs/recipes/from-images-to-dashboard.md)
 walks through turning a raw folder of images into a dashboard-ready dataset end to end.
 
 ---
@@ -118,11 +118,11 @@ walks through turning a raw folder of images into a dashboard-ready dataset end 
 
 ```bash
 python -m pytest                                          # run all tests with coverage report
-pytest precisionai/agriviz/tools/test_features.py          # run a specific module
+pytest precisionai/dataviz/tools/test_features.py          # run a specific module
 pytest -k "coverage"                                        # run tests matching a keyword
 ```
 
-Tests are colocated with the module they cover (`precisionai/agriviz/**/test_*.py`), not
+Tests are colocated with the module they cover (`precisionai/dataviz/**/test_*.py`), not
 under a top-level `tests/` — see [CONTRIBUTING.md](CONTRIBUTING.md#known-gaps). Coverage
 is enforced at 60% (measured at 63.2% at migration time), short of the org's 90% target —
 also tracked there.
@@ -150,7 +150,7 @@ pre-commit run --all-files
 ## Project layout
 
 ```
-precisionai/agriviz/
+precisionai/dataviz/
   api/          Flask API — images/masks/overlays, dataset listing, embedding
                 projection/clustering, in-app dataset builds
   tools/        Feature extractor (images [+ COCO annotations] -> CSV) and

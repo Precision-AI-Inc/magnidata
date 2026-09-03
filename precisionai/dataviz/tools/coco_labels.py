@@ -14,10 +14,13 @@ Rasterization uses ``PIL.ImageDraw.polygon`` (deterministic, raster-order fill,
 no extra dependency). pycocotools' ``frPyObjects``/``decode`` is the drop-in
 alternative if RLE masks ever appear.
 """
+
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -31,13 +34,16 @@ BACKGROUND_CATEGORY_ID = 0
 
 @dataclass
 class CocoLabels:
+    """Parsed per-image COCO annotations, ready for rasterization."""
+
     width: int
     height: int
-    categories: dict[int, str]              # category_id -> name
-    annotations: list[dict]                 # [{id, category_id, polygons:[[x,y,...]]}]
+    categories: dict[int, str]  # category_id -> name
+    annotations: list[dict]  # [{id, category_id, polygons:[[x,y,...]]}]
 
 
 def parse(json_path: str) -> CocoLabels:
+    """Parse a per-image COCO JSON file into a `CocoLabels` instance."""
     with open(json_path) as f:
         doc = json.load(f)
 
@@ -55,15 +61,17 @@ def parse(json_path: str) -> CocoLabels:
         polygons = _normalize_polygons(seg)
         if not polygons:
             continue
-        anns.append({
-            "id": int(a.get("id", 0)),
-            "category_id": int(a.get("category_id", BACKGROUND_CATEGORY_ID)),
-            "polygons": polygons,
-        })
+        anns.append(
+            {
+                "id": int(a.get("id", 0)),
+                "category_id": int(a.get("category_id", BACKGROUND_CATEGORY_ID)),
+                "polygons": polygons,
+            }
+        )
     return CocoLabels(width=width, height=height, categories=categories, annotations=anns)
 
 
-def _normalize_polygons(seg) -> list[list[float]]:
+def _normalize_polygons(seg: Any) -> list[list[float]]:
     """Return a list of flat [x0,y0,x1,y1,...] polygon parts (>=3 points each).
 
     Accepts COCO polygon format ([[...], ...]) and the occasional single flat list.
@@ -72,11 +80,7 @@ def _normalize_polygons(seg) -> list[list[float]]:
     if not seg or isinstance(seg, dict):
         return []
     parts = seg if (isinstance(seg, list) and seg and isinstance(seg[0], (list, tuple))) else [seg]
-    out = []
-    for p in parts:
-        if isinstance(p, (list, tuple)) and len(p) >= 6:   # >=3 (x,y) points
-            out.append([float(v) for v in p])
-    return out
+    return [[float(v) for v in p] for p in parts if isinstance(p, (list, tuple)) and len(p) >= 6]  # >=3 (x,y) points
 
 
 def _scale(wh: tuple[int, int], labels: CocoLabels) -> tuple[float, float]:
@@ -85,12 +89,12 @@ def _scale(wh: tuple[int, int], labels: CocoLabels) -> tuple[float, float]:
     return w / labels.width, h / labels.height
 
 
-def _pts(poly: list[float], sx: float, sy: float):
+def _pts(poly: list[float], sx: float, sy: float) -> list[tuple[float, float]] | None:
     pts = [(poly[i] * sx, poly[i + 1] * sy) for i in range(0, len(poly) - 1, 2)]
     return pts if len(pts) >= 3 else None
 
 
-def _draw_polygons(polygons, wh, sx, sy, fill: int) -> Image.Image:
+def _draw_polygons(polygons: list[list[float]], wh: tuple[int, int], sx: float, sy: float, fill: int) -> Image.Image:
     """Render polygon parts onto a fresh 'L' image (0 background, ``fill`` inside)."""
     img = Image.new("L", wh, 0)
     d = ImageDraw.Draw(img)
@@ -121,7 +125,9 @@ def rasterize_class_map(labels: CocoLabels, target_wh: tuple[int, int] | None = 
     return np.asarray(canvas, dtype=np.uint8)
 
 
-def iter_instance_masks(labels: CocoLabels, target_wh: tuple[int, int] | None = None):
+def iter_instance_masks(
+    labels: CocoLabels, target_wh: tuple[int, int] | None = None
+) -> Iterator[tuple[int, int, np.ndarray]]:
     """Yield (index, category_id, mask_bool) for each annotation/instance.
 
     ``mask_bool`` is a fresh (H, W) bool array at ``target_wh``. Iterating (rather than
@@ -142,4 +148,5 @@ def foreground_from_class_map(class_map: np.ndarray) -> np.ndarray:
 
 
 def background_from_class_map(class_map: np.ndarray) -> np.ndarray:
+    """Boolean background = class_map at the background sentinel value."""
     return class_map == (BACKGROUND_CATEGORY_ID + CLASS_MAP_OFFSET)

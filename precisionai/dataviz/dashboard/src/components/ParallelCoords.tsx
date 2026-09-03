@@ -38,7 +38,7 @@ const WARM_SCALE: [number, string][] = BRAND_SEQUENTIAL
 // Axes selected by default in the parallel-coordinates view (filtered to those present
 // in the loaded dataset). Anything not listed here starts unchecked in the Fields panel.
 const DEFAULT_NUMERIC_COLS = [
-  'complexity_score', 'width', 'green_annotation_ratio', 'green_mass',
+  'complexity_score', 'width', 'annotation_ratio', 'fg_green_mean',
   'mean_pairwise_color_dist', 'class_entropy', 'nima_ava', 'niqe', 'brisque', 'gsd',
 ]
 const FALLBACK_NUMERIC_COLS = [

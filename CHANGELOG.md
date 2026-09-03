@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Initial release: the `precisionai.agriviz` visual-query dashboard — a deterministic
+- Initial release: the `precisionai.dataviz` visual-query dashboard — a deterministic
   feature-extraction/embeddings toolkit (`tools/`), a Flask API (`api/`), a React/Vite/
   Three.js dashboard (`dashboard/`), and Docker Compose deployment.
 

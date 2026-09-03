@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Unit tests for image_source's pure helpers (no disk datalake, no network)."""
+
 from .image_source import find_path_column
 
 

@@ -7,7 +7,7 @@ export interface ColDesc {
 }
 
 // Extend the JSON with derived columns not in the original file. Keep this in sync with
-// the agriviz feature extractor's output schema so the Schema tab documents every column
+// the dataviz feature extractor's output schema so the Schema tab documents every column
 // that can appear as a parallel-coordinates axis.
 const EXTRA: Record<string, ColDesc> = {
   cluster: {
@@ -116,10 +116,10 @@ const EXTRA: Record<string, ColDesc> = {
   },
 
   // ── Optional domain-specific passthrough metadata ──
-  weed_density: {
+  domain_metric: {
     group: 'Camera & sensor info',
     plain_meaning:
-      "An optional domain-specific density metric carried through from the source dataset's own metadata, when present (e.g. a target-object density figure from the data collection site).",
+      "An optional dataset-specific metric carried through from the source dataset's own metadata, when present (its meaning depends on the dataset — e.g. a density or condition figure from the data collection site).",
     scale: 'Text / number (label)',
   },
 }

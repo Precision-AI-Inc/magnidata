@@ -5,8 +5,9 @@
 allowlist that keeps /api/image (which passes caller-supplied `path` straight through)
 from becoming an open SSRF proxy.
 
-Run:  python -m pytest precisionai/agriviz/api/test_local_files.py -q
+Run:  python -m pytest precisionai/dataviz/api/test_local_files.py -q
 """
+
 import local_files
 import pytest
 
@@ -58,7 +59,7 @@ def test_read_file_rejects_redirect_to_disallowed_host(monkeypatch):
             return b"fake-image-bytes"
 
         def geturl(self):
-            return "https://evil.example/a.png"   # landed somewhere else after a redirect
+            return "https://evil.example/a.png"  # landed somewhere else after a redirect
 
         def __enter__(self):
             return self

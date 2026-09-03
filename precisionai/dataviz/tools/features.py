@@ -10,26 +10,37 @@ compute the deterministic feature set, run NIMA, join metadata, and write one ou
 row per image in the dashboard schema. A provenance sidecar is written alongside.
 
 Usage:
-    python -m precisionai.agriviz.tools.features --input in.csv --output out.csv
+    python -m precisionai.dataviz.tools.features --input in.csv --output out.csv
         [--device cpu] [--limit N] [--skip-nima]
 """
+
 from __future__ import annotations
 
 import argparse
 import csv
 import io
+import math
 import os
 import sys
+from collections.abc import Iterable, Iterator
+from typing import TypeVar
 
 import numpy as np
 from PIL import Image
 
 from . import coco_labels, image_source, instance_features, metadata_join, pixel_features, provenance, quality_features
+from .nima import NimaScorer
 from .schema import CLUSTER, FEATURE_SCHEMA_VERSION, OUTPUT_COLUMNS, blank_row
 
-Image.MAX_IMAGE_PIXELS = None        # these are legitimately large images
+try:
+    from tqdm import tqdm
+except ImportError:
+    tqdm = None
+
+Image.MAX_IMAGE_PIXELS = None  # these are legitimately large images
 
 ROUND_DECIMALS = 6
+T = TypeVar("T")
 
 # ── Difficulty composite (transparent, reproducible; recorded in provenance) ───────
 # complexity = STRUCT_MIX * structural_difficulty + QUALITY_MIX * capture_quality_penalty
@@ -45,11 +56,11 @@ QUALITY_WEIGHTS_LEARNED = {"niqe": 0.35, "brisque": 0.25, "nima_poor": 0.20, "ex
 QUALITY_WEIGHTS_DET = {"blur_soft": 0.45, "noise": 0.35, "exposure": 0.20}
 
 # normalizers mapping each metric to 0..1
-BLUR_REF = 500.0                  # laplacian variance treated as "fully sharp"
-NOISE_REF = 12.0                  # noise sigma treated as "very noisy"
-NIQE_LO, NIQE_HI = 3.0, 8.0       # niqe lower=better
-BRISQUE_REF = 80.0                # brisque lower=better (0..100)
-NIMA_LO, NIMA_HI = 3.0, 6.5       # nima higher=better; poorness = (HI-nima)/(HI-LO)
+BLUR_REF = 500.0  # laplacian variance treated as "fully sharp"
+NOISE_REF = 12.0  # noise sigma treated as "very noisy"
+NIQE_LO, NIQE_HI = 3.0, 8.0  # niqe lower=better
+BRISQUE_REF = 80.0  # brisque lower=better (0..100)
+NIMA_LO, NIMA_HI = 3.0, 6.5  # nima higher=better; poorness = (HI-nima)/(HI-LO)
 
 PARAMS = {
     "bg_threshold_sum": 30,
@@ -61,43 +72,46 @@ PARAMS = {
     "shadow_band": [pixel_features.SHADOW_LO, pixel_features.SHADOW_HI],
     "nadir_deg_tol": metadata_join.NADIR_DEG_TOL,
     "complexity": {
-        "struct_mix": STRUCT_MIX, "quality_mix": QUALITY_MIX,
+        "struct_mix": STRUCT_MIX,
+        "quality_mix": QUALITY_MIX,
         "struct_weights": STRUCT_WEIGHTS,
         "quality_weights_learned": QUALITY_WEIGHTS_LEARNED,
         "quality_weights_deterministic": QUALITY_WEIGHTS_DET,
-        "blur_ref": BLUR_REF, "noise_ref": NOISE_REF,
-        "niqe_lo_hi": [NIQE_LO, NIQE_HI], "brisque_ref": BRISQUE_REF,
+        "blur_ref": BLUR_REF,
+        "noise_ref": NOISE_REF,
+        "niqe_lo_hi": [NIQE_LO, NIQE_HI],
+        "brisque_ref": BRISQUE_REF,
         "nima_lo_hi": [NIMA_LO, NIMA_HI],
     },
     "round_decimals": ROUND_DECIMALS,
 }
 
 
-def _progress(iterable, total):
+def _progress(iterable: Iterable[T], total: int) -> Iterable[T]:
     """Wrap with a tqdm bar if available; else fall back to periodic stderr counts."""
-    try:
-        from tqdm import tqdm
+    if tqdm is not None:
         return tqdm(iterable, total=total, unit="img", desc="extracting", file=sys.stderr)
-    except ImportError:
-        def gen():
-            for i, x in enumerate(iterable):
-                if (i + 1) % 50 == 0 or (i + 1) == total:
-                    print(f"  {i + 1}/{total}", file=sys.stderr)
-                yield x
-        return gen()
+
+    def gen() -> Iterator[T]:
+        for i, x in enumerate(iterable):
+            if (i + 1) % 50 == 0 or (i + 1) == total:
+                print(f"  {i + 1}/{total}", file=sys.stderr)
+            yield x
+
+    return gen()
 
 
-def _round(v):
+def _round(v: bool | float | int | str) -> bool | float | int | str:
     if isinstance(v, bool):
         return v
     if isinstance(v, float):
-        if v != v or v in (float("inf"), float("-inf")):   # NaN/Inf -> blank
+        if math.isnan(v) or math.isinf(v):  # NaN/Inf -> blank
             return ""
         return round(v, ROUND_DECIMALS)
     return v
 
 
-def _derive_paths(image_path: str):
+def _derive_paths(image_path: str) -> tuple[str, str, str, str, str]:
     images_dir = os.path.dirname(image_path)
     dataset_dir = os.path.dirname(images_dir)
     stem, ext = os.path.splitext(os.path.basename(image_path))
@@ -115,16 +129,19 @@ def _complexity(row: dict) -> tuple[float, int, str]:
 
     basis is 'learned' when NIMA/NIQE/BRISQUE are present, else 'deterministic'.
     """
-    def g(k):
+
+    def g(k: str) -> float:
         v = row.get(k, "")
         return float(v) if isinstance(v, (int, float)) else 0.0
 
     # structural (scene) difficulty — always available
     cc = g("class_count")
     class_mix = _clip01(g("class_entropy") / np.log2(cc)) if cc > 1 else 0.0
-    struct = (STRUCT_WEIGHTS["overlap_ratio"] * _clip01(g("overlap_ratio"))
-              + STRUCT_WEIGHTS["interclass_color_sim"] * _clip01(g("interclass_color_sim"))
-              + STRUCT_WEIGHTS["class_mix"] * class_mix)
+    struct = (
+        STRUCT_WEIGHTS["overlap_ratio"] * _clip01(g("overlap_ratio"))
+        + STRUCT_WEIGHTS["interclass_color_sim"] * _clip01(g("interclass_color_sim"))
+        + STRUCT_WEIGHTS["class_mix"] * class_mix
+    )
 
     exposure = _clip01(g("overexpose_ratio") + g("underexpose_ratio"))
 
@@ -135,8 +152,7 @@ def _complexity(row: dict) -> tuple[float, int, str]:
         bris_n = _clip01(g("brisque") / BRISQUE_REF)
         nima_poor = _clip01((NIMA_HI - g("nima_ava")) / (NIMA_HI - NIMA_LO))
         w = QUALITY_WEIGHTS_LEARNED
-        quality = (w["niqe"] * niqe_n + w["brisque"] * bris_n
-                   + w["nima_poor"] * nima_poor + w["exposure"] * exposure)
+        quality = w["niqe"] * niqe_n + w["brisque"] * bris_n + w["nima_poor"] * nima_poor + w["exposure"] * exposure
         basis = "learned"
     else:
         blur_soft = 1.0 - _clip01(g("blur_laplacian") / BLUR_REF)
@@ -150,7 +166,62 @@ def _complexity(row: dict) -> tuple[float, int, str]:
     return score, category, basis
 
 
-def process_row(image_path: str, scorer=None, image_mode: str = "auto") -> tuple[dict, str]:
+def _apply_rgb_features(
+    row: dict, resolved: str, source: str, scorer: NimaScorer | None
+) -> tuple[np.ndarray | None, np.ndarray | None, list[str]]:
+    """Load pixel data and populate white-balance/illumination/focus/quality/NIMA columns.
+
+    Returns (rgb, luma, errors) — rgb/luma stay None if the image couldn't be read.
+    """
+    errors: list[str] = []
+    rgb = None
+    luma = None  # stays None if the try block below fails before computing it
+    if source != "missing":
+        try:
+            with open(resolved, "rb") as f:
+                img = Image.open(io.BytesIO(f.read())).convert("RGB")
+            rgb = np.asarray(img, dtype=np.uint8)
+            row["width"], row["height"] = int(img.width), int(img.height)
+            row.update(pixel_features.white_balance(rgb))
+            luma = pixel_features.to_luma(rgb)
+            row.update(pixel_features.illumination(luma, np.ones(luma.shape, dtype=bool)))
+            row.update(pixel_features.focus(luma))
+            row.update(quality_features.compute(rgb, luma))
+        except Exception as exc:
+            errors.append(f"image:{exc}")
+
+    if scorer is not None and rgb is not None:
+        try:
+            row.update(scorer.score(resolved))
+        except Exception as exc:
+            errors.append(f"nima:{exc}")
+
+    return rgb, luma, errors
+
+
+def _apply_coco_features(row: dict, rgb: np.ndarray, luma: np.ndarray | None, label_path: str) -> list[str]:
+    """Populate coverage/instance/look-alike-colour columns from the sibling COCO label file."""
+    if not os.path.isfile(label_path):
+        return ["coco:label_not_found"]
+    try:
+        labels = coco_labels.parse(label_path)
+        # Rasterize at the loaded image's resolution (handles thumbnails too).
+        class_map = coco_labels.rasterize_class_map(labels, target_wh=(rgb.shape[1], rgb.shape[0]))
+        fg = coco_labels.foreground_from_class_map(class_map)
+        bg = coco_labels.background_from_class_map(class_map)
+        row.update(pixel_features.coverage(fg, rgb))
+        row.update(instance_features.instance_metrics(labels, rgb, class_map))
+        row["bg_coverage"] = float(bg.sum()) / float(bg.size) if bg.size else 0.0
+        # refine illumination shadow proxy to the actual foreground (only if the
+        # RGB block above actually got far enough to compute luma)
+        if luma is not None:
+            row.update(pixel_features.illumination(luma, fg))
+    except Exception as exc:
+        return [f"coco:{exc}"]
+    return []
+
+
+def process_row(image_path: str, scorer: NimaScorer | None = None, image_mode: str = "auto") -> tuple[dict, str]:
     """Compute one output row. Returns (row, error_str); never raises.
 
     ``error_str`` is empty on success. It is no longer an output column (the curated
@@ -172,48 +243,11 @@ def process_row(image_path: str, scorer=None, image_mode: str = "auto") -> tuple
     if source == "missing":
         errors.append("image:not_found (full-res and thumbnails)")
 
-    # ── RGB + NIMA ────────────────────────────────────────────────────────────────
-    rgb = None
-    luma = None   # stays None if the try block below fails before computing it
-    if source != "missing":
-        try:
-            with open(resolved, "rb") as f:
-                img = Image.open(io.BytesIO(f.read())).convert("RGB")
-            rgb = np.asarray(img, dtype=np.uint8)
-            row["width"], row["height"] = int(img.width), int(img.height)
-            row.update(pixel_features.white_balance(rgb))
-            luma = pixel_features.to_luma(rgb)
-            row.update(pixel_features.illumination(luma, np.ones(luma.shape, dtype=bool)))
-            row.update(pixel_features.focus(luma))
-            row.update(quality_features.compute(rgb, luma))
-        except Exception as exc:
-            errors.append(f"image:{exc}")
+    rgb, luma, rgb_errors = _apply_rgb_features(row, resolved, source, scorer)
+    errors.extend(rgb_errors)
 
-    if scorer is not None and rgb is not None:
-        try:
-            row.update(scorer.score(resolved))
-        except Exception as exc:
-            errors.append(f"nima:{exc}")
-
-    # ── COCO labels: coverage + instances + look-alike-class colour ────────────────
-    if rgb is not None and os.path.isfile(label_path):
-        try:
-            labels = coco_labels.parse(label_path)
-            # Rasterize at the loaded image's resolution (handles thumbnails too).
-            class_map = coco_labels.rasterize_class_map(labels, target_wh=(rgb.shape[1], rgb.shape[0]))
-            fg = coco_labels.foreground_from_class_map(class_map)
-            bg = coco_labels.background_from_class_map(class_map)
-            row.update(pixel_features.coverage(fg, rgb))
-            row.update(instance_features.instance_metrics(labels, rgb, class_map))
-            row["bg_coverage"] = float(bg.sum()) / float(bg.size) if bg.size else 0.0
-            # refine illumination shadow proxy to the actual foreground (only if the
-            # RGB block above actually got far enough to compute luma)
-            if luma is not None:
-                row.update(pixel_features.illumination(luma, fg))
-        except Exception as exc:
-            errors.append(f"coco:{exc}")
-    elif rgb is not None:
-        errors.append("coco:label_not_found")
+    if rgb is not None:
+        errors.extend(_apply_coco_features(row, rgb, luma, label_path))
 
     # ── Metadata join ─────────────────────────────────────────────────────────────
     try:
@@ -230,9 +264,40 @@ def process_row(image_path: str, scorer=None, image_mode: str = "auto") -> tuple
     return out, "; ".join(errors)
 
 
-def run(input_csv: str, output_csv: str, device: str = "cpu",
-        limit: int | None = None, skip_nima: bool = False,
-        image_mode: str = "auto") -> int:
+def run(
+    input_csv: str,
+    output_csv: str,
+    device: str = "cpu",
+    limit: int | None = None,
+    skip_nima: bool = False,
+    image_mode: str = "auto",
+) -> int:
+    """Extract features for every image listed in `input_csv` and write `output_csv`.
+
+    Parameters
+    ----------
+    input_csv : str
+        Path to the input CSV with an image-path column (see
+        ``image_source.find_path_column``), and optionally ``cluster``/``cluster_l2``
+        columns to pass through verbatim.
+    output_csv : str
+        Path to write the output feature CSV to, in the curated ``OUTPUT_COLUMNS`` schema.
+        A provenance sidecar is written alongside it.
+    device : str, default "cpu"
+        Torch device for the NIMA scorer, when not skipped.
+    limit : int or None, default None
+        If given, process only the first `limit` rows.
+    skip_nima : bool, default False
+        Skip all learned IQA models (NIMA/NIQE/BRISQUE); pixel/COCO/metadata only.
+    image_mode : str, default "auto"
+        Image resolution strategy: "auto" (full-res then thumbnail fallback),
+        "fullres", or "thumbnail".
+
+    Returns
+    -------
+    int
+        The number of rows written.
+    """
     with open(input_csv, newline="") as f:
         reader = csv.DictReader(f)
         fields = list(reader.fieldnames or [])
@@ -247,7 +312,6 @@ def run(input_csv: str, output_csv: str, device: str = "cpu",
 
     scorer = None
     if not skip_nima:
-        from .nima import NimaScorer
         print(f"Loading learned IQA models (NIMA/NIQE/BRISQUE) on {device} ...", file=sys.stderr)
         scorer = NimaScorer(device=device)
 
@@ -255,8 +319,8 @@ def run(input_csv: str, output_csv: str, device: str = "cpu",
     for r in _progress(rows, len(rows)):
         image_path = (r.get(path_col) or "").strip()
         row, err = process_row(image_path, scorer, image_mode)
-        for c in cluster_cols:                       # passthrough cluster labels (verbatim)
-            row[c] = (r.get(c) or "")
+        for c in cluster_cols:  # passthrough cluster labels (verbatim)
+            row[c] = r.get(c) or ""
         out_rows.append(row)
         if err:
             errored.append((image_path, err))
@@ -277,26 +341,32 @@ def run(input_csv: str, output_csv: str, device: str = "cpu",
     if scorer is not None:
         params.update(scorer.proc_params())
     prov = provenance.build(
-        input_csv, output_csv, params, FEATURE_SCHEMA_VERSION,
-        weight_paths=scorer.weight_paths() if scorer else [])
+        input_csv, output_csv, params, FEATURE_SCHEMA_VERSION, weight_paths=scorer.weight_paths() if scorer else []
+    )
     provenance.write(prov, output_csv + ".provenance.json")
 
     print(f"Wrote {len(out_rows)} rows -> {output_csv}", file=sys.stderr)
     return len(out_rows)
 
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description="Agriviz image feature extractor (CSV -> CSV).")
+def main(argv: list[str] | None = None) -> None:
+    """Parse CLI args and run the feature extractor."""
+    ap = argparse.ArgumentParser(description="Dataviz image feature extractor (CSV -> CSV).")
     ap.add_argument("--input", required=True, help="input CSV with an image_path column")
     ap.add_argument("--output", required=True, help="output CSV path")
     ap.add_argument("--device", default="cpu", help="torch device for NIMA (cpu/cuda)")
     ap.add_argument("--limit", type=int, default=None, help="process only the first N rows")
-    ap.add_argument("--skip-nima", action="store_true",
-                    help="skip all learned IQA models (NIMA/NIQE/BRISQUE); pixel/COCO/meta only")
-    ap.add_argument("--image-source", choices=["auto", "fullres", "thumbnail"], default="auto",
-                    help="auto: full-res then thumbnail fallback (default); fullres: full-res only; "
-                         "thumbnail: prefer thumbnails (fast). Thumbnails are downscaled JPEGs — "
-                         "image-derived features won't match full-res.")
+    ap.add_argument(
+        "--skip-nima", action="store_true", help="skip all learned IQA models (NIMA/NIQE/BRISQUE); pixel/COCO/meta only"
+    )
+    ap.add_argument(
+        "--image-source",
+        choices=["auto", "fullres", "thumbnail"],
+        default="auto",
+        help="auto: full-res then thumbnail fallback (default); fullres: full-res only; "
+        "thumbnail: prefer thumbnails (fast). Thumbnails are downscaled JPEGs — "
+        "image-derived features won't match full-res.",
+    )
     args = ap.parse_args(argv)
     run(args.input, args.output, args.device, args.limit, args.skip_nima, args.image_source)
 

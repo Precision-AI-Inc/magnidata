@@ -21,7 +21,7 @@ body:
       label: Steps to reproduce
       description: Minimal code or steps to reproduce the issue.
       placeholder: |
-        from precisionai.agriviz.tools.features import run
+        from precisionai.dataviz.tools.features import run
         say_hello("World")
         ...
     validations:

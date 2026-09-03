@@ -8,6 +8,7 @@ no-reference scores (NIMA/NIQE/BRISQUE in nima.py), which are perceptual but
 biased toward consumer photography. All work on a float64 Rec.601 luma (0..255)
 and/or the uint8 RGB; every reduction is guarded.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -24,11 +25,12 @@ def _conv3_abs_sum(luma: np.ndarray, k: np.ndarray) -> np.ndarray:
     acc = np.zeros((luma.shape[0] - 2, luma.shape[1] - 2), dtype=np.float64)
     for di in range(3):
         for dj in range(3):
-            acc += k[di, dj] * luma[di:di + luma.shape[0] - 2, dj:dj + luma.shape[1] - 2]
+            acc += k[di, dj] * luma[di : di + luma.shape[0] - 2, dj : dj + luma.shape[1] - 2]
     return np.abs(acc)
 
 
 def noise_sigma(luma: np.ndarray) -> float:
+    """Estimate Gaussian-noise sigma via the Immerkaer second-derivative residual."""
     h, w = luma.shape
     if h < 3 or w < 3:
         return 0.0
@@ -40,10 +42,8 @@ def tenengrad(luma: np.ndarray) -> float:
     """Mean Sobel gradient magnitude squared — a focus/sharpness measure."""
     if luma.shape[0] < 3 or luma.shape[1] < 3:
         return 0.0
-    gx = (luma[:-2, 2:] + 2 * luma[1:-1, 2:] + luma[2:, 2:]
-          - luma[:-2, :-2] - 2 * luma[1:-1, :-2] - luma[2:, :-2])
-    gy = (luma[2:, :-2] + 2 * luma[2:, 1:-1] + luma[2:, 2:]
-          - luma[:-2, :-2] - 2 * luma[:-2, 1:-1] - luma[:-2, 2:])
+    gx = luma[:-2, 2:] + 2 * luma[1:-1, 2:] + luma[2:, 2:] - luma[:-2, :-2] - 2 * luma[1:-1, :-2] - luma[2:, :-2]
+    gy = luma[2:, :-2] + 2 * luma[2:, 1:-1] + luma[2:, 2:] - luma[:-2, :-2] - 2 * luma[:-2, 1:-1] - luma[:-2, 2:]
     return float((gx * gx + gy * gy).mean())
 
 
@@ -80,6 +80,7 @@ def colorfulness(rgb: np.ndarray) -> float:
 
 
 def compute(rgb: np.ndarray, luma: np.ndarray) -> dict:
+    """Compute the full deterministic quality panel: noise, sharpness, contrast, colour."""
     return {
         "noise_sigma": noise_sigma(luma),
         "tenengrad": tenengrad(luma),

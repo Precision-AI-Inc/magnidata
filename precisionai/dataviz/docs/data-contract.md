@@ -1,6 +1,6 @@
 # Data contract
 
-agriviz's dashboard consumes two kinds of files from `data/`: a **multiparametric
+dataviz's dashboard consumes two kinds of files from `data/`: a **multiparametric
 CSV** (one row per image, numeric/categorical columns for the parallel-coordinates
 and 3D views) and, optionally, an **embeddings JSON** (one vector per image, for the
 embeddings-space 3D view). Both can either be produced by the tools in this repo or
@@ -9,18 +9,18 @@ brought in from elsewhere, as long as they conform to the shapes below.
 ## Multiparametric CSV
 
 **Source of truth:** `tools/schema.py`'s `OUTPUT_COLUMNS` — currently
-`FEATURE_SCHEMA_VERSION = "agriviz-features/2.1.0"`, 41 columns grouped by concept
+`FEATURE_SCHEMA_VERSION = "dataviz-features/2.1.0"`, 41 columns grouped by concept
 (identity, coverage, instances, classes, exposure, focus, quality panel, white
 balance, learned IQA, composite difficulty, camera metadata, agronomic passthrough).
 `dashboard/src/data/descriptions.json` + `colDescs.ts`'s `EXTRA` map document every
 one of those columns in plain language for the Schema tab; `tools/test_schema_sync.py`
-fails `pytest precisionai/agriviz/tools` if the two ever drift apart again.
+fails `pytest precisionai/dataviz/tools` if the two ever drift apart again.
 
 ### Generate it with the built-in tool
 
 ```bash
-pip install -r precisionai/agriviz/requirements.txt
-python -m precisionai.agriviz.tools.features --input images.csv --output features.csv
+pip install -r precisionai/dataviz/requirements.txt
+python -m precisionai.dataviz.tools.features --input images.csv --output features.csv
 ```
 
 See `tools/README.md` for the full flag reference (`--skip-nima`, `--image-source`,
@@ -65,12 +65,12 @@ the original layout.
 ### Generate it with the built-in tool
 
 ```bash
-python -m precisionai.agriviz.tools.embeddings \
+python -m precisionai.dataviz.tools.embeddings \
     --input images.csv --output data/datalake_4k_dinov2.json --model dinov2
 ```
 
 Default backbone is DINOv2 (`vit_small_patch14_dinov2.lvd142m` via `timm`, 384-dim),
-already covered by `precisionai/agriviz/requirements.txt` — no extra install. See
+already covered by `precisionai/dataviz/requirements.txt` — no extra install. See
 `tools/embedding_models.py` for the model registry; adding a different backbone
 (including a future agriculture-trained checkpoint) means adding one entry there.
 A `<output>.provenance.json` sidecar is written alongside, same as the feature

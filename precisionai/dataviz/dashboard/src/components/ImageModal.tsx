@@ -39,7 +39,7 @@ interface Props {
 
 // Columns worth surfacing as big "highlight" tiles, in priority order.
 const HERO_PRIORITY = [
-  'complexity_score', 'category', 'green_annotation_ratio', 'instance_count',
+  'complexity_score', 'category', 'annotation_ratio', 'instance_count',
   'nima_ava', 'niqe', 'overlap_ratio', 'colorfulness',
 ]
 

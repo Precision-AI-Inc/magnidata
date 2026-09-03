@@ -1,98 +1,25 @@
-# Virtual environments
+# Virtual environment (CONTRIBUTING.md: python -m venv .venv — never conda)
 .venv/
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
 
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized files
 __pycache__/
 *.py[cod]
-*$py.class
 
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
+# Distribution / packaging (setuptools-scm; release.yml runs `python -m build`)
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
+# Unit test / coverage reports (pytest, --cov-fail-under, genbadge[coverage])
+.pytest_cache/
 .coverage
 .coverage.*
-.cache
-nosetests.xml
 coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
+htmlcov/
 
-# Sphinx documentation
+# Sphinx documentation (docs/conf.py copies README.md -> docs/readme.md at build time)
 docs/_build/
 docs/readme.md
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-Pipfile.lock
-
-# pdm
-.pdm.toml
-
-# PEP 582
-__pypackages__/
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
 
 # PyCharm
 .idea/
@@ -100,31 +27,14 @@ cython_debug/
 # VS Code
 .vscode/
 
-# PyTorch / Machine Learning artefacts
+# PyTorch model artefacts (tools/embeddings.py via pyiqa/timm)
 *.pth
 *.pt
 *.ckpt
-*.pkl
-*.h5
-*.hdf5
 *.onnx
-*.pb
-*.tflite
-*.tfl
-checkpoints/
-models/
-weights/
-wandb/
-mlruns/
-.neptune/
 
 # OS files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 *~
 
@@ -149,9 +59,9 @@ node_modules/
 *.sqlite
 *.sqlite3
 # User-created child datasets (docker-compose's only read-write mount for the API)
-precisionai/agriviz/data_user/
+precisionai/dataviz/data_user/
 # Provenance sidecars emitted next to tool outputs (features.py / embeddings.py)
 *.provenance.json
-# Locally staged image sets created by agriviz recipes/demo builds
+# Locally staged image sets created by dataviz recipes/demo builds
 /image_sets/*
 !/image_sets/.gitkeep

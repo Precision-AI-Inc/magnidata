@@ -1,9 +1,11 @@
 # Copyright 2026 Precision AI
 # SPDX-License-Identifier: Apache-2.0
 
-"""Orchestrates a "build a dataset from images" job: stage images -> extract features
--> register in the created_datasets table. Runs in a background thread; progress is
-tracked in an in-process job dict polled by GET /api/datasets/build/<job_id>.
+"""Orchestrate a "build a dataset from images" job.
+
+Stage images, extract features, and register in the created_datasets table. Runs in
+a background thread; progress is tracked in an in-process job dict polled by
+GET /api/datasets/build/<job_id>.
 
 This build pipeline does not compute embeddings — no model runs here. Embeddings are
 bring-your-own: an upload build may optionally include a pre-computed embeddings JSON
@@ -32,8 +34,11 @@ emb_source=<own source> when an embeddings file was provided, else None — the 
 created_datasets schema and _resolve_emb_source() in app.py already handle exactly this
 shape; no DB migration.
 """
+
 from __future__ import annotations
 
+import argparse
+import contextlib
 import csv
 import io
 import json
@@ -46,18 +51,18 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any
 
 import db
 from PIL import Image
 
 
-# ── Make the precisionai.agriviz.{tools,scripts} package importable ─────────────
+# ── Make the precisionai.dataviz.{tools,scripts} package importable ─────────────
 # This file's own location tells us where the package chain lives, regardless of
 # the process's cwd or DATA_ROOT (which is purely a data-output location, below):
 #   - Docker layout: this file is copied flat to /app/dataset_builder.py, and
 #     /app/precisionai/... sits right next to it (0 levels up).
-#   - Dev/checkout layout: this file lives at precisionai/agriviz/api/dataset_builder.py,
+#   - Dev/checkout layout: this file lives at precisionai/dataviz/api/dataset_builder.py,
 #     3 levels below the repo root that contains precisionai/ (matching
 #     scripts/prepare_coco128_dashboard.py's own repo_root() convention).
 # Walk up from this file looking for a directory containing a "precisionai" package,
@@ -73,9 +78,9 @@ _PACKAGE_ROOT = _find_package_root(Path(__file__).resolve().parent)
 if str(_PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(_PACKAGE_ROOT))
 
-from precisionai.agriviz.scripts import prepare_coco128_dashboard as coco128  # noqa: E402
-from precisionai.agriviz.tools import features as features_mod  # noqa: E402
-from precisionai.agriviz.tools import staging as staging_mod  # noqa: E402
+from precisionai.dataviz.scripts import prepare_coco128_dashboard as coco128  # noqa: E402
+from precisionai.dataviz.tools import features as features_mod  # noqa: E402
+from precisionai.dataviz.tools import staging as staging_mod  # noqa: E402
 
 # COCO128 is a small, fixed image set (same 128 files every time), so rather than
 # computing embeddings at build time — the API image deliberately has no torch/timm,
@@ -98,14 +103,18 @@ MAX_EMBEDDINGS_BYTES = 100 * 1024 * 1024
 COCO128_KEY = "coco128"
 COCO128_STEM = "coco128"
 COCO128_NAME = "COCO128"
-COCO128_DESCRIPTION = "Ultralytics COCO128 sample, built in-app (embeddings precomputed offline and shipped with the tool)"
+COCO128_DESCRIPTION = (
+    "Ultralytics COCO128 sample, built in-app (embeddings precomputed offline and shipped with the tool)"
+)
 
 AGRISTRESS_KEY = "agristress500"
 AGRISTRESS_STEM = "agristress500"
 AGRISTRESS_NAME = "AgriStress-500"
-AGRISTRESS_DESCRIPTION = ("451 field images + real segmentation masks, downloaded from "
-                           "Hugging Face and processed locally (features computed here; "
-                           "embeddings brought in from the public CDN)")
+AGRISTRESS_DESCRIPTION = (
+    "451 field images + real segmentation masks, downloaded from "
+    "Hugging Face and processed locally (features computed here; "
+    "embeddings brought in from the public CDN)"
+)
 # Images + masks: Hugging Face (the full-resolution source; downloaded and processed
 # locally — features are computed from these, not taken pre-built from anywhere).
 AGRISTRESS_HF_API_URL = "https://huggingface.co/api/datasets/precisionaiinc/AgriStress-500"
@@ -135,6 +144,10 @@ class BuildInProgressError(RuntimeError):
 
 
 def get_job(job_id: str) -> dict | None:
+    """Return a snapshot of the job's current state, or None if job_id is unknown.
+
+    The returned dict is a shallow copy, safe to read without holding _jobs_lock.
+    """
     with _jobs_lock:
         job = _jobs.get(job_id)
         return dict(job) if job is not None else None
@@ -143,12 +156,11 @@ def get_job(job_id: str) -> dict | None:
 def _new_job() -> str:
     job_id = uuid.uuid4().hex
     with _jobs_lock:
-        _jobs[job_id] = {"status": "queued", "percent": 0, "message": "Queued…",
-                          "dataset": None, "error": None}
+        _jobs[job_id] = {"status": "queued", "percent": 0, "message": "Queued…", "dataset": None, "error": None}
     return job_id
 
 
-def _update_job(job_id: str, **fields) -> None:
+def _update_job(job_id: str, **fields: Any) -> None:
     with _jobs_lock:
         _jobs[job_id].update(fields)
 
@@ -162,8 +174,9 @@ def _unique_stem(base_slug: str) -> str:
     existing_sources = {r["source"] for r in db.list_created_datasets()}
     stem = base_slug
     n = 2
-    while (f"{USER_DATA_REL}/{stem}.csv" in existing_sources
-           or os.path.isfile(os.path.join(DATA_ROOT, USER_DATA_REL, f"{stem}.csv"))):
+    while f"{USER_DATA_REL}/{stem}.csv" in existing_sources or os.path.isfile(
+        os.path.join(DATA_ROOT, USER_DATA_REL, f"{stem}.csv")
+    ):
         stem = f"{base_slug}_{n}"
         n += 1
     return stem
@@ -175,7 +188,9 @@ def _count_csv_rows(path: str) -> int:
 
 
 def _check_embeddings_match_csv(feature_csv: Path, embeddings_json: Path) -> None:
-    """COCO128's basenames are fixed (same 128 Ultralytics files every build), but this
+    """Verify the shipped embeddings JSON's basenames match the built CSV's images.
+
+    COCO128's basenames are fixed (same 128 Ultralytics files every build), but this
     is a cheap cross-check against the shipped embeddings asset drifting out of sync
     with a future COCO128 source change — raise rather than silently registering a
     dataset whose embeddings don't actually cover (or don't match) its images.
@@ -194,9 +209,13 @@ def _check_embeddings_match_csv(feature_csv: Path, embeddings_json: Path) -> Non
 
 def _dataset_meta(rec: dict) -> dict:
     return {
-        "id": rec["id"], "name": rec["name"], "description": rec["description"],
-        "source": rec["source"], "parent_source": rec["parent_source"],
-        "row_count": rec["row_count"], "deletable": True,
+        "id": rec["id"],
+        "name": rec["name"],
+        "description": rec["description"],
+        "source": rec["source"],
+        "parent_source": rec["parent_source"],
+        "row_count": rec["row_count"],
+        "deletable": True,
         "has_embeddings": bool(rec["emb_source"]),
     }
 
@@ -204,14 +223,13 @@ def _dataset_meta(rec: dict) -> dict:
 def _cleanup_partial(stem: str) -> None:
     base = os.path.join(DATA_ROOT, USER_DATA_REL, stem)
     for suffix in (".csv", ".csv.provenance.json", ".json", ".json.provenance.json"):
-        try:
+        with contextlib.suppress(OSError):
             os.remove(base + suffix)
-        except OSError:
-            pass
     shutil.rmtree(base + "_images", ignore_errors=True)
 
 
 # ── Upload build ──────────────────────────────────────────────────────────────
+
 
 def _validate_embeddings_file(data: bytes) -> None:
     if len(data) > MAX_EMBEDDINGS_BYTES:
@@ -224,11 +242,13 @@ def _validate_embeddings_file(data: bytes) -> None:
         raise BuildValidationError('embeddings file must be JSON shaped {"embeddings": {"<basename>": [floats...]}}')
 
 
-def start_upload_build(images: list, annotations: list, embeddings_file: bytes | None,
-                        name: str, description: str) -> str:
-    """Validate synchronously and start the build in a background thread. Returns a
-    job_id immediately; raises BuildValidationError / BuildInProgressError without
-    starting anything on a bad request.
+def start_upload_build(
+    images: list, annotations: list, embeddings_file: bytes | None, name: str, description: str
+) -> str:
+    """Validate synchronously and start the build in a background thread.
+
+    Returns a job_id immediately; raises BuildValidationError / BuildInProgressError
+    without starting anything on a bad request.
 
     `images` is a list of staging_mod.UploadedImage (required, at least one).
     `annotations` is a list of staging_mod.UploadedImage (optional COCO-format JSON
@@ -256,7 +276,7 @@ def start_upload_build(images: list, annotations: list, embeddings_file: bytes |
     stem = _unique_stem(_slugify(name))
     name, description = name.strip(), description.strip()
 
-    def worker():
+    def worker() -> None:
         try:
             _run_upload_build(job_id, images, annotations, embeddings_file, name, description, stem)
         finally:
@@ -266,7 +286,15 @@ def start_upload_build(images: list, annotations: list, embeddings_file: bytes |
     return job_id
 
 
-def _run_upload_build(job_id, images, annotations, embeddings_file, name, description, stem) -> None:
+def _run_upload_build(
+    job_id: str,
+    images: list,
+    annotations: list,
+    embeddings_file: bytes | None,
+    name: str,
+    description: str,
+    stem: str,
+) -> None:
     try:
         _update_job(job_id, status="staging", percent=15, message="Staging images…")
         stage_root = f"{USER_DATA_REL}/{stem}_images"
@@ -274,8 +302,7 @@ def _run_upload_build(job_id, images, annotations, embeddings_file, name, descri
 
         _update_job(job_id, status="extracting_features", percent=60, message="Extracting features…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
-        features_mod.run(manifest_path, feature_csv_rel, device="cpu", skip_nima=True,
-                          image_mode="fullres")
+        features_mod.run(manifest_path, feature_csv_rel, device="cpu", skip_nima=True, image_mode="fullres")
 
         emb_json_rel = None
         if embeddings_file is not None:
@@ -285,8 +312,7 @@ def _run_upload_build(job_id, images, annotations, embeddings_file, name, descri
 
         _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
         row_count = _count_csv_rows(feature_csv_rel)
-        rec = db.create_dataset_record(name, description, feature_csv_rel, None, emb_json_rel,
-                                        row_count)
+        rec = db.create_dataset_record(name, description, feature_csv_rel, None, emb_json_rel, row_count)
 
         _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
     except Exception as exc:
@@ -296,9 +322,11 @@ def _run_upload_build(job_id, images, annotations, embeddings_file, name, descri
 
 # ── Demo build ────────────────────────────────────────────────────────────────
 
+
 def start_demo_build(demo_key: str) -> str:
-    """Same contract as start_upload_build, for the one-click demo registry. Any
-    unknown key, or a disabled registry entry, raises BuildValidationError. Neither
+    """Build one of the one-click demo datasets, using the same contract as start_upload_build.
+
+    Any unknown key, or a disabled registry entry, raises BuildValidationError. Neither
     demo computes embeddings at build time (this pipeline never does) — COCO128
     attaches a DINOv2 embeddings file precomputed offline and shipped with the tool
     (see COCO128_EMBEDDINGS_ASSET); AgriStress-500 downloads its pre-computed SEED
@@ -325,7 +353,7 @@ def start_demo_build(demo_key: str) -> str:
 
     job_id = _new_job()
 
-    def worker():
+    def worker() -> None:
         try:
             worker_fn(job_id)
         finally:
@@ -335,7 +363,7 @@ def start_demo_build(demo_key: str) -> str:
     return job_id
 
 
-def _run_demo_build(job_id) -> None:
+def _run_demo_build(job_id: str) -> None:
     stem = COCO128_STEM
     try:
         _update_job(job_id, status="staging", percent=5, message="Downloading COCO128…")
@@ -350,9 +378,16 @@ def _run_demo_build(job_id) -> None:
         coco_root = coco128.extract(zip_path, extract_dir)
 
         _update_job(job_id, status="staging", percent=25, message="Staging COCO128 images…")
-        args = SimpleNamespace(dataset_stem=stem, limit=None, stage_mode="copy",
-                                cluster_by="dominant-class", device="cpu", with_nima=False,
-                                no_embeddings=True, embedding_model="none")
+        args = argparse.Namespace(
+            dataset_stem=stem,
+            limit=None,
+            stage_mode="copy",
+            cluster_by="dominant-class",
+            device="cpu",
+            with_nima=False,
+            no_embeddings=True,
+            embedding_model="none",
+        )
         stage_root = root / USER_DATA_REL / f"{stem}_images"
         manifest, _stats = coco128.stage_coco128(args, root, coco_root, stage_root=stage_root)
 
@@ -369,8 +404,7 @@ def _run_demo_build(job_id) -> None:
         row_count = _count_csv_rows(str(feature_csv))
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
         emb_rel = f"{USER_DATA_REL}/{stem}.json"
-        rec = db.create_dataset_record(COCO128_NAME, COCO128_DESCRIPTION, feature_csv_rel, None,
-                                        emb_rel, row_count)
+        rec = db.create_dataset_record(COCO128_NAME, COCO128_DESCRIPTION, feature_csv_rel, None, emb_rel, row_count)
 
         _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
     except Exception as exc:
@@ -380,13 +414,29 @@ def _run_demo_build(job_id) -> None:
 
 # ── AgriStress-500 demo build ────────────────────────────────────────────────────
 
-def _agristress_file_pairs() -> list[tuple[str, str, str]]:
-    """List (basename, image_rel, mask_rel) for every image that has a matching mask in
-    the Hugging Face repo — both live under images/<label>/ and masks/<label>/ with the
-    same basename. One API call lists the whole repo tree (~4950 entries at last count,
-    including the unrelated per-instance crops under instances/, which are ignored).
+
+def _urlopen(url: str, timeout: float) -> Any:
+    """Open a URL after checking its scheme, refusing anything but http(s).
+
+    Every remote download in this module (the Hugging Face API listing, the per-file
+    Hugging Face downloads, and the CDN embeddings download) funnels through this one
+    guarded call point rather than calling urlopen() directly.
     """
-    with urllib.request.urlopen(AGRISTRESS_HF_API_URL, timeout=30) as resp:
+    scheme = urllib.parse.urlparse(url).scheme
+    if scheme not in ("http", "https"):
+        raise ValueError(f"refusing to open URL with disallowed scheme {scheme!r}: {url}")
+    return urllib.request.urlopen(url, timeout=timeout)
+
+
+def _agristress_file_pairs() -> list[tuple[str, str, str]]:
+    """List (basename, image_rel, mask_rel) for every image with a matching mask.
+
+    Both live under images/<label>/ and masks/<label>/ in the Hugging Face repo with
+    the same basename. One API call lists the whole repo tree (~4950 entries at last
+    count, including the unrelated per-instance crops under instances/, which are
+    ignored).
+    """
+    with _urlopen(AGRISTRESS_HF_API_URL, timeout=30) as resp:
         info = json.loads(resp.read())
     images_by_basename: dict[str, str] = {}
     masks_by_basename: dict[str, str] = {}
@@ -400,8 +450,61 @@ def _agristress_file_pairs() -> list[tuple[str, str, str]]:
     return [(b, images_by_basename[b], masks_by_basename[b]) for b in basenames]
 
 
-def _run_agristress_build(job_id) -> None:
-    """AgriStress-500's images and masks are downloaded from Hugging Face and processed
+def _download_agristress_pair(
+    images_dir: Path, masks_dir: Path, thumbs_dir: Path, stem: str, image_rel: str, mask_rel: str, basename: str
+) -> dict[str, str]:
+    """Download one image/mask pair from Hugging Face and stage a local thumbnail.
+
+    Returns the manifest row (image_path, thumbnail_image, cluster, cluster_l2) for
+    this pair. The thumbnail is generated locally since AgriStress-500's originals run
+    tens of MB each (6016x4016).
+    """
+    label = image_rel.split("/")[1]  # images/<label>/<basename>
+
+    with _urlopen(f"{AGRISTRESS_HF_RESOLVE_BASE}/{image_rel}", timeout=60) as resp:
+        image_bytes = resp.read()
+    (images_dir / basename).write_bytes(image_bytes)
+
+    with _urlopen(f"{AGRISTRESS_HF_RESOLVE_BASE}/{mask_rel}", timeout=60) as resp:
+        (masks_dir / basename).write_bytes(resp.read())
+
+    thumb = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    thumb.thumbnail((AGRISTRESS_THUMB_MAX, AGRISTRESS_THUMB_MAX), Image.Resampling.LANCZOS)
+    thumb_name = os.path.splitext(basename)[0] + ".jpg"
+    thumb.save(thumbs_dir / thumb_name, "JPEG", quality=85)
+
+    return {
+        "image_path": f"{USER_DATA_REL}/{stem}_images/images/{basename}",
+        "thumbnail_image": f"{USER_DATA_REL}/{stem}_images/thumbnails/{thumb_name}",
+        "cluster": label,
+        "cluster_l2": label,
+    }
+
+
+def _reattach_thumbnails(feature_csv_abs: str, manifest_rows: list[dict[str, str]]) -> None:
+    """Re-attach the thumbnail_image column that features.run() drops.
+
+    features.run() only passes a manifest's cluster/cluster_l2 through to the output
+    (see tools/schema.py's CLUSTER list) — re-attach thumbnail_image by row index,
+    since row order is preserved 1:1 between the manifest and the feature CSV it
+    writes.
+    """
+    with open(feature_csv_abs, newline="") as f:
+        reader = csv.DictReader(f)
+        fieldnames = [*(reader.fieldnames or []), "thumbnail_image"]
+        feature_rows = list(reader)
+    for row, manifest_row in zip(feature_rows, manifest_rows, strict=True):
+        row["thumbnail_image"] = manifest_row["thumbnail_image"]
+    with open(feature_csv_abs, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(feature_rows)
+
+
+def _run_agristress_build(job_id: str) -> None:
+    """Build the AgriStress-500 demo dataset from Hugging Face and the CDN.
+
+    AgriStress-500's images and masks are downloaded from Hugging Face and processed
     entirely locally: thumbnails are generated here, and tools.features.run() computes
     the real feature CSV from the downloaded pixels (this pipeline never computes
     embeddings itself, per the module docstring — those still come from the CDN's
@@ -427,28 +530,10 @@ def _run_agristress_build(job_id) -> None:
         total = len(pairs)
         for i, (basename, image_rel, mask_rel) in enumerate(pairs):
             pct = 5 + int(55 * i / total)
-            _update_job(job_id, status="staging", percent=pct,
-                        message=f"Downloading image {i + 1}/{total}…")
-            label = image_rel.split("/")[1]   # images/<label>/<basename>
-
-            with urllib.request.urlopen(f"{AGRISTRESS_HF_RESOLVE_BASE}/{image_rel}", timeout=60) as resp:
-                image_bytes = resp.read()
-            (images_dir / basename).write_bytes(image_bytes)
-
-            with urllib.request.urlopen(f"{AGRISTRESS_HF_RESOLVE_BASE}/{mask_rel}", timeout=60) as resp:
-                (masks_dir / basename).write_bytes(resp.read())
-
-            # Locally computed thumbnail — the originals run tens of MB each (6016x4016).
-            thumb = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-            thumb.thumbnail((AGRISTRESS_THUMB_MAX, AGRISTRESS_THUMB_MAX), Image.LANCZOS)
-            thumb_name = os.path.splitext(basename)[0] + ".jpg"
-            thumb.save(thumbs_dir / thumb_name, "JPEG", quality=85)
-
-            manifest_rows.append({
-                "image_path": f"{USER_DATA_REL}/{stem}_images/images/{basename}",
-                "thumbnail_image": f"{USER_DATA_REL}/{stem}_images/thumbnails/{thumb_name}",
-                "cluster": label, "cluster_l2": label,
-            })
+            _update_job(job_id, status="staging", percent=pct, message=f"Downloading image {i + 1}/{total}…")
+            manifest_rows.append(
+                _download_agristress_pair(images_dir, masks_dir, thumbs_dir, stem, image_rel, mask_rel, basename)
+            )
 
         manifest_path = stage_root / f"{stem}_input.csv"
         with open(manifest_path, "w", newline="") as f:
@@ -458,35 +543,24 @@ def _run_agristress_build(job_id) -> None:
 
         _update_job(job_id, status="extracting_features", percent=65, message="Extracting features locally…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
-        features_mod.run(str(manifest_path.relative_to(root)), feature_csv_rel, device="cpu",
-                          skip_nima=True, image_mode="fullres")
-
-        # features.run() only passes a manifest's cluster/cluster_l2 through to the
-        # output (see tools/schema.py's CLUSTER list) — re-attach thumbnail_image by
-        # row index, since row order is preserved 1:1 between the manifest and the
-        # feature CSV it writes.
-        feature_csv_abs = os.path.join(DATA_ROOT, feature_csv_rel)
-        with open(feature_csv_abs, newline="") as f:
-            reader = csv.DictReader(f)
-            fieldnames = [*(reader.fieldnames or []), "thumbnail_image"]
-            feature_rows = list(reader)
-        for row, manifest_row in zip(feature_rows, manifest_rows):
-            row["thumbnail_image"] = manifest_row["thumbnail_image"]
-        with open(feature_csv_abs, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(feature_rows)
+        features_mod.run(
+            str(manifest_path.relative_to(root)), feature_csv_rel, device="cpu", skip_nima=True, image_mode="fullres"
+        )
+        _reattach_thumbnails(os.path.join(DATA_ROOT, feature_csv_rel), manifest_rows)
 
         _update_job(job_id, status="staging", percent=90, message="Downloading SEED embeddings…")
         emb_rel = f"{USER_DATA_REL}/{stem}.json"
-        with urllib.request.urlopen(AGRISTRESS_EMBEDDINGS_URL, timeout=60) as resp:
-            with open(os.path.join(DATA_ROOT, emb_rel), "wb") as f:
-                f.write(resp.read())
+        with (
+            _urlopen(AGRISTRESS_EMBEDDINGS_URL, timeout=60) as resp,
+            open(os.path.join(DATA_ROOT, emb_rel), "wb") as f,
+        ):
+            f.write(resp.read())
 
         _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
         row_count = _count_csv_rows(feature_csv_rel)
-        rec = db.create_dataset_record(AGRISTRESS_NAME, AGRISTRESS_DESCRIPTION, feature_csv_rel, None,
-                                        emb_rel, row_count)
+        rec = db.create_dataset_record(
+            AGRISTRESS_NAME, AGRISTRESS_DESCRIPTION, feature_csv_rel, None, emb_rel, row_count
+        )
 
         _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
     except Exception as exc:

@@ -1,8 +1,7 @@
 # Copyright 2026 Precision AI
 # SPDX-License-Identifier: Apache-2.0
 
-"""Stage uploaded images into a dataset-ready layout: <stage_root>/images/<name>, a
-manifest CSV (image_path, cluster, cluster_l2), and a checksums file.
+"""Stage uploaded images into a dataset-ready layout: <stage_root>/images/<name>, a manifest CSV (image_path, cluster, cluster_l2), and a checksums file.
 
 Optionally also stages uploaded COCO-format annotation JSON files into
 <stage_root>/labels/<staged-image-stem>.json — the exact sibling path
@@ -18,6 +17,7 @@ COCO/metadata columns, RGB-only columns still populate — see
 test_missing_label_continues in test_features.py and metadata_join.py's
 isfile-guarded cache).
 """
+
 from __future__ import annotations
 
 import csv
@@ -29,7 +29,9 @@ from dataclasses import dataclass
 
 @dataclass
 class UploadedImage:
-    relative_path: str   # as uploaded, e.g. "field_rows/IMG_002.jpg" or "IMG_002.jpg"
+    """One in-memory uploaded file (image or annotation), as received from the client."""
+
+    relative_path: str  # as uploaded, e.g. "field_rows/IMG_002.jpg" or "IMG_002.jpg"
     data: bytes
 
 
@@ -45,9 +47,7 @@ def _staged_filename(relative_path: str, data: bytes) -> str:
 
 
 def _cluster_for(relative_path: str) -> tuple[str, str]:
-    """(cluster, cluster_l2) from the uploaded relative folder path. A flat upload
-    (no subfolder) gets 'uncategorized' for both.
-    """
+    """(cluster, cluster_l2) from the uploaded relative folder path; a flat upload (no subfolder) gets 'uncategorized' for both."""
     parts = relative_path.replace("\\", "/").split("/")[:-1]
     if not parts:
         return "uncategorized", "uncategorized"
@@ -58,11 +58,8 @@ def _original_stem(relative_path: str) -> str:
     return os.path.splitext(os.path.basename(relative_path))[0]
 
 
-def stage_images(images: list[UploadedImage], stage_root: str,
-                  annotations: list[UploadedImage] | None = None) -> str:
-    """Write each image under <stage_root>/images/, plus a manifest CSV
-    (<stage_root>/manifest.csv) and a checksums file (<stage_root>/checksums.sha256).
-    Returns the manifest CSV path.
+def stage_images(images: list[UploadedImage], stage_root: str, annotations: list[UploadedImage] | None = None) -> str:
+    """Write each image under <stage_root>/images/, plus a manifest CSV (<stage_root>/manifest.csv) and a checksums file (<stage_root>/checksums.sha256), and return the manifest CSV path.
 
     If `annotations` is given, each one whose original stem
     (os.path.splitext(os.path.basename(relative_path))[0]) matches an uploaded
@@ -92,11 +89,13 @@ def stage_images(images: list[UploadedImage], stage_root: str,
             f.write(img.data)
 
         cluster, cluster_l2 = _cluster_for(img.relative_path)
-        rows.append({
-            "image_path": os.path.join(images_dir, staged_name),
-            "cluster": cluster,
-            "cluster_l2": cluster_l2,
-        })
+        rows.append(
+            {
+                "image_path": os.path.join(images_dir, staged_name),
+                "cluster": cluster,
+                "cluster_l2": cluster_l2,
+            }
+        )
         checksum_lines.append(f"{hashlib.sha256(img.data).hexdigest()}  {staged_name}")
 
         staged_stem = os.path.splitext(staged_name)[0]
@@ -117,8 +116,7 @@ def stage_images(images: list[UploadedImage], stage_root: str,
     return manifest_path
 
 
-def _stage_annotations(annotations: list[UploadedImage], stem_map: dict[str, list[str]],
-                        stage_root: str) -> None:
+def _stage_annotations(annotations: list[UploadedImage], stem_map: dict[str, list[str]], stage_root: str) -> None:
     labels_dir = os.path.join(stage_root, "labels")
     for ann in annotations:
         staged_stems = stem_map.get(_original_stem(ann.relative_path))

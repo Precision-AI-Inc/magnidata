@@ -197,10 +197,17 @@ export default function App() {
     setLandingView('landing')
   }
 
-  // Same, but goes straight to the dataset picker instead of the landing cards.
+  // Same, but goes straight to the dataset picker instead of the landing cards — unless
+  // no dataset has been prepared yet, in which case BYOD opens first so the user has
+  // something to pick; handleBuildDone() already routes back into the picker once a
+  // build finishes, so the MagniData flow continues from there.
   const goToMagniData = () => {
     clear()
     setDatasetSource(null)
+    if (datasetMeta.length === 0) {
+      setShowByod(true)
+      return
+    }
     setLandingView('datasets')
   }
 

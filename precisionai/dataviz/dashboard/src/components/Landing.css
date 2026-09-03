@@ -18,8 +18,9 @@
   text-align: left;
   width: 100%;
   max-width: 600px;
+  flex-shrink: 0;
   margin-bottom: 40px;
-  padding: 36px 32px 30px;
+  padding: 36px 32px 40px;
   border-radius: 18px;
   border: 1px solid var(--c-border);
   background:
@@ -37,15 +38,38 @@
 
 .landing-hero-motif {
   position: absolute;
-  right: -8%;
-  top: -12%;
-  width: 60%;
+  right: 2%;
+  top: 68%;
+  transform: translateY(-50%);
+  width: 62%;
   height: auto;
+  -webkit-mask-image: linear-gradient(to left, black 45%, transparent 88%);
+          mask-image: linear-gradient(to left, black 45%, transparent 88%);
   pointer-events: none;
 }
 
+/* Two theme-specific source images (light: transparent bg; dark: near-black bg,
+   composited with `screen` so the black disappears into the dark card instead of
+   showing as a mismatched rectangle, and a slight filter nudges its palette toward
+   this UI's teal/green accent rather than its own bluer default). Explicit
+   [data-theme] wins over the system preference, matching useTheme.ts. */
+.landing-hero-motif--dark {
+  display: none;
+  mix-blend-mode: screen;
+  filter: saturate(1.15) hue-rotate(-6deg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .landing-hero-motif--light { display: none; }
+  :root:not([data-theme="light"]) .landing-hero-motif--dark { display: block; }
+}
+
+:root[data-theme="dark"] .landing-hero-motif--light { display: none; }
+:root[data-theme="dark"] .landing-hero-motif--dark { display: block; }
+
 .landing-hero-icon {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 46px;
@@ -175,4 +199,15 @@
 
 @media (max-width: 480px) {
   .landing-cards { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 560px) {
+  /* Not enough card width left for the bled-in background image once the tagline
+     wraps to two lines — it starts overlapping the text, so drop it below this,
+     regardless of theme (!important needed: the [data-theme="dark"] visibility
+     rules above outrank this on specificity otherwise). */
+  .landing-hero-motif--light,
+  .landing-hero-motif--dark {
+    display: none !important;
+  }
 }

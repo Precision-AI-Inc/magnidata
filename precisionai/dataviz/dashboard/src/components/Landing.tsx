@@ -29,12 +29,8 @@ export function Landing({ onOpenMagniData, onOpenByod, onOpenHelp }: Props) {
     <div className="landing-root">
       {/* Hero — MagniData is the main event on this screen */}
       <button className="landing-hero" onClick={onOpenMagniData}>
-        <svg className="landing-hero-motif" viewBox="0 0 400 400" aria-hidden="true">
-          <circle cx="260" cy="140" r="46" fill="none" stroke="var(--pai-green)" strokeOpacity="0.35" strokeWidth="1.5" />
-          <circle cx="260" cy="140" r="80" fill="none" stroke="var(--pai-fresh)" strokeOpacity="0.22" strokeWidth="1.5" />
-          <circle cx="260" cy="140" r="118" fill="none" stroke="var(--pai-green)" strokeOpacity="0.12" strokeWidth="1.5" />
-          <circle cx="260" cy="140" r="4" fill="var(--pai-fresh)" />
-        </svg>
+        <img className="landing-hero-motif landing-hero-motif--light" src="/magnidata.png" alt="" aria-hidden="true" />
+        <img className="landing-hero-motif landing-hero-motif--dark" src="/magnidata2.png" alt="" aria-hidden="true" />
         <div className="landing-hero-icon"><Search size={26} /></div>
         <div className="landing-hero-body">
           <div className="landing-hero-eyebrow">Main workspace</div>

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Precision-AI-Inc/dataviz/main/assets/magnidata.png" alt="MagniData Logo" width="120"/>
+  <img src="assets/magnidata.png" alt="MagniData Logo" width="120"/>
 </p>
 
 # dataviz

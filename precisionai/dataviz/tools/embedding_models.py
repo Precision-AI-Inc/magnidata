@@ -23,6 +23,7 @@ from PIL import Image
 
 try:
     import timm
+    import timm.data
     import torch
 
     _TORCH_AVAILABLE = True
@@ -48,8 +49,11 @@ def _load_timm_model(model_name: str, device: str) -> tuple[Any, Any, Any]:
     model = timm.create_model(model_name, pretrained=True, num_classes=0)
     model.eval()
     model.to(device)
-    cfg = timm.data.resolve_data_config({}, model=model)
-    transform = timm.data.create_transform(**cfg)
+    # timm.data re-exports these via a wildcard import with no __all__, so pyright
+    # treats them as private even though they're timm's documented public API for
+    # building a model-matched preprocessing transform.
+    cfg = timm.data.resolve_data_config({}, model=model)  # pyright: ignore[reportPrivateImportUsage]
+    transform = timm.data.create_transform(**cfg)  # pyright: ignore[reportPrivateImportUsage]
     return model, transform, torch.device(device)
 
 

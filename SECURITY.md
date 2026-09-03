@@ -12,7 +12,7 @@ Do not report security vulnerabilities through public GitHub issues, discussions
 
 Instead, report suspected vulnerabilities privately by emailing:
 
-**support@precision.ai**
+**rinier@precision.ai**
 
 Please include as much of the following as possible:
 

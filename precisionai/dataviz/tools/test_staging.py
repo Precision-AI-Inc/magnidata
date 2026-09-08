@@ -88,6 +88,21 @@ def test_checksums_file_has_one_line_per_image(tmp_path):
     assert lines[0].split()[0] == hashlib.sha256(b"AAAA").hexdigest()
 
 
+def test_stage_images_accepts_source_backed_files(tmp_path):
+    source = tmp_path / "upload.bin"
+    source.write_bytes(b"CONTENT")
+    images = [UploadedImage(relative_path="My Photo #1.JPG", source_path=str(source))]
+    stage_root = os.path.join(str(tmp_path), "s")
+
+    stage_images(images, stage_root)
+
+    digest = hashlib.sha256(b"CONTENT").hexdigest()
+    staged_path = os.path.join(stage_root, "images", f"my_photo_1-{digest[:8]}.jpg")
+    assert os.path.isfile(staged_path)
+    with open(staged_path, "rb") as f:
+        assert f.read() == b"CONTENT"
+
+
 # ── Annotations ───────────────────────────────────────────────────────────────
 
 

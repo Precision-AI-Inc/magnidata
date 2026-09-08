@@ -56,6 +56,19 @@ def test_list_demos_returns_the_static_registry(app_client):
     assert by_key["agristress500"]["enabled"] is True
 
 
+def test_build_limits_returns_configured_caps(app_client):
+    client, app_module = app_client
+    r = client.get("/api/datasets/build/limits")
+
+    assert r.status_code == 200
+    assert r.get_json() == {
+        "max_images": app_module.dataset_builder.MAX_IMAGES,
+        "max_upload_bytes": app_module.dataset_builder.MAX_TOTAL_BYTES,
+        "max_embeddings_bytes": app_module.dataset_builder.MAX_EMBEDDINGS_BYTES,
+        "max_request_bytes": app_module.dataset_builder.MAX_REQUEST_BYTES,
+    }
+
+
 # ── POST /api/datasets/build ──────────────────────────────────────────────────────
 
 
@@ -115,6 +128,7 @@ def test_build_upload_passes_uploaded_files_with_relative_paths(app_client, monk
 
     assert captured["name"] == "Test Set"
     assert {i.relative_path for i in captured["images"]} == {"weeds/a.png", "soil/b.png"}
+    assert [Path(i.source_path).read_bytes() for i in captured["images"]] == [b"AAAA", b"BBBB"]
     assert captured["annotations"] == []
     assert captured["embeddings_file"] is None
 
@@ -144,10 +158,11 @@ def test_build_upload_passes_annotation_files(app_client, monkeypatch):
     assert len(captured["annotations"]) == 1
     ann = captured["annotations"][0]
     assert ann.relative_path == "weeds/a.json"
-    assert ann.data == b'{"a": 1}'
+    assert ann.data is None
+    assert Path(ann.source_path).read_bytes() == b'{"a": 1}'
 
 
-def test_build_upload_passes_embeddings_file_bytes(app_client, monkeypatch):
+def test_build_upload_passes_embeddings_file(app_client, monkeypatch):
     client, app_module = app_client
     captured = {}
 
@@ -168,7 +183,9 @@ def test_build_upload_passes_embeddings_file_bytes(app_client, monkeypatch):
         content_type="multipart/form-data",
     )
 
-    assert captured["embeddings_file"] == b'{"embeddings": {}}'
+    embeddings_file = captured["embeddings_file"]
+    assert embeddings_file.relative_path == "embeddings.json"
+    assert Path(embeddings_file.source_path).read_bytes() == b'{"embeddings": {}}'
 
 
 def test_build_demo_passes_demo_key(app_client, monkeypatch):
@@ -213,6 +230,26 @@ def test_build_returns_400_on_validation_error(app_client, monkeypatch):
         content_type="multipart/form-data",
     )
     assert r.status_code == 400
+    incoming = Path(app_module.DATA_ROOT) / "data_user" / app_module.dataset_builder.INCOMING_UPLOAD_DIRNAME
+    assert not incoming.exists() or not any(incoming.iterdir())
+
+
+def test_build_returns_json_413_for_oversized_request(app_client):
+    client, app_module = app_client
+    app_module.app.config["MAX_CONTENT_LENGTH"] = 128
+
+    r = client.post(
+        "/api/datasets/build",
+        data={
+            "source_type": "upload",
+            "name": "Too Big",
+            "images": (io.BytesIO(b"x" * 512), "a.png"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert r.status_code == 413
+    assert "request body too large" in r.get_json()["error"]
 
 
 def test_build_returns_409_when_a_build_is_in_progress(app_client, monkeypatch):
@@ -461,3 +498,106 @@ def test_annotation_mask_prefers_coco_labels_over_raster_mask(app_client, monkey
     arr = np.array(Image.open(io.BytesIO(r.data)))
     assert arr[20, 5, 3] == 255  # COCO's left-half annotation still wins
     assert arr[20, 35, 3] == 0  # not the raster mask's right half
+
+
+# ── GET /api/datasets/build/local-folders ─────────────────────────────────────────
+
+
+def test_list_local_folders_returns_the_index(app_client, monkeypatch):
+    client, app_module = app_client
+    index = [{"folder": "MMDE-POC", "image_count": 201, "label_count": 201, "built": False}]
+    monkeypatch.setattr(app_module.dataset_builder, "list_local_folders", lambda: index)
+
+    r = client.get("/api/datasets/build/local-folders")
+
+    assert r.status_code == 200
+    assert r.get_json() == index
+
+
+def test_list_local_folders_returns_empty_list_when_none_present(app_client, monkeypatch):
+    client, app_module = app_client
+    monkeypatch.setattr(app_module.dataset_builder, "list_local_folders", lambda: [])
+
+    r = client.get("/api/datasets/build/local-folders")
+
+    assert r.status_code == 200
+    assert r.get_json() == []
+
+
+# ── POST /api/datasets/build (source_type=local) ──────────────────────────────────
+
+
+def test_build_local_returns_job_id(app_client, monkeypatch):
+    client, app_module = app_client
+    seen = {}
+
+    def fake_start(folder, name, description):
+        seen.update(folder=folder, name=name, description=description)
+        return "job-local"
+
+    monkeypatch.setattr(app_module.dataset_builder, "start_local_build", fake_start)
+
+    r = client.post(
+        "/api/datasets/build",
+        data={"source_type": "local", "folder": "MMDE-POC", "name": "MMDE POC", "description": "soybeans"},
+        content_type="multipart/form-data",
+    )
+
+    assert r.status_code == 202
+    assert r.get_json() == {"job_id": "job-local"}
+    assert seen == {"folder": "MMDE-POC", "name": "MMDE POC", "description": "soybeans"}
+
+
+def test_build_local_defaults_name_and_description_to_blank(app_client, monkeypatch):
+    client, app_module = app_client
+    seen = {}
+
+    def fake_start(folder, name, description):
+        seen.update(folder=folder, name=name, description=description)
+        return "job-local"
+
+    monkeypatch.setattr(app_module.dataset_builder, "start_local_build", fake_start)
+
+    r = client.post(
+        "/api/datasets/build",
+        data={"source_type": "local", "folder": "MMDE-POC"},
+        content_type="multipart/form-data",
+    )
+
+    assert r.status_code == 202
+    assert seen == {"folder": "MMDE-POC", "name": "", "description": ""}
+
+
+def test_build_local_returns_400_for_unknown_folder(app_client, monkeypatch):
+    client, app_module = app_client
+
+    def fake_start(folder, name, description):
+        raise app_module.dataset_builder.BuildValidationError("image set 'nope' not found under image_sets/")
+
+    monkeypatch.setattr(app_module.dataset_builder, "start_local_build", fake_start)
+
+    r = client.post(
+        "/api/datasets/build",
+        data={"source_type": "local", "folder": "nope"},
+        content_type="multipart/form-data",
+    )
+
+    assert r.status_code == 400
+    assert "not found" in r.get_json()["error"]
+
+
+def test_build_local_returns_409_when_a_build_is_in_progress(app_client, monkeypatch):
+    client, app_module = app_client
+
+    def fake_start(folder, name, description):
+        raise app_module.dataset_builder.BuildInProgressError("busy")
+
+    monkeypatch.setattr(app_module.dataset_builder, "start_local_build", fake_start)
+
+    r = client.post(
+        "/api/datasets/build",
+        data={"source_type": "local", "folder": "MMDE-POC"},
+        content_type="multipart/form-data",
+    )
+
+    assert r.status_code == 409

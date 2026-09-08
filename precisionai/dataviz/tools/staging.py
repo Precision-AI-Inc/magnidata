@@ -26,13 +26,16 @@ import os
 import re
 from dataclasses import dataclass
 
+CHUNK_SIZE = 1024 * 1024
+
 
 @dataclass
 class UploadedImage:
-    """One in-memory uploaded file (image or annotation), as received from the client."""
+    """One uploaded file, either in memory or backed by a temporary source path."""
 
     relative_path: str  # as uploaded, e.g. "field_rows/IMG_002.jpg" or "IMG_002.jpg"
-    data: bytes
+    data: bytes | None = None
+    source_path: str | None = None
 
 
 def _slugify(name: str) -> str:
@@ -40,14 +43,40 @@ def _slugify(name: str) -> str:
     return s or "image"
 
 
-def _staged_filename(relative_path: str, data: bytes) -> str:
+def _staged_filename(relative_path: str, digest: str) -> str:
     stem, ext = os.path.splitext(os.path.basename(relative_path))
-    digest = hashlib.sha256(data).hexdigest()[:8]
-    return f"{_slugify(stem)}-{digest}{ext.lower()}"
+    return f"{_slugify(stem)}-{digest[:8]}{ext.lower()}"
 
 
-def _cluster_for(relative_path: str) -> tuple[str, str]:
-    """(cluster, cluster_l2) from the uploaded relative folder path; a flat upload (no subfolder) gets 'uncategorized' for both."""
+def _sha256(upload: UploadedImage) -> str:
+    h = hashlib.sha256()
+    if upload.data is not None:
+        h.update(upload.data)
+        return h.hexdigest()
+    if upload.source_path:
+        with open(upload.source_path, "rb") as f:
+            while chunk := f.read(CHUNK_SIZE):
+                h.update(chunk)
+        return h.hexdigest()
+    raise ValueError(f"uploaded file {upload.relative_path!r} has no data or source_path")
+
+
+def _write_upload(upload: UploadedImage, dest: str) -> None:
+    if upload.data is not None:
+        with open(dest, "wb") as out:
+            out.write(upload.data)
+        return
+
+    source_path = upload.source_path
+    if source_path is None:
+        raise ValueError(f"uploaded file {upload.relative_path!r} has no data or source_path")
+    with open(dest, "wb") as out, open(source_path, "rb") as src:
+        while chunk := src.read(CHUNK_SIZE):
+            out.write(chunk)
+
+
+def cluster_for(relative_path: str) -> tuple[str, str]:
+    """(cluster, cluster_l2) from the relative folder path; a flat layout (no subfolder) gets 'uncategorized' for both."""
     parts = relative_path.replace("\\", "/").split("/")[:-1]
     if not parts:
         return "uncategorized", "uncategorized"
@@ -83,12 +112,12 @@ def stage_images(images: list[UploadedImage], stage_root: str, annotations: list
     checksum_lines = []
     stem_map: dict[str, list[str]] = {}
     for img in images:
-        staged_name = _staged_filename(img.relative_path, img.data)
+        digest = _sha256(img)
+        staged_name = _staged_filename(img.relative_path, digest)
         staged_path = os.path.join(images_dir, staged_name)
-        with open(staged_path, "wb") as f:
-            f.write(img.data)
+        _write_upload(img, staged_path)
 
-        cluster, cluster_l2 = _cluster_for(img.relative_path)
+        cluster, cluster_l2 = cluster_for(img.relative_path)
         rows.append(
             {
                 "image_path": os.path.join(images_dir, staged_name),
@@ -96,7 +125,7 @@ def stage_images(images: list[UploadedImage], stage_root: str, annotations: list
                 "cluster_l2": cluster_l2,
             }
         )
-        checksum_lines.append(f"{hashlib.sha256(img.data).hexdigest()}  {staged_name}")
+        checksum_lines.append(f"{digest}  {staged_name}")
 
         staged_stem = os.path.splitext(staged_name)[0]
         stem_map.setdefault(_original_stem(img.relative_path), []).append(staged_stem)
@@ -124,5 +153,4 @@ def _stage_annotations(annotations: list[UploadedImage], stem_map: dict[str, lis
             continue
         os.makedirs(labels_dir, exist_ok=True)
         for staged_stem in staged_stems:
-            with open(os.path.join(labels_dir, f"{staged_stem}.json"), "wb") as f:
-                f.write(ann.data)
+            _write_upload(ann, os.path.join(labels_dir, f"{staged_stem}.json"))

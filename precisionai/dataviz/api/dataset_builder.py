@@ -96,9 +96,27 @@ COCO128_EMBEDDINGS_ASSET = Path(coco128.__file__).resolve().parent / "coco128_em
 DATA_ROOT = os.environ.get("DATA_ROOT", ".")
 USER_DATA_REL = "data_user"
 
-MAX_IMAGES = 500
-MAX_TOTAL_BYTES = 200 * 1024 * 1024
-MAX_EMBEDDINGS_BYTES = 100 * 1024 * 1024
+INCOMING_UPLOAD_DIRNAME = "_incoming"
+
+# Server-side image folders, mounted read-only at <DATA_ROOT>/image_sets. A dataset is
+# built from one of these in place: nothing is copied and nothing is written back into
+# the folder, so the upload size caps below do not apply to that path at all.
+IMAGE_SETS_REL = "image_sets"
+LOCAL_IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"})
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_IMAGES = _env_int("DATASET_BUILD_MAX_IMAGES", 500)
+MAX_TOTAL_BYTES = _env_int("DATASET_BUILD_MAX_TOTAL_BYTES", 16 * 1024 * 1024 * 1024)
+MAX_EMBEDDINGS_BYTES = _env_int("DATASET_BUILD_MAX_EMBEDDINGS_BYTES", 100 * 1024 * 1024)
+MAX_REQUEST_OVERHEAD_BYTES = _env_int("DATASET_BUILD_MAX_REQUEST_OVERHEAD_BYTES", 64 * 1024 * 1024)
+MAX_REQUEST_BYTES = MAX_TOTAL_BYTES + MAX_EMBEDDINGS_BYTES + MAX_REQUEST_OVERHEAD_BYTES
 
 COCO128_KEY = "coco128"
 COCO128_STEM = "coco128"
@@ -228,14 +246,76 @@ def _cleanup_partial(stem: str) -> None:
     shutil.rmtree(base + "_images", ignore_errors=True)
 
 
+def _uploaded_size(upload: bytes | staging_mod.UploadedImage) -> int:
+    if isinstance(upload, bytes):
+        return len(upload)
+    if upload.data is not None:
+        return len(upload.data)
+    if upload.source_path:
+        try:
+            return os.path.getsize(upload.source_path)
+        except OSError as exc:
+            raise BuildValidationError(f"uploaded file is unreadable: {upload.relative_path}") from exc
+    raise BuildValidationError(f"uploaded file is missing content: {upload.relative_path}")
+
+
+def _read_uploaded_bytes(upload: bytes | staging_mod.UploadedImage) -> bytes:
+    if isinstance(upload, bytes):
+        return upload
+    if upload.data is not None:
+        return upload.data
+    if upload.source_path:
+        try:
+            with open(upload.source_path, "rb") as f:
+                return f.read()
+        except OSError as exc:
+            raise BuildValidationError(f"uploaded file is unreadable: {upload.relative_path}") from exc
+    raise BuildValidationError(f"uploaded file is missing content: {upload.relative_path}")
+
+
+def _write_uploaded_file(upload: bytes | staging_mod.UploadedImage, dest: str) -> None:
+    if isinstance(upload, bytes):
+        with open(dest, "wb") as f:
+            f.write(upload)
+        return
+    if upload.data is not None:
+        with open(dest, "wb") as f:
+            f.write(upload.data)
+        return
+    if upload.source_path:
+        shutil.copyfile(upload.source_path, dest)
+        return
+    raise RuntimeError(f"uploaded file is missing content: {upload.relative_path}")
+
+
+def _cleanup_upload_sources(*groups: Any) -> None:
+    incoming_root = (Path(DATA_ROOT) / USER_DATA_REL / INCOMING_UPLOAD_DIRNAME).resolve()
+    cleanup_roots: set[Path] = set()
+    for group in groups:
+        items = group if isinstance(group, list) else [group]
+        for item in items:
+            if item is None or isinstance(item, bytes):
+                continue
+            source_path = getattr(item, "source_path", None)
+            if not source_path:
+                continue
+            with contextlib.suppress(OSError, ValueError):
+                source = Path(source_path).resolve()
+                rel = source.relative_to(incoming_root)
+                if rel.parts:
+                    cleanup_roots.add(incoming_root / rel.parts[0])
+    for root in cleanup_roots:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 # ── Upload build ──────────────────────────────────────────────────────────────
 
 
-def _validate_embeddings_file(data: bytes) -> None:
-    if len(data) > MAX_EMBEDDINGS_BYTES:
+def _validate_embeddings_file(data: bytes | staging_mod.UploadedImage) -> None:
+    if _uploaded_size(data) > MAX_EMBEDDINGS_BYTES:
         raise BuildValidationError(f"embeddings file too large (max {MAX_EMBEDDINGS_BYTES // (1024 * 1024)}MB)")
     try:
-        doc = json.loads(data)
+        doc = json.loads(_read_uploaded_bytes(data))
     except json.JSONDecodeError as exc:
         raise BuildValidationError(f"embeddings file is not valid JSON: {exc}") from exc
     if not isinstance(doc, dict) or not isinstance(doc.get("embeddings"), dict):
@@ -243,7 +323,11 @@ def _validate_embeddings_file(data: bytes) -> None:
 
 
 def start_upload_build(
-    images: list, annotations: list, embeddings_file: bytes | None, name: str, description: str
+    images: list,
+    annotations: list,
+    embeddings_file: bytes | staging_mod.UploadedImage | None,
+    name: str,
+    description: str,
 ) -> str:
     """Validate synchronously and start the build in a background thread.
 
@@ -264,7 +348,7 @@ def start_upload_build(
         raise BuildValidationError("at least one image is required")
     if len(images) > MAX_IMAGES:
         raise BuildValidationError(f"too many images (max {MAX_IMAGES})")
-    total_bytes = sum(len(i.data) for i in images) + sum(len(a.data) for a in annotations)
+    total_bytes = sum(_uploaded_size(i) for i in images) + sum(_uploaded_size(a) for a in annotations)
     if total_bytes > MAX_TOTAL_BYTES:
         raise BuildValidationError(f"upload too large (max {MAX_TOTAL_BYTES // (1024 * 1024)}MB)")
     if embeddings_file is not None:
@@ -280,6 +364,7 @@ def start_upload_build(
         try:
             _run_upload_build(job_id, images, annotations, embeddings_file, name, description, stem)
         finally:
+            _cleanup_upload_sources(images, annotations, embeddings_file)
             _build_lock.release()
 
     threading.Thread(target=worker, daemon=True).start()
@@ -290,7 +375,7 @@ def _run_upload_build(
     job_id: str,
     images: list,
     annotations: list,
-    embeddings_file: bytes | None,
+    embeddings_file: bytes | staging_mod.UploadedImage | None,
     name: str,
     description: str,
     stem: str,
@@ -307,8 +392,7 @@ def _run_upload_build(
         emb_json_rel = None
         if embeddings_file is not None:
             emb_json_rel = f"{USER_DATA_REL}/{stem}.json"
-            with open(emb_json_rel, "wb") as f:
-                f.write(embeddings_file)
+            _write_uploaded_file(embeddings_file, emb_json_rel)
 
         _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
         row_count = _count_csv_rows(feature_csv_rel)
@@ -316,6 +400,179 @@ def _run_upload_build(
 
         _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
     except Exception as exc:
+        _cleanup_partial(stem)
+        _update_job(job_id, status="error", percent=None, message=str(exc), error=str(exc))
+
+
+# ── Local image_sets build ────────────────────────────────────────────────────
+
+
+def _image_sets_root() -> Path:
+    return Path(DATA_ROOT) / IMAGE_SETS_REL
+
+
+def _local_images(folder_path: Path) -> list[Path]:
+    """List every image under `folder_path`/images/, recursively, in a stable order."""
+    images_dir = folder_path / "images"
+    if not images_dir.is_dir():
+        return []
+    return sorted(p for p in images_dir.rglob("*") if p.is_file() and p.suffix.lower() in LOCAL_IMAGE_SUFFIXES)
+
+
+def _local_label_count(folder_path: Path) -> int:
+    labels_dir = folder_path / "labels"
+    if not labels_dir.is_dir():
+        return 0
+    return sum(1 for p in labels_dir.rglob("*.json") if p.is_file())
+
+
+def _local_stem(folder: str) -> str:
+    """Dataset stem for a folder — derived from the folder name so a rebuild is detectable."""
+    return _slugify(folder)
+
+
+def list_local_folders() -> list[dict]:
+    """Index the server-side image folders that a dataset can be built from.
+
+    Returns
+    -------
+    list of dict
+        One entry per directory directly under image_sets/ that contains a non-empty
+        ``images/`` subdirectory, with its image count, its COCO label count, and
+        whether a dataset has already been built from it. Directories without images
+        are skipped rather than reported as errors.
+    """
+    root = _image_sets_root()
+    if not root.is_dir():
+        return []
+    built_sources = {r["source"] for r in db.list_created_datasets()}
+    folders = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            continue
+        images = _local_images(entry)
+        if not images:
+            continue
+        folders.append(
+            {
+                "folder": entry.name,
+                "image_count": len(images),
+                "label_count": _local_label_count(entry),
+                "built": f"{USER_DATA_REL}/{_local_stem(entry.name)}.csv" in built_sources,
+            }
+        )
+    return folders
+
+
+def _resolve_local_folder(folder: str) -> Path:
+    """Resolve `folder` to a directory directly under image_sets/, refusing anything else.
+
+    Rejects separators, ``..`` and absolute paths up front, then confirms the resolved
+    path is still a direct child of image_sets/ so a symlink cannot escape the root.
+    """
+    candidate = folder.strip()
+    if not candidate or candidate in (".", "..") or "/" in candidate or "\\" in candidate or os.path.isabs(candidate):
+        raise BuildValidationError("folder must be a single folder name directly under image_sets/")
+    root = _image_sets_root()
+    resolved = (root / candidate).resolve()
+    if resolved.parent != root.resolve():
+        raise BuildValidationError("folder must be a single folder name directly under image_sets/")
+    if not resolved.is_dir():
+        raise BuildValidationError(f"image set {candidate!r} not found under image_sets/")
+    return resolved
+
+
+def _write_local_manifest(images: list[Path], images_dir: Path, folder: str, manifest_path: str) -> None:
+    """Write a feature-tool manifest whose rows point at the images where they already live."""
+    with open(manifest_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["image_path", "cluster", "cluster_l2"])
+        writer.writeheader()
+        for image in images:
+            rel_within = image.relative_to(images_dir).as_posix()
+            cluster, cluster_l2 = staging_mod.cluster_for(rel_within)
+            writer.writerow(
+                {
+                    "image_path": f"{IMAGE_SETS_REL}/{folder}/images/{rel_within}",
+                    "cluster": cluster,
+                    "cluster_l2": cluster_l2,
+                }
+            )
+
+
+def start_local_build(folder: str, name: str = "", description: str = "") -> str:
+    """Validate synchronously and build a dataset from image_sets/<folder> in place.
+
+    Unlike the upload path this never copies image data and never writes into the source
+    folder, so it carries no image-count or byte cap — the folder can be arbitrarily
+    large. The feature tool finds each image's COCO labels itself, at
+    ``image_sets/<folder>/labels/<stem>.json``.
+
+    Parameters
+    ----------
+    folder : str
+        A single folder name directly under image_sets/, e.g. ``"MMDE-POC"``.
+    name : str, default ""
+        Dataset name; falls back to the folder name when blank.
+    description : str, default ""
+        Optional free-text description.
+
+    Returns
+    -------
+    str
+        The job id to poll; raises BuildValidationError / BuildInProgressError without
+        starting anything on a bad request.
+    """
+    folder_path = _resolve_local_folder(folder)
+    folder_name = folder_path.name
+    images = _local_images(folder_path)
+    if not images:
+        raise BuildValidationError(f"image set {folder_name!r} has no images under images/")
+
+    dataset_name = name.strip() or folder_name
+    description = description.strip()
+    if not _build_lock.acquire(blocking=False):
+        raise BuildInProgressError("a dataset build is already in progress")
+
+    job_id = _new_job()
+    stem = _unique_stem(_local_stem(folder_name))
+
+    def worker() -> None:
+        try:
+            _run_local_build(job_id, images, folder_path, folder_name, dataset_name, description, stem)
+        finally:
+            _build_lock.release()
+
+    threading.Thread(target=worker, daemon=True).start()
+    return job_id
+
+
+def _run_local_build(
+    job_id: str,
+    images: list[Path],
+    folder_path: Path,
+    folder_name: str,
+    name: str,
+    description: str,
+    stem: str,
+) -> None:
+    manifest_rel = f"{USER_DATA_REL}/{stem}_input.csv"
+    try:
+        _update_job(job_id, status="staging", percent=10, message=f"Indexing {len(images)} images…")
+        _write_local_manifest(images, folder_path / "images", folder_name, manifest_rel)
+
+        _update_job(job_id, status="extracting_features", percent=30, message="Extracting features…")
+        feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
+        features_mod.run(manifest_rel, feature_csv_rel, device="cpu", skip_nima=True, image_mode="fullres")
+
+        _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
+        row_count = _count_csv_rows(feature_csv_rel)
+        rec = db.create_dataset_record(name, description, feature_csv_rel, None, None, row_count)
+
+        _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
+    except Exception as exc:
+        # Only the derived artifacts are removed — image_sets/ is the user's own data.
+        with contextlib.suppress(OSError):
+            os.remove(os.path.join(DATA_ROOT, manifest_rel))
         _cleanup_partial(stem)
         _update_job(job_id, status="error", percent=None, message=str(exc), error=str(exc))
 

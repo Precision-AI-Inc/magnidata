@@ -10,6 +10,13 @@ that can be loaded in the dashboard with:
 
 Run every command from the repository root.
 
+> **Just want the dataset, not the embeddings?** Copy your folder to
+> `image_sets/<NAME>/` as `images/` plus an optional `labels/`, then use the portal's
+> **BYOD → Prepare From Server Folder** — it indexes `image_sets/` and runs the feature
+> pipeline in place, no CLI and no size limit. Follow this recipe when you also want
+> DINOv2 embeddings, provenance sidecars and checksums, or a permanent `confi.yaml`
+> catalog entry.
+
 ## COCO128 one-command shortcut
 
 For a reproducible public sample dataset, use the helper script. It downloads the

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/magnidata.png" alt="MagniData Logo" width="120"/>
+  <img src="assets/magnidata.png" alt="MagniData Logo" width="512"/>
 </p>
 
 # dataviz
@@ -47,9 +47,14 @@ docker compose up --build
 
 The dataset catalog (`precisionai/dataviz/confi.yaml`) ships empty. From the portal's
 "Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or
-AgriStress-500 — no external data required), or upload your own images. See
+AgriStress-500 — no external data required), build from a folder you've placed in
+`./image_sets` (read in place — no upload and no size cap), or upload your own images. See
 [`precisionai/dataviz/README.md`](precisionai/dataviz/README.md) for the full breakdown
 of the app's layout, data mounts, and how to register a permanent catalog entry.
+Docker accepts BYOD image/annotation uploads up to 16 GiB by default, plus a 100 MB
+embeddings JSON. For larger uploads, raise both the API service's
+`DATASET_BUILD_MAX_TOTAL_BYTES` and `dashboard/nginx.conf`'s `client_max_body_size` — or
+use the `./image_sets` route, which bypasses the upload entirely.
 
 ---
 

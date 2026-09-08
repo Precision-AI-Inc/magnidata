@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+import uuid
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -36,6 +37,8 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE, LocallyLinearEmbedding
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import normalize
+from werkzeug.datastructures import FileStorage
+from werkzeug.exceptions import RequestEntityTooLarge
 
 load_dotenv()
 
@@ -58,12 +61,23 @@ from precisionai.dataviz.tools import coco_labels as coco_labels_mod
 db.init_db()
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = dataset_builder.MAX_REQUEST_BYTES
 CORS(app)
 
 # Background threshold: pixels whose R+G+B sum is below this are treated as
 # background and rendered transparent in the mask/overlay views.
 BG_THRESHOLD = 30
 LFS_POINTER_VERSION = "version https://git-lfs.github.com/spec/v1"
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def request_entity_too_large(_: RequestEntityTooLarge) -> ResponseReturnValue:
+    """Return JSON for request bodies rejected by Flask's upload cap."""
+    limit_mb = int(app.config["MAX_CONTENT_LENGTH"]) // (1024 * 1024)
+    received_mb = (request.content_length or 0) // (1024 * 1024)
+    if received_mb:
+        return jsonify({"error": f"request body too large (received {received_mb}MB, max {limit_mb}MB)"}), 413
+    return jsonify({"error": f"request body too large (max {limit_mb}MB)"}), 413
 
 
 def _lfs_pointer_info(path: str) -> dict | None:
@@ -671,12 +685,70 @@ def list_demos() -> ResponseReturnValue:
     return jsonify(dataset_builder.DEMOS)
 
 
+@app.get("/api/datasets/build/limits")
+def get_build_limits() -> ResponseReturnValue:
+    """Return upload limits used by the dataset-build endpoint."""
+    return jsonify(
+        {
+            "max_images": dataset_builder.MAX_IMAGES,
+            "max_upload_bytes": dataset_builder.MAX_TOTAL_BYTES,
+            "max_embeddings_bytes": dataset_builder.MAX_EMBEDDINGS_BYTES,
+            "max_request_bytes": dataset_builder.MAX_REQUEST_BYTES,
+        }
+    )
+
+
+@app.get("/api/datasets/build/local-folders")
+def get_local_folders() -> ResponseReturnValue:
+    """List the server-side image_sets/ folders a dataset can be built from."""
+    return jsonify(dataset_builder.list_local_folders())
+
+
+def _new_upload_temp_dir() -> str:
+    path = os.path.join(USER_DATA_DIR, dataset_builder.INCOMING_UPLOAD_DIRNAME, uuid.uuid4().hex)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _save_uploads(
+    files: list[FileStorage],
+    upload_dir: str,
+    kind: str,
+    fallback_stem: str,
+) -> list[dataset_builder.staging_mod.UploadedImage]:
+    saved = []
+    kind_dir = os.path.join(upload_dir, kind)
+    os.makedirs(kind_dir, exist_ok=True)
+    for idx, fs in enumerate(files):
+        target = os.path.join(kind_dir, f"{idx:06d}.upload")
+        fs.save(target)
+        saved.append(
+            dataset_builder.staging_mod.UploadedImage(
+                relative_path=fs.filename or f"{fallback_stem}-{idx}",
+                source_path=target,
+            )
+        )
+    return saved
+
+
+def _save_optional_upload(
+    fs: FileStorage | None,
+    upload_dir: str,
+    kind: str,
+    fallback_stem: str,
+) -> dataset_builder.staging_mod.UploadedImage | None:
+    if fs is None:
+        return None
+    saved = _save_uploads([fs], upload_dir, kind, fallback_stem)
+    return saved[0]
+
+
 @app.post("/api/datasets/build")
 def build_dataset() -> ResponseReturnValue:
     """Start a background dataset build.
 
     This pipeline never computes embeddings — bring your own. multipart form fields:
-    - source_type: 'upload' | 'demo'
+    - source_type: 'upload' | 'local' | 'demo'
     - upload mode also needs: name, description (optional), images (one or more
       files, each filename carrying its uploaded relative path for the cluster
       convention), annotations (optional, zero or more COCO-format JSON label
@@ -684,35 +756,51 @@ def build_dataset() -> ResponseReturnValue:
       image by basename stem, see tools/staging.py), and embeddings (optional, a
       single pre-computed embeddings JSON — {"embeddings": {"<basename>": [floats]}}
       — staged as-is; the built dataset has no embeddings if omitted)
+    - local mode also needs: folder (one folder name from
+      GET /api/datasets/build/local-folders, holding images/ and optionally
+      labels/); it is built in place with no size cap and no embeddings, and
+      name/description are optional (name defaults to the folder name)
     - demo mode also needs: demo_key (must name an enabled entry in
       GET /api/datasets/demos); demo builds never have embeddings
     Returns {job_id} (202) immediately; poll GET /api/datasets/build/<job_id>.
     """
     source_type = (request.form.get("source_type") or "").strip()
+    upload_tmp_dir = None
+    job_started = False
     try:
         if source_type == "upload":
             name = request.form.get("name", "")
             description = request.form.get("description", "")
-            images = [
-                dataset_builder.staging_mod.UploadedImage(relative_path=fs.filename or "image", data=fs.read())
-                for fs in request.files.getlist("images")
-            ]
-            annotations = [
-                dataset_builder.staging_mod.UploadedImage(relative_path=fs.filename or "annotation", data=fs.read())
-                for fs in request.files.getlist("annotations")
-            ]
-            embeddings_fs = request.files.get("embeddings")
-            embeddings_file = embeddings_fs.read() if embeddings_fs else None
+            upload_tmp_dir = _new_upload_temp_dir()
+            images = _save_uploads(request.files.getlist("images"), upload_tmp_dir, "images", "image")
+            annotations = _save_uploads(
+                request.files.getlist("annotations"), upload_tmp_dir, "annotations", "annotation"
+            )
+            embeddings_file = _save_optional_upload(
+                request.files.get("embeddings"), upload_tmp_dir, "embeddings", "embeddings"
+            )
             job_id = dataset_builder.start_upload_build(images, annotations, embeddings_file, name, description)
+            job_started = True
+        elif source_type == "local":
+            job_id = dataset_builder.start_local_build(
+                request.form.get("folder", ""),
+                request.form.get("name", ""),
+                request.form.get("description", ""),
+            )
+            job_started = True
         elif source_type == "demo":
             demo_key = (request.form.get("demo_key") or "").strip()
             job_id = dataset_builder.start_demo_build(demo_key)
+            job_started = True
         else:
-            return jsonify({"error": "source_type must be 'upload' or 'demo'"}), 400
+            return jsonify({"error": "source_type must be 'upload', 'local' or 'demo'"}), 400
     except dataset_builder.BuildValidationError as exc:
         return jsonify({"error": str(exc)}), 400
     except dataset_builder.BuildInProgressError as exc:
         return jsonify({"error": str(exc)}), 409
+    finally:
+        if upload_tmp_dir and not job_started:
+            shutil.rmtree(upload_tmp_dir, ignore_errors=True)
     return jsonify({"job_id": job_id}), 202
 
 

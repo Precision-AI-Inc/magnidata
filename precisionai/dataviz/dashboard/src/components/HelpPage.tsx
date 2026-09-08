@@ -155,9 +155,51 @@ export function HelpPage({ onOpenByod }: Props) {
         <section id="custom-dataset">
           <h2>Creating a custom dataset</h2>
           <p>
-            You don't need to hand-produce any of the above — <strong>BYOD → Create New
-            Dataset</strong> runs the whole pipeline for you, with progress shown in the header
-            until it's done.
+            You don't need to hand-produce any of the above — <strong>BYOD</strong> runs the whole
+            pipeline for you, with progress shown in the header until it's done. There are two
+            routes in: point MagniData at a folder already sitting on the server, or upload images
+            from your browser.
+          </p>
+
+          <h3>From a folder on the server</h3>
+          <p>
+            The route for large sets — hundreds of full-resolution images. Nothing is uploaded and
+            nothing is copied: the images are read where they already sit, so this path has no size
+            limit at all.
+          </p>
+
+          <ol>
+            <li>
+              <strong>Put the folder in <code>image_sets/</code></strong>, next to{' '}
+              <code>docker-compose.yml</code> on the machine running MagniData, laid out as{' '}
+              <code>image_sets/MY-SET/images/</code> for the images themselves and — optionally —{' '}
+              <code>image_sets/MY-SET/labels/</code> for one COCO-format JSON per image, matched by
+              filename stem (<code>img001.png</code> ↔ <code>img001.json</code>).
+            </li>
+            <li>
+              <strong>Open BYOD → Prepare From Server Folder.</strong> Every folder containing an{' '}
+              <code>images/</code> directory is listed with its image and label counts, and folders
+              you've already built are marked as added. A folder copied in while the portal is open
+              appears the next time you open the dialog.
+            </li>
+            <li>
+              <strong>Click Prepare.</strong> The dataset takes the folder's name, builds the same
+              feature columns as any other route, and appears in the MagniData picker when it's
+              done.
+            </li>
+          </ol>
+
+          <p>
+            Subfolders under <code>images/</code> become the <code>cluster</code>/
+            <code>cluster_l2</code> grouping just as they do for an upload (e.g.{' '}
+            <code>images/siteA/batch1/img.png</code> → cluster <code>siteA/batch1</code>); a flat{' '}
+            <code>images/</code> folder builds as a single "uncategorized" cluster.
+          </p>
+
+          <h3>From your browser</h3>
+          <p>
+            Convenient for smaller sets — <strong>BYOD → Create New Dataset</strong> takes the files
+            straight from a file picker.
           </p>
 
           <ol>
@@ -169,8 +211,9 @@ export function HelpPage({ onOpenByod }: Props) {
               WEBP, or TIFF). Selecting a folder preserves its subfolder structure as the{' '}
               <code>cluster</code>/<code>cluster_l2</code> grouping (e.g.{' '}
               <code>siteA/batch1/img.jpg</code> → cluster <code>siteA/batch1</code>); a flat
-              selection is grouped as a single "uncategorized" cluster. Up to 500 images / 200MB
-              per build.
+              selection is grouped as a single "uncategorized" cluster. The dialog shows the
+              current image-count and size limits as you select, and flags a selection that
+              exceeds them — for anything larger, use the server-folder route above.
             </li>
             <li>
               <strong>Add annotations (optional)</strong> — one COCO-format JSON file per image,

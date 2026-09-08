@@ -82,17 +82,28 @@ def test_start_upload_build_rejects_too_many_images():
         dataset_builder.start_upload_build(images, [], None, "Name", "")
 
 
-def test_start_upload_build_rejects_oversized_upload():
-    big = b"x" * (dataset_builder.MAX_TOTAL_BYTES + 1)
+def test_start_upload_build_rejects_oversized_upload(monkeypatch):
+    monkeypatch.setattr(dataset_builder, "MAX_TOTAL_BYTES", 3)
+    big = b"x" * 4
     with pytest.raises(dataset_builder.BuildValidationError):
         dataset_builder.start_upload_build([UploadedImage("a.png", big)], [], None, "Name", "")
 
 
-def test_start_upload_build_rejects_oversized_when_annotations_push_over_cap():
-    images = [UploadedImage("a.png", b"x" * (dataset_builder.MAX_TOTAL_BYTES - 10))]
-    annotations = [UploadedImage("a.json", b"x" * 20)]
+def test_start_upload_build_rejects_oversized_when_annotations_push_over_cap(monkeypatch):
+    monkeypatch.setattr(dataset_builder, "MAX_TOTAL_BYTES", 10)
+    images = [UploadedImage("a.png", b"x" * 8)]
+    annotations = [UploadedImage("a.json", b"x" * 3)]
     with pytest.raises(dataset_builder.BuildValidationError):
         dataset_builder.start_upload_build(images, annotations, None, "Name", "")
+
+
+def test_start_upload_build_rejects_oversized_source_backed_upload(monkeypatch, tmp_path):
+    monkeypatch.setattr(dataset_builder, "MAX_TOTAL_BYTES", 3)
+    source = tmp_path / "source.upload"
+    source.write_bytes(b"xxxx")
+
+    with pytest.raises(dataset_builder.BuildValidationError):
+        dataset_builder.start_upload_build([UploadedImage("a.png", source_path=str(source))], [], None, "Name", "")
 
 
 def test_start_upload_build_rejects_malformed_embeddings_json():
@@ -133,6 +144,21 @@ def test_upload_build_end_to_end_without_embeddings(monkeypatch):
     assert os.path.isfile(rec["source"])
     assert os.path.isdir(rec["source"].replace(".csv", "_images"))
     assert not os.path.isfile(rec["source"].replace(".csv", ".json"))
+
+
+def test_upload_build_with_source_backed_files_cleans_temp_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    incoming = tmp_path / "data_user" / dataset_builder.INCOMING_UPLOAD_DIRNAME / "req-1" / "images"
+    incoming.mkdir(parents=True)
+    source = incoming / "000000.upload"
+    source.write_bytes(b"AAAA")
+    images = [UploadedImage("weeds/a.png", source_path=str(source))]
+
+    job_id = dataset_builder.start_upload_build(images, [], None, "Source Backed Set", "")
+    job = _wait_for_job(job_id)
+
+    assert job["status"] == "done"
+    assert not (tmp_path / "data_user" / dataset_builder.INCOMING_UPLOAD_DIRNAME / "req-1").exists()
 
 
 def test_upload_build_stages_provided_embeddings_file(monkeypatch):
@@ -453,3 +479,141 @@ def test_start_agristress_build_cleans_up_on_listing_failure(monkeypatch):
     assert job["status"] == "error"
     assert db.get_created_dataset_by_source(f"data_user/{dataset_builder.AGRISTRESS_STEM}.csv") is None
     assert not os.path.isdir(f"data_user/{dataset_builder.AGRISTRESS_STEM}_images")
+
+
+# ── Local image_sets build ────────────────────────────────────────────────────
+
+
+def _make_local_folder(tmp_path, folder, image_names, label_names=()):
+    """Create image_sets/<folder>/{images,labels} and return the folder path."""
+    root = tmp_path / dataset_builder.IMAGE_SETS_REL / folder
+    images_dir = root / "images"
+    images_dir.mkdir(parents=True)
+    for image_name in image_names:
+        Image.new("RGB", (4, 4), (10, 20, 30)).save(images_dir / image_name)
+    if label_names:
+        labels_dir = root / "labels"
+        labels_dir.mkdir()
+        for label_name in label_names:
+            (labels_dir / label_name).write_text(json.dumps({"images": [], "annotations": []}))
+    return root
+
+
+def test_list_local_folders_indexes_folder_with_image_and_label_counts(tmp_path):
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png", "b.png"], ["a.json"])
+
+    folders = dataset_builder.list_local_folders()
+
+    assert folders == [{"folder": "MMDE-POC", "image_count": 2, "label_count": 1, "built": False}]
+
+
+def test_list_local_folders_skips_folder_without_images_dir(tmp_path):
+    (tmp_path / dataset_builder.IMAGE_SETS_REL / "no-images").mkdir(parents=True)
+
+    assert dataset_builder.list_local_folders() == []
+
+
+def test_list_local_folders_returns_empty_when_image_sets_missing(tmp_path):
+    assert dataset_builder.list_local_folders() == []
+
+
+def test_start_local_build_rejects_unknown_folder(tmp_path):
+    with pytest.raises(dataset_builder.BuildValidationError, match="not found"):
+        dataset_builder.start_local_build("nope", "Name", "")
+
+
+def test_start_local_build_rejects_path_traversal(tmp_path):
+    with pytest.raises(dataset_builder.BuildValidationError, match="single folder name"):
+        dataset_builder.start_local_build("../data_user", "Name", "")
+
+
+def test_start_local_build_rejects_nested_path(tmp_path):
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+
+    with pytest.raises(dataset_builder.BuildValidationError, match="single folder name"):
+        dataset_builder.start_local_build("MMDE-POC/images", "Name", "")
+
+
+def test_start_local_build_rejects_folder_with_no_images(tmp_path):
+    (tmp_path / dataset_builder.IMAGE_SETS_REL / "empty" / "images").mkdir(parents=True)
+
+    with pytest.raises(dataset_builder.BuildValidationError, match="no images"):
+        dataset_builder.start_local_build("empty", "Name", "")
+
+
+def test_local_build_defaults_dataset_name_to_folder_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+
+    job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "  ", ""))
+
+    assert job["dataset"]["name"] == "MMDE-POC"
+
+
+def test_local_build_manifest_points_at_image_sets_without_copying(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png", "b.png"], ["a.json", "b.json"])
+
+    job_id = dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "soybeans")
+    job = _wait_for_job(job_id)
+
+    assert job["status"] == "done"
+    with open(job["dataset"]["source"], newline="") as f:
+        paths = [r["image_path"] for r in csv.DictReader(f)]
+    assert sorted(paths) == ["image_sets/MMDE-POC/images/a.png", "image_sets/MMDE-POC/images/b.png"]
+
+
+def test_local_build_writes_manifest_with_cluster_columns(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+
+    job_id = dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
+    _wait_for_job(job_id)
+
+    manifest = tmp_path / "data_user" / "mmde-poc_input.csv"
+    with open(manifest, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert rows[0]["cluster"] == "uncategorized"
+    assert rows[0]["cluster_l2"] == "uncategorized"
+
+
+def test_local_build_leaves_source_images_in_place(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    folder = _make_local_folder(tmp_path, "MMDE-POC", ["a.png"], ["a.json"])
+
+    job_id = dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
+    _wait_for_job(job_id)
+
+    assert (folder / "images" / "a.png").is_file()
+    assert (folder / "labels" / "a.json").is_file()
+    assert not (tmp_path / "data_user" / "mmde-poc_images").exists()
+
+
+def test_local_build_ignores_the_upload_image_count_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    monkeypatch.setattr(dataset_builder, "MAX_IMAGES", 1)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png", "b.png", "c.png"])
+
+    job_id = dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
+    job = _wait_for_job(job_id)
+
+    assert job["status"] == "done"
+    assert job["dataset"]["row_count"] == 3
+
+
+def test_local_build_marks_folder_built_in_listing(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+
+    _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
+
+    assert dataset_builder.list_local_folders()[0]["built"] is True
+
+
+def test_local_build_rejects_concurrent_build(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+    dataset_builder._build_lock.acquire()
+
+    with pytest.raises(dataset_builder.BuildInProgressError, match="already in progress"):
+        dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")

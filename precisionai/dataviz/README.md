@@ -36,8 +36,21 @@ any sample data. From the portal's "Bring Your Own Data" dialog, either:
 - **Load Demo** → prepare COCO128 or AgriStress-500. Both are self-contained: images (and,
   for COCO128, precomputed embeddings shipped in `scripts/`) are fetched and built entirely
   by the API, no external data mount required.
-- **Create Dataset** → upload your own images (optionally with COCO-format annotations and/or
-  a pre-computed embeddings JSON) — see [`docs/data-contract.md`](docs/data-contract.md).
+- **Prepare From Server Folder** → build from a folder already placed in `./image_sets`
+  (mounted read-only at `/app/image_sets`). Lay it out as `image_sets/<NAME>/images/` plus an
+  optional `image_sets/<NAME>/labels/` holding one COCO-format JSON per image, matched by
+  filename stem. The dialog indexes every such folder with its image and label counts, and the
+  build runs **in place** — the image data is never uploaded or copied, so this route has no
+  size cap. Subfolders under `images/` become the `cluster`/`cluster_l2` grouping.
+- **Create Dataset** → upload your own images from the browser (optionally with COCO-format
+  annotations and/or a pre-computed embeddings JSON) — see
+  [`docs/data-contract.md`](docs/data-contract.md).
+
+Docker accepts BYOD image/annotation uploads up to 16 GiB by default, plus a 100 MB
+embeddings JSON. For larger uploads, raise both `DATASET_BUILD_MAX_TOTAL_BYTES` on
+the API service and `dashboard/nginx.conf`'s `client_max_body_size`, then rebuild the
+web image so nginx picks up the change — or sidestep the upload entirely and use the
+`image_sets/` route above, which has no limit.
 
 To instead register your own pre-built CSV/embeddings pair as a permanent catalog entry, add
 it under `./data` (mounted read-only into the API container) and list it in `confi.yaml`.

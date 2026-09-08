@@ -31,6 +31,9 @@ services:
       DATA_ROOT: /app
       DB_PATH: /app/db/notes.db
       API_PORT: "5050"
+      # BYOD upload cap for images + annotations. nginx.conf is set slightly above this
+      # so Flask returns JSON validation errors for over-limit requests.
+      DATASET_BUILD_MAX_TOTAL_BYTES: "17179869184"
     # Optional local overrides (DATALAKE_ROOT, THUMB_ROOT_*, ALLOWED_REMOTE_IMAGE_HOSTS, …) —
     # copy precisionai/dataviz/api/.env.example to a .env alongside it and uncomment below.
     # env_file:

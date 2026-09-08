@@ -25,13 +25,44 @@ async function mutate<T>(method: string, url: string, body?: unknown): Promise<T
   return r.json()
 }
 
-async function postForm<T>(url: string, formData: FormData): Promise<T> {
-  const r = await fetch(url, { method: 'POST', body: formData })
-  if (!r.ok) {
-    const body = await r.text()
-    throw new Error(`${r.status}: ${body}`)
+async function postForm<T>(
+  url: string,
+  formData: FormData,
+  onUploadProgress?: (percent: number) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', url)
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable && event.total > 0) {
+        onUploadProgress?.(Math.round((event.loaded / event.total) * 100))
+      }
+    }
+    xhr.onload = () => {
+      const body = xhr.responseText || ''
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`${xhr.status}: ${errorBody(body)}`))
+        return
+      }
+      try {
+        resolve(JSON.parse(body) as T)
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(String(e)))
+      }
+    }
+    xhr.onerror = () => reject(new Error('Network error while uploading dataset'))
+    xhr.onabort = () => reject(new Error('Upload aborted'))
+    xhr.send(formData)
+  })
+}
+
+function errorBody(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { error?: string }
+    return parsed.error || body
+  } catch {
+    return body
   }
-  return r.json()
 }
 
 export interface DatasetMeta {
@@ -80,8 +111,22 @@ export interface DemoEntry {
   enabled: boolean
 }
 
+export interface BuildLimits {
+  max_images: number
+  max_upload_bytes: number
+  max_embeddings_bytes: number
+  max_request_bytes: number
+}
+
+export interface LocalFolder {
+  folder: string
+  image_count: number
+  label_count: number
+  built: boolean
+}
+
 export interface BuildJobStatus {
-  status: 'queued' | 'staging' | 'extracting_features' | 'registering' | 'done' | 'error'
+  status: 'uploading' | 'queued' | 'staging' | 'extracting_features' | 'registering' | 'done' | 'error'
   percent: number
   message: string
   dataset?: DatasetMeta
@@ -97,7 +142,18 @@ export const api = {
 
   // ── Build a dataset from images (BYOD) ──────────────────────────────────────
   listDemos: () => get<DemoEntry[]>(`${BASE}/datasets/demos`),
-  buildDataset: (formData: FormData) => postForm<{ job_id: string }>(`${BASE}/datasets/build`, formData),
+  buildLimits: () => get<BuildLimits>(`${BASE}/datasets/build/limits`),
+  buildDataset: (formData: FormData, onUploadProgress?: (percent: number) => void) =>
+    postForm<{ job_id: string }>(`${BASE}/datasets/build`, formData, onUploadProgress),
+  listLocalFolders: () => get<LocalFolder[]>(`${BASE}/datasets/build/local-folders`),
+  buildLocal: (folder: string, name?: string, description?: string) => {
+    const fd = new FormData()
+    fd.append('source_type', 'local')
+    fd.append('folder', folder)
+    if (name) fd.append('name', name)
+    if (description) fd.append('description', description)
+    return postForm<{ job_id: string }>(`${BASE}/datasets/build`, fd)
+  },
   buildDemo: (demoKey: string) => {
     const fd = new FormData()
     fd.append('source_type', 'demo')

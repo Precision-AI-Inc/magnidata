@@ -65,6 +65,7 @@ precisionai/dataviz/data_user/
 # Locally staged image sets created by dataviz recipes/demo builds
 /image_sets/*
 !/image_sets/.gitkeep
+!/image_sets/README.md
 
 # Avoids AGENTS.md
 AGENTS.md

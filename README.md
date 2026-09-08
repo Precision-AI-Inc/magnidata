@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/magnidata.png" alt="MagniData Logo" width="120"/>
+  <img src="assets/magnidata.png" alt="MagniData Logo" width="512"/>
 </p>
 
 # dataviz

@@ -39,6 +39,11 @@ any sample data. From the portal's "Bring Your Own Data" dialog, either:
 - **Create Dataset** → upload your own images (optionally with COCO-format annotations and/or
   a pre-computed embeddings JSON) — see [`docs/data-contract.md`](docs/data-contract.md).
 
+Docker accepts BYOD image/annotation uploads up to 16 GiB by default, plus a 100 MB
+embeddings JSON. For larger uploads, raise both `DATASET_BUILD_MAX_TOTAL_BYTES` on
+the API service and `dashboard/nginx.conf`'s `client_max_body_size`, then rebuild the
+web image so nginx picks up the change.
+
 To instead register your own pre-built CSV/embeddings pair as a permanent catalog entry, add
 it under `./data` (mounted read-only into the API container) and list it in `confi.yaml`.
 User-created child datasets are written to `./data_user` (the only read-write mount).

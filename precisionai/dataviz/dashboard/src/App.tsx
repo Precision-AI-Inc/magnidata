@@ -556,9 +556,11 @@ export default function App() {
       {showByod && (
         <ByodDialog
           datasets={datasetMeta}
+          buildJob={buildJob.job}
           onClose={() => setShowByod(false)}
           startUpload={buildJob.startUpload}
           startDemo={buildJob.startDemo}
+          startLocal={buildJob.startLocal}
         />
       )}
 

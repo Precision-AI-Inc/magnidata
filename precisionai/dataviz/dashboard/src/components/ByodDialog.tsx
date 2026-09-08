@@ -1,23 +1,32 @@
 import { useEffect, useState } from 'react'
-import { X, Sparkles, UploadCloud, ArrowLeft, CheckCircle2 } from 'lucide-react'
+import { X, Sparkles, UploadCloud, ArrowLeft, CheckCircle2, FolderOpen } from 'lucide-react'
 import { api } from '../api'
-import type { DatasetMeta, DemoEntry } from '../api'
+import type { BuildJobStatus, BuildLimits, DatasetMeta, DemoEntry, LocalFolder } from '../api'
 import './ByodDialog.css'
 
-type Step = 'choose' | 'demo' | 'create'
+type Step = 'choose' | 'demo' | 'local' | 'create'
 
 interface Props {
   datasets: DatasetMeta[]
+  buildJob?: BuildJobStatus | null
   onClose: () => void
   startUpload: (formData: FormData) => Promise<string>
   startDemo: (demoKey: string) => Promise<string>
+  startLocal: (folder: string, name?: string) => Promise<string>
 }
 
 function relPath(f: File): string {
   return (f as unknown as { webkitRelativePath?: string }).webkitRelativePath || f.name
 }
 
-export function ByodDialog({ datasets, onClose, startUpload, startDemo }: Props) {
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${bytes} B`
+}
+
+export function ByodDialog({ datasets, buildJob, onClose, startUpload, startDemo, startLocal }: Props) {
   const [step, setStep] = useState<Step>('choose')
 
   return (
@@ -30,7 +39,13 @@ export function ByodDialog({ datasets, onClose, startUpload, startDemo }: Props)
             </button>
           )}
           <h3>
-            {step === 'choose' ? 'Bring Your Own Data' : step === 'demo' ? 'Load Demo' : 'Create New Dataset'}
+            {step === 'choose'
+              ? 'Bring Your Own Data'
+              : step === 'demo'
+                ? 'Load Demo'
+                : step === 'local'
+                  ? 'Prepare From Server Folder'
+                  : 'Create New Dataset'}
           </h3>
           <button className="byod-close" onClick={onClose} aria-label="Close"><X size={16} /></button>
         </div>
@@ -39,8 +54,9 @@ export function ByodDialog({ datasets, onClose, startUpload, startDemo }: Props)
         {step === 'demo' && (
           <DemoStep datasets={datasets} startDemo={startDemo} onStarted={onClose} />
         )}
+        {step === 'local' && <LocalStep startLocal={startLocal} onStarted={onClose} />}
         {step === 'create' && (
-          <CreateStep startUpload={startUpload} onStarted={onClose} />
+          <CreateStep buildJob={buildJob} startUpload={startUpload} onStarted={onClose} />
         )}
       </div>
     </div>
@@ -55,6 +71,13 @@ function ChooseStep({ onPick }: { onPick: (s: Step) => void }) {
         <div>
           <div className="byod-choice-title">Load Demo</div>
           <div className="byod-choice-desc">Prepare a ready-made sample dataset in one click</div>
+        </div>
+      </button>
+      <button className="byod-choice" onClick={() => onPick('local')}>
+        <FolderOpen size={18} />
+        <div>
+          <div className="byod-choice-title">Prepare From Server Folder</div>
+          <div className="byod-choice-desc">Build from a folder already placed in image_sets/ — no upload, no size limit</div>
         </div>
       </button>
       <button className="byod-choice" onClick={() => onPick('create')}>
@@ -127,7 +150,76 @@ function DemoStep({ datasets, startDemo, onStarted }: {
   )
 }
 
-function CreateStep({ startUpload, onStarted }: {
+function LocalStep({ startLocal, onStarted }: {
+  startLocal: (folder: string, name?: string) => Promise<string>
+  onStarted: () => void
+}) {
+  const [folders, setFolders] = useState<LocalFolder[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [starting, setStarting] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    api.listLocalFolders()
+      .then(f => { if (alive) setFolders(f) })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)) })
+    return () => { alive = false }
+  }, [])
+
+  const build = async (folder: string) => {
+    setError(null)
+    setStarting(folder)
+    try {
+      await startLocal(folder)
+      onStarted()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setStarting(null)
+    }
+  }
+
+  return (
+    <div className="byod-body">
+      <div className="byod-hint">
+        Folders placed in <code>image_sets/</code> on the server, each holding an{' '}
+        <code>images/</code> directory and optionally a matching <code>labels/</code> directory.
+        Images are read where they are — nothing is copied or uploaded.
+      </div>
+      {!folders && !error && <div className="byod-hint">Indexing image_sets/…</div>}
+      {error && <div className="byod-error">{error}</div>}
+      {folders?.length === 0 && (
+        <div className="byod-hint">
+          No image sets found. Copy a folder into <code>image_sets/</code> and reopen this dialog.
+        </div>
+      )}
+
+      <div className="byod-demo-list">
+        {folders?.map(f => (
+          <div key={f.folder} className={`byod-demo-row${f.built ? ' byod-demo-row--disabled' : ''}`}>
+            <div>
+              <div className="byod-demo-name">{f.folder}</div>
+              <div className="byod-demo-desc">
+                {f.built
+                  ? 'Already added to your datasets'
+                  : `${f.image_count.toLocaleString()} images · ${f.label_count.toLocaleString()} labels`}
+              </div>
+            </div>
+            {f.built
+              ? <span className="byod-demo-badge"><CheckCircle2 size={13} /> Added</span>
+              : (
+                <button className="byod-submit" disabled={starting !== null} onClick={() => build(f.folder)}>
+                  {starting === f.folder ? 'Starting…' : 'Prepare'}
+                </button>
+              )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function CreateStep({ buildJob, startUpload, onStarted }: {
+  buildJob?: BuildJobStatus | null
   startUpload: (formData: FormData) => Promise<string>
   onStarted: () => void
 }) {
@@ -136,10 +228,26 @@ function CreateStep({ startUpload, onStarted }: {
   const [images, setImages] = useState<File[]>([])
   const [annotations, setAnnotations] = useState<File[]>([])
   const [embeddings, setEmbeddings] = useState<File | null>(null)
+  const [limits, setLimits] = useState<BuildLimits | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const canSubmit = !submitting && name.trim().length > 0 && images.length > 0
+  useEffect(() => {
+    let alive = true
+    api.buildLimits().then(l => { if (alive) setLimits(l) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  const imageBytes = images.reduce((sum, f) => sum + f.size, 0)
+  const annotationBytes = annotations.reduce((sum, f) => sum + f.size, 0)
+  const uploadBytes = imageBytes + annotationBytes
+  const embeddingsBytes = embeddings?.size ?? 0
+  const limitError = limits && (
+    images.length > limits.max_images ||
+    uploadBytes > limits.max_upload_bytes ||
+    embeddingsBytes > limits.max_embeddings_bytes
+  )
+  const canSubmit = !submitting && name.trim().length > 0 && images.length > 0 && !limitError
 
   const submit = async () => {
     setSubmitting(true)
@@ -184,6 +292,12 @@ function CreateStep({ startUpload, onStarted }: {
           style={{ display: 'none' }}
           onChange={e => setImages(Array.from(e.target.files || []))}
         />
+        <SelectionSize
+          count={images.length}
+          bytes={imageBytes}
+          maxCount={limits?.max_images}
+          overCount={!!limits && images.length > limits.max_images}
+        />
       </label>
 
       <label className="byod-field">
@@ -199,7 +313,21 @@ function CreateStep({ startUpload, onStarted }: {
           style={{ display: 'none' }}
           onChange={e => setAnnotations(Array.from(e.target.files || []))}
         />
+        {annotations.length > 0 && (
+          <SelectionSize
+            count={annotations.length}
+            bytes={annotationBytes}
+          />
+        )}
       </label>
+
+      {(images.length > 0 || annotations.length > 0) && (
+        <PayloadSize
+          bytes={uploadBytes}
+          maxBytes={limits?.max_upload_bytes}
+          overBytes={!!limits && uploadBytes > limits.max_upload_bytes}
+        />
+      )}
 
       <label className="byod-field">
         <span>Embeddings (optional — a pre-computed embeddings JSON; MagniData doesn't compute embeddings itself)</span>
@@ -212,12 +340,72 @@ function CreateStep({ startUpload, onStarted }: {
           style={{ display: 'none' }}
           onChange={e => setEmbeddings(e.target.files?.[0] ?? null)}
         />
+        {embeddings && (
+          <SelectionSize
+            count={1}
+            bytes={embeddingsBytes}
+            maxBytes={limits?.max_embeddings_bytes}
+            overBytes={!!limits && embeddingsBytes > limits.max_embeddings_bytes}
+          />
+        )}
       </label>
 
+      {submitting && <BuildProgress job={buildJob} />}
       {error && <div className="byod-error">{error}</div>}
       <button className="byod-submit byod-submit--primary" onClick={submit} disabled={!canSubmit}>
-        {submitting ? 'Starting…' : 'Create Dataset'}
+        {submitting ? (buildJob?.status === 'uploading' ? 'Uploading…' : 'Starting…') : 'Create Dataset'}
       </button>
+    </div>
+  )
+}
+
+function SelectionSize({ count, bytes, maxCount, maxBytes, overCount, overBytes }: {
+  count: number
+  bytes: number
+  maxCount?: number
+  maxBytes?: number
+  overCount?: boolean
+  overBytes?: boolean
+}) {
+  const status = [
+    `${count.toLocaleString()} selected`,
+    maxCount ? `${maxCount.toLocaleString()} max` : null,
+    `${formatBytes(bytes)}`,
+    maxBytes ? `${formatBytes(maxBytes)} max` : null,
+  ].filter(Boolean).join(' · ')
+
+  return (
+    <div className={`byod-size${overCount || overBytes ? ' byod-size--error' : ''}`}>
+      {status}
+    </div>
+  )
+}
+
+function PayloadSize({ bytes, maxBytes, overBytes }: {
+  bytes: number
+  maxBytes?: number
+  overBytes?: boolean
+}) {
+  return (
+    <div className={`byod-size${overBytes ? ' byod-size--error' : ''}`}>
+      Images + annotations: {formatBytes(bytes)}{maxBytes ? ` / ${formatBytes(maxBytes)} max` : ''}
+    </div>
+  )
+}
+
+function BuildProgress({ job }: { job?: BuildJobStatus | null }) {
+  if (!job || job.status === 'done' || job.status === 'error') return null
+  const percent = Math.max(0, Math.min(100, Math.round(job.percent ?? 0)))
+
+  return (
+    <div className="byod-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
+      <div className="byod-progress-row">
+        <span>{job.message}</span>
+        <span>{percent}%</span>
+      </div>
+      <div className="byod-progress-track">
+        <div className="byod-progress-fill" style={{ width: `${percent}%` }} />
+      </div>
     </div>
   )
 }

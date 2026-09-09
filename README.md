@@ -2,7 +2,7 @@
   <img src="assets/magnidata.png" alt="MagniData Logo" width="512"/>
 </p>
 
-# dataviz
+# MagniData
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
 [![PyPI](https://img.shields.io/pypi/v/pai-dataviz.svg?include_prereleases)](https://pypi.org/project/pai-dataviz/)

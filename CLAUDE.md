@@ -2,7 +2,7 @@
 
 Apply these standards when writing, reviewing, or refactoring code in any PAI Python project.
 
-This repository (`dataviz`) was migrated from an existing, working application rather than
+This repository (`magnidata`) was migrated from an existing, working application rather than
 started from this template, so it does not meet every rule below yet — see CONTRIBUTING.md's
 **Known gaps** section for the specific, tracked deviations (test coverage, a ruff/pyright
 backlog, Flask instead of FastAPI, colocated tests). Everything else in this document is the

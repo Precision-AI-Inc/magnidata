@@ -42,7 +42,7 @@ repos:
         name: pytest (coverage ≥ 60%)
         entry: python -m pytest
         language: system
-        # No path arg: pyproject.toml's testpaths (precisionai/dataviz — tests are
+        # No path arg: pyproject.toml's testpaths (precisionai/magnidata — tests are
         # colocated with source in this repo, not under a top-level tests/) applies.
         args: ["-q", "--tb=short", "--no-header"]
         pass_filenames: false

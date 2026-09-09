@@ -8,6 +8,9 @@
 pytest>=7.0
 pytest-cov>=5.0
 
+# Linting and formatting (pinned to the rev in .pre-commit-config.yaml)
+ruff==0.15.17
+
 # Pre-commit
 pre-commit>=3.7
 

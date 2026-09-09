@@ -36,7 +36,7 @@ jobs:
       - name: Check version matches tag
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
-          BUILT_VERSION=$(python -c "import importlib.metadata as m; print(m.version('pai-dataviz'))")
+          BUILT_VERSION=$(python -c "import importlib.metadata as m; print(m.version('magnidata'))")
           if [ "$TAG_VERSION" != "$BUILT_VERSION" ]; then
             echo "Tag v$TAG_VERSION does not match built version $BUILT_VERSION" >&2
             exit 1
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/pai-dataviz/
+      url: https://pypi.org/project/magnidata/
     permissions:
       id-token: write
     steps:

@@ -5,7 +5,7 @@ requires = ["setuptools>=61", "wheel", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pai-dataviz"
+name = "magnidata"
 dynamic = ["version"]
 description = "Precision AI — interactive visual-query dashboard for image datasets: deterministic feature extraction, embeddings/PCA/cluster 3D exploration, and a Flask API + React dashboard."
 readme = "README.md"
@@ -62,23 +62,26 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=5.0",
     "pre-commit>=3.7",
+    # Pinned to the rev in .pre-commit-config.yaml — a different ruff version
+    # reports a different rule set, so an unpinned local run would disagree with CI.
+    "ruff==0.15.17",
     "pyright>=1.1",
     "genbadge[coverage]>=1.1",
 ]
 
-# No [project.scripts] entry for the API: precisionai/dataviz/api/*.py use flat,
+# No [project.scripts] entry for the API: precisionai/magnidata/api/*.py use flat,
 # sibling-style imports (import db, import local_files) by design, since Dockerfile.api
 # copies them flat into the image root and runs `python app.py` directly — see that
 # file's own docstring. That means app.py can't be invoked as an installed console
 # script (its imports would fail once run from outside its own directory); run it via
-# `docker compose up` or `python app.py` from precisionai/dataviz/api/ instead — see
+# `docker compose up` or `python app.py` from precisionai/magnidata/api/ instead — see
 # README.md.
 
 [project.urls]
-Homepage = "https://github.com/Precision-AI-Inc/dataviz"
-Repository = "https://github.com/Precision-AI-Inc/dataviz"
-Issues = "https://github.com/Precision-AI-Inc/dataviz/issues"
-Changelog = "https://github.com/Precision-AI-Inc/dataviz/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Precision-AI-Inc/magnidata"
+Repository = "https://github.com/Precision-AI-Inc/magnidata"
+Issues = "https://github.com/Precision-AI-Inc/magnidata/issues"
+Changelog = "https://github.com/Precision-AI-Inc/magnidata/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -89,8 +92,8 @@ include = ["precisionai*"]
 # build reads its precomputed embeddings from this file, resolved relative to
 # scripts/prepare_coco128_dashboard.py's own installed location (see dataset_builder.py's
 # COCO128_EMBEDDINGS_ASSET). confi.yaml is the dataset registry the API reads.
-"precisionai.dataviz.scripts" = ["coco128_embeddings.json"]
-"precisionai.dataviz" = ["confi.yaml"]
+"precisionai.magnidata.scripts" = ["coco128_embeddings.json"]
+"precisionai.magnidata" = ["confi.yaml"]
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
@@ -98,11 +101,11 @@ local_scheme = "no-local-version"
 fallback_version = "0.0.0"
 
 # ── pytest ────────────────────────────────────────────────────────────────────
-# Tests are colocated with source (precisionai/dataviz/**/test_*.py), not under a
+# Tests are colocated with source (precisionai/magnidata/**/test_*.py), not under a
 # top-level tests/ — a deliberate deviation from the template's layout; see
 # CONTRIBUTING.md.
 [tool.pytest.ini_options]
-testpaths = ["precisionai/dataviz"]
+testpaths = ["precisionai/magnidata"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "--cov=precisionai --cov-report=term-missing --cov-fail-under=60"
@@ -188,7 +191,7 @@ ignore = [
 # before importing db.py/local_files.py/dataset_builder.py (they read their own
 # env-derived config at import time) — the E402 this produces is unavoidable
 # without breaking local .env overrides.
-"precisionai/dataviz/api/app.py" = ["E402"]
+"precisionai/magnidata/api/app.py" = ["E402"]
 # prepare_coco128_dashboard.py: PLC0415 on the run_pipeline() import of tools.features/
 # embeddings is deliberate — it happens after a sys.path.insert() that makes the
 # package importable from an uninstalled checkout (this script's whole point per its
@@ -197,7 +200,7 @@ ignore = [
 # only treats a fully literal argument list as "trusted", so resolving the binary
 # portably (rather than hardcoding a path) always trips it, same underlying limitation
 # as the S310 case above.
-"precisionai/dataviz/scripts/prepare_coco128_dashboard.py" = ["PLC0415", "S603"]
+"precisionai/magnidata/scripts/prepare_coco128_dashboard.py" = ["PLC0415", "S603"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

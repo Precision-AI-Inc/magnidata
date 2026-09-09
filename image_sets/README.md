@@ -30,8 +30,8 @@ non-empty `images/` is listed with its image and label counts; pick one and pres
 
 The build reads the images where they are — nothing is copied and nothing is written back
 into this directory — so there is no size limit on this route. Only the derived feature CSV
-and its manifest are written, to `precisionai/dataviz/data_user/`.
+and its manifest are written, to `precisionai/magnidata/data_user/`.
 
 For the fuller pipeline (DINOv2 embeddings, provenance sidecars, checksums, a permanent
 `confi.yaml` entry), see
-[`../precisionai/dataviz/docs/recipes/from-images-to-dashboard.md`](../precisionai/dataviz/docs/recipes/from-images-to-dashboard.md).
+[`../precisionai/magnidata/docs/recipes/from-images-to-dashboard.md`](../precisionai/magnidata/docs/recipes/from-images-to-dashboard.md).

@@ -59,10 +59,10 @@ node_modules/
 *.sqlite
 *.sqlite3
 # User-created child datasets (docker-compose's only read-write mount for the API)
-precisionai/dataviz/data_user/
+precisionai/magnidata/data_user/
 # Provenance sidecars emitted next to tool outputs (features.py / embeddings.py)
 *.provenance.json
-# Locally staged image sets created by dataviz recipes/demo builds
+# Locally staged image sets created by magnidata recipes/demo builds
 /image_sets/*
 !/image_sets/.gitkeep
 !/image_sets/README.md

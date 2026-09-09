@@ -8,9 +8,9 @@ recursive-include precisionai *.py
 # Non-.py runtime assets the Python package actually needs at import/run time —
 # see [tool.setuptools.package-data] in pyproject.toml for the installed-wheel side
 # of this (MANIFEST.in only controls the sdist).
-include precisionai/dataviz/scripts/coco128_embeddings.json
-include precisionai/dataviz/confi.yaml
-prune precisionai/dataviz/dashboard
-exclude precisionai/dataviz/api/.dockerignore
+include precisionai/magnidata/scripts/coco128_embeddings.json
+include precisionai/magnidata/confi.yaml
+prune precisionai/magnidata/dashboard
+exclude precisionai/magnidata/api/.dockerignore
 prune docs
 prune .github

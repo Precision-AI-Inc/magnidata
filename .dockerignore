@@ -6,6 +6,6 @@
 **/*.pyc
 **/.pytest_cache
 **/.venv
-precisionai/dataviz/dashboard/node_modules
-precisionai/dataviz/dashboard/dist
-precisionai/dataviz/api/.venv
+precisionai/magnidata/dashboard/node_modules
+precisionai/magnidata/dashboard/dist
+precisionai/magnidata/api/.venv

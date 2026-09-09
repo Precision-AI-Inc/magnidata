@@ -2,22 +2,22 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY precisionai/dataviz/api/requirements.txt ./api-requirements.txt
+COPY precisionai/magnidata/api/requirements.txt ./api-requirements.txt
 RUN pip install --no-cache-dir -r api-requirements.txt
 
-# tools/ and scripts/ are imported as precisionai.dataviz.tools / .scripts (see
+# tools/ and scripts/ are imported as precisionai.magnidata.tools / .scripts (see
 # api/dataset_builder.py), so the package path is preserved rather than copied flat.
 # Their only runtime deps (PIL, numpy) are already in api-requirements.txt above — the
 # dataset-build pipeline never computes embeddings (bring your own), so the heavier
-# precisionai/dataviz/requirements.txt (torch/timm/pyiqa, needed only by the offline
+# precisionai/magnidata/requirements.txt (torch/timm/pyiqa, needed only by the offline
 # tools/embeddings.py and tools/nima.py CLI paths) is intentionally not installed here.
 COPY precisionai/__init__.py ./precisionai/__init__.py
-COPY precisionai/dataviz/__init__.py ./precisionai/dataviz/__init__.py
-COPY precisionai/dataviz/tools ./precisionai/dataviz/tools
-COPY precisionai/dataviz/scripts ./precisionai/dataviz/scripts
+COPY precisionai/magnidata/__init__.py ./precisionai/magnidata/__init__.py
+COPY precisionai/magnidata/tools ./precisionai/magnidata/tools
+COPY precisionai/magnidata/scripts ./precisionai/magnidata/scripts
 
-COPY precisionai/dataviz/api/app.py precisionai/dataviz/api/db.py \
-     precisionai/dataviz/api/local_files.py precisionai/dataviz/api/dataset_builder.py ./
+COPY precisionai/magnidata/api/app.py precisionai/magnidata/api/db.py \
+     precisionai/magnidata/api/local_files.py precisionai/magnidata/api/dataset_builder.py ./
 
 EXPOSE 5050
 

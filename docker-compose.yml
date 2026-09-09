@@ -1,12 +1,16 @@
-# Self-contained dataviz dev stack — API (Flask) + portal (React/nginx).
+# Self-contained magnidata dev stack — API (Flask) + portal (React/nginx).
 # Run from the repo root:   docker compose up --build
 #   portal -> http://localhost:5175   api -> http://localhost:5051
 #
 # This compose file and both Dockerfiles (Dockerfile.api, Dockerfile.dashboard)
 # live at the repo root; the application source they build stays under
-# precisionai/dataviz/ — see precisionai/dataviz/README.md. Data/config are
+# precisionai/magnidata/ — see precisionai/magnidata/README.md. Data/config are
 # mounted straight from the repo root so the large CSVs and embeddings
 # (Git LFS, if you add any under ./data) are not duplicated into the release folder.
+# Pin the Compose project name so containers/volumes are magnidata-* regardless of
+# what the checkout directory happens to be called.
+name: magnidata
+
 services:
 
   api:
@@ -18,9 +22,9 @@ services:
     volumes:
       - ./data:/app/data:ro                                   # CSVs + embeddings (read-only)
       - ./image_sets:/app/image_sets:ro                       # local staged images for recipe datasets
-      - ./precisionai/dataviz/data_user:/app/data_user        # user-created child datasets (read-write)
-      - ./precisionai/dataviz/confi.yaml:/app/confi.yaml:ro   # dataset registry
-      - dataviz-api-db:/app/db                                 # notes/partitions SQLite (persists)
+      - ./precisionai/magnidata/data_user:/app/data_user        # user-created child datasets (read-write)
+      - ./precisionai/magnidata/confi.yaml:/app/confi.yaml:ro   # dataset registry
+      - magnidata-api-db:/app/db                                 # notes/partitions SQLite (persists)
       # Optional: mount a shared datalake for confi.yaml entries whose images live outside
       # this repo (see local_files.py's DATALAKE_ROOT/THUMB_ROOT_* env vars). Not required —
       # the API starts fine without it; local_files.local_status() reports it as unavailable.
@@ -35,13 +39,13 @@ services:
       # so Flask returns JSON validation errors for over-limit requests.
       DATASET_BUILD_MAX_TOTAL_BYTES: "17179869184"
     # Optional local overrides (DATALAKE_ROOT, THUMB_ROOT_*, ALLOWED_REMOTE_IMAGE_HOSTS, …) —
-    # copy precisionai/dataviz/api/.env.example to a .env alongside it and uncomment below.
+    # copy precisionai/magnidata/api/.env.example to a .env alongside it and uncomment below.
     # env_file:
-    #   - ./precisionai/dataviz/api/.env
+    #   - ./precisionai/magnidata/api/.env
 
   web:
     build:
-      context: ./precisionai/dataviz/dashboard
+      context: ./precisionai/magnidata/dashboard
       dockerfile: ../../../Dockerfile.dashboard
     ports:
       - "5175:80"
@@ -49,4 +53,4 @@ services:
       - api
 
 volumes:
-  dataviz-api-db:
+  magnidata-api-db:

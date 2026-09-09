@@ -21,7 +21,7 @@ body:
       label: Steps to reproduce
       description: Minimal code or steps to reproduce the issue.
       placeholder: |
-        from precisionai.dataviz.tools.features import run
+        from precisionai.magnidata.tools.features import run
         say_hello("World")
         ...
     validations:
@@ -41,7 +41,7 @@ body:
       label: Environment
       description: |
         - Python version
-        - `pip show pai-dataviz` output
+        - `pip show magnidata` output
         - OS
     validations:
       required: true

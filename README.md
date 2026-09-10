@@ -5,15 +5,13 @@
 # MagniData
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
-[![PyPI](https://img.shields.io/pypi/v/magnidata.svg?include_prereleases)](https://pypi.org/project/magnidata/)
-[![Python](https://img.shields.io/pypi/pyversions/magnidata.svg?include_prereleases)](https://pypi.org/project/magnidata/)
 
 ---
 
-An interactive visual-query dashboard for exploring image datasets: a deterministic
-feature-extraction pipeline, a Flask API, and a React/Three.js dashboard for browsing
-images, segmentation masks, and embeddings — including a live 3D PCA/t-SNE/cluster
-view over a dataset's embedding space.
+Precision AI Open Source Data Visualization Tool for exploring image datasets: a
+deterministic feature-extraction pipeline, a Flask API, and a React/Three.js dashboard
+for browsing images, segmentation masks, and embeddings — including a live 3D
+PCA/t-SNE/cluster view over a dataset's embedding space.
 
 - **`precisionai/magnidata/tools/`** — a domain-agnostic feature extractor: turns a folder of
   images (optionally with COCO-format segmentation annotations) into a single CSV of
@@ -44,6 +42,8 @@ docker compose up --build
 #   portal -> http://localhost:5175
 #   api    -> http://localhost:5051/api/health
 ```
+
+The API container also prints those local access URLs during startup.
 
 The dataset catalog (`precisionai/magnidata/confi.yaml`) ships empty. From the portal's
 "Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or
@@ -185,11 +185,6 @@ Dependencies: `pip install -r docs/requirements.txt`
 
 ---
 
-## Releasing
-
-Push a tag matching `v*.*.*` (e.g. `v0.1.0`) to trigger `.github/workflows/release.yml`, which runs the test suite, builds the sdist/wheel, publishes to PyPI via trusted publishing, and creates a GitHub Release. The package version is derived from the git tag via `setuptools-scm` — update `CHANGELOG.md` before tagging.
-
----
 
 ## Security
 

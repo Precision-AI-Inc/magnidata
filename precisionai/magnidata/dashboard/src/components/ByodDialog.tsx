@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { X, Sparkles, UploadCloud, ArrowLeft, CheckCircle2, FolderOpen } from 'lucide-react'
-import { api } from '../api'
+import { X, Sparkles, UploadCloud, ArrowLeft, CheckCircle2, FolderOpen, AlertTriangle, Loader2 } from 'lucide-react'
+import { api, errorText } from '../api'
 import type { BuildJobStatus, BuildLimits, DatasetMeta, DemoEntry, LocalFolder } from '../api'
 import './ByodDialog.css'
 
@@ -9,6 +9,7 @@ type Step = 'choose' | 'demo' | 'local' | 'create'
 interface Props {
   datasets: DatasetMeta[]
   buildJob?: BuildJobStatus | null
+  buildBusy?: boolean
   onClose: () => void
   startUpload: (formData: FormData) => Promise<string>
   startDemo: (demoKey: string) => Promise<string>
@@ -26,7 +27,7 @@ function formatBytes(bytes: number): string {
   return `${bytes} B`
 }
 
-export function ByodDialog({ datasets, buildJob, onClose, startUpload, startDemo, startLocal }: Props) {
+export function ByodDialog({ datasets, buildJob, buildBusy = false, onClose, startUpload, startDemo, startLocal }: Props) {
   const [step, setStep] = useState<Step>('choose')
 
   return (
@@ -50,15 +51,44 @@ export function ByodDialog({ datasets, buildJob, onClose, startUpload, startDemo
           <button className="byod-close" onClick={onClose} aria-label="Close"><X size={16} /></button>
         </div>
 
+        {/* CreateStep shows its own notice — it must stay quiet while its own upload runs. */}
+        {buildBusy && step !== 'create' && (
+          <div className="byod-notice-row"><BusyNotice job={buildJob} /></div>
+        )}
+
         {step === 'choose' && <ChooseStep onPick={setStep} />}
         {step === 'demo' && (
-          <DemoStep datasets={datasets} startDemo={startDemo} onStarted={onClose} />
+          <DemoStep datasets={datasets} busy={buildBusy} startDemo={startDemo} onStarted={onClose} />
         )}
-        {step === 'local' && <LocalStep startLocal={startLocal} onStarted={onClose} />}
+        {step === 'local' && <LocalStep busy={buildBusy} startLocal={startLocal} onStarted={onClose} />}
         {step === 'create' && (
-          <CreateStep buildJob={buildJob} startUpload={startUpload} onStarted={onClose} />
+          <CreateStep buildJob={buildJob} busy={buildBusy} startUpload={startUpload} onStarted={onClose} />
         )}
       </div>
+    </div>
+  )
+}
+
+function ErrorNotice({ message }: { message: string }) {
+  return (
+    <div className="byod-error" role="alert">
+      <AlertTriangle size={15} />
+      <span>{message}</span>
+    </div>
+  )
+}
+
+/** Explains why every Prepare/Create button is disabled: the API runs one build at a time. */
+function BusyNotice({ job }: { job?: BuildJobStatus | null }) {
+  const percent = job ? Math.max(0, Math.min(100, Math.round(job.percent ?? 0))) : null
+  return (
+    <div className="byod-busy" role="status">
+      <Loader2 size={15} className="byod-spin" />
+      <span>
+        {job?.name ? <strong>{job.name}</strong> : 'A dataset'} is still being prepared
+        {percent !== null ? ` (${percent}%)` : ''}. MagniData prepares one dataset at a time —
+        you can start another once it finishes.
+      </span>
     </div>
   )
 }
@@ -91,8 +121,9 @@ function ChooseStep({ onPick }: { onPick: (s: Step) => void }) {
   )
 }
 
-function DemoStep({ datasets, startDemo, onStarted }: {
+function DemoStep({ datasets, busy, startDemo, onStarted }: {
   datasets: DatasetMeta[]
+  busy: boolean
   startDemo: (demoKey: string) => Promise<string>
   onStarted: () => void
 }) {
@@ -101,7 +132,7 @@ function DemoStep({ datasets, startDemo, onStarted }: {
 
   useEffect(() => {
     let alive = true
-    api.listDemos().then(d => { if (alive) setDemos(d) }).catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)) })
+    api.listDemos().then(d => { if (alive) setDemos(d) }).catch(e => { if (alive) setError(errorText(e)) })
     return () => { alive = false }
   }, [])
 
@@ -111,14 +142,14 @@ function DemoStep({ datasets, startDemo, onStarted }: {
       await startDemo(demoKey)
       onStarted()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorText(e))
     }
   }
 
   return (
     <div className="byod-body">
       {!demos && !error && <div className="byod-hint">Loading demos…</div>}
-      {error && <div className="byod-error">{error}</div>}
+      {error && <ErrorNotice message={error} />}
 
       <div className="byod-demo-list">
         {demos?.map(d => {
@@ -138,7 +169,7 @@ function DemoStep({ datasets, startDemo, onStarted }: {
               {alreadyBuilt
                 ? <span className="byod-demo-badge"><CheckCircle2 size={13} /> Added</span>
                 : (
-                  <button className="byod-submit" disabled={disabled} onClick={() => build(d.key)}>
+                  <button className="byod-submit" disabled={disabled || busy} onClick={() => build(d.key)}>
                     {d.enabled ? 'Prepare' : 'Coming soon'}
                   </button>
                 )}
@@ -150,7 +181,8 @@ function DemoStep({ datasets, startDemo, onStarted }: {
   )
 }
 
-function LocalStep({ startLocal, onStarted }: {
+function LocalStep({ busy, startLocal, onStarted }: {
+  busy: boolean
   startLocal: (folder: string, name?: string) => Promise<string>
   onStarted: () => void
 }) {
@@ -162,7 +194,7 @@ function LocalStep({ startLocal, onStarted }: {
     let alive = true
     api.listLocalFolders()
       .then(f => { if (alive) setFolders(f) })
-      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)) })
+      .catch(e => { if (alive) setError(errorText(e)) })
     return () => { alive = false }
   }, [])
 
@@ -173,7 +205,7 @@ function LocalStep({ startLocal, onStarted }: {
       await startLocal(folder)
       onStarted()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorText(e))
       setStarting(null)
     }
   }
@@ -186,7 +218,7 @@ function LocalStep({ startLocal, onStarted }: {
         Images are read where they are — nothing is copied or uploaded.
       </div>
       {!folders && !error && <div className="byod-hint">Indexing image_sets/…</div>}
-      {error && <div className="byod-error">{error}</div>}
+      {error && <ErrorNotice message={error} />}
       {folders?.length === 0 && (
         <div className="byod-hint">
           No image sets found. Copy a folder into <code>image_sets/</code> and reopen this dialog.
@@ -207,7 +239,7 @@ function LocalStep({ startLocal, onStarted }: {
             {f.built
               ? <span className="byod-demo-badge"><CheckCircle2 size={13} /> Added</span>
               : (
-                <button className="byod-submit" disabled={starting !== null} onClick={() => build(f.folder)}>
+                <button className="byod-submit" disabled={starting !== null || busy} onClick={() => build(f.folder)}>
                   {starting === f.folder ? 'Starting…' : 'Prepare'}
                 </button>
               )}
@@ -218,8 +250,9 @@ function LocalStep({ startLocal, onStarted }: {
   )
 }
 
-function CreateStep({ buildJob, startUpload, onStarted }: {
+function CreateStep({ buildJob, busy, startUpload, onStarted }: {
   buildJob?: BuildJobStatus | null
+  busy: boolean
   startUpload: (formData: FormData) => Promise<string>
   onStarted: () => void
 }) {
@@ -247,7 +280,7 @@ function CreateStep({ buildJob, startUpload, onStarted }: {
     uploadBytes > limits.max_upload_bytes ||
     embeddingsBytes > limits.max_embeddings_bytes
   )
-  const canSubmit = !submitting && name.trim().length > 0 && images.length > 0 && !limitError
+  const canSubmit = !submitting && !busy && name.trim().length > 0 && images.length > 0 && !limitError
 
   const submit = async () => {
     setSubmitting(true)
@@ -263,13 +296,14 @@ function CreateStep({ buildJob, startUpload, onStarted }: {
       await startUpload(formData)
       onStarted()
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorText(e))
       setSubmitting(false)
     }
   }
 
   return (
     <div className="byod-body">
+      {busy && !submitting && <BusyNotice job={buildJob} />}
       <label className="byod-field">
         <span>Name</span>
         <input value={name} onChange={e => setName(e.target.value)} placeholder="My Field Survey" />
@@ -351,7 +385,7 @@ function CreateStep({ buildJob, startUpload, onStarted }: {
       </label>
 
       {submitting && <BuildProgress job={buildJob} />}
-      {error && <div className="byod-error">{error}</div>}
+      {error && <ErrorNotice message={error} />}
       <button className="byod-submit byod-submit--primary" onClick={submit} disabled={!canSubmit}>
         {submitting ? (buildJob?.status === 'uploading' ? 'Uploading…' : 'Starting…') : 'Create Dataset'}
       </button>

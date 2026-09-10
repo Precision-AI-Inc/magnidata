@@ -151,6 +151,9 @@ DEMOS: list[dict] = [
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 _build_lock = threading.Lock()
+# Name of the dataset the running build is producing, so a rejected concurrent request can
+# say which build holds the single build slot. Empty while no build runs.
+_active_build: dict[str, str] = {}
 
 
 class BuildValidationError(ValueError):
@@ -171,11 +174,35 @@ def get_job(job_id: str) -> dict | None:
         return dict(job) if job is not None else None
 
 
-def _new_job() -> str:
+def _new_job(name: str = "") -> str:
     job_id = uuid.uuid4().hex
     with _jobs_lock:
-        _jobs[job_id] = {"status": "queued", "percent": 0, "message": "Queued…", "dataset": None, "error": None}
+        _jobs[job_id] = {
+            "status": "queued",
+            "percent": 0,
+            "message": "Queued…",
+            "name": name,
+            "dataset": None,
+            "error": None,
+        }
     return job_id
+
+
+def _acquire_build_slot(name: str) -> None:
+    """Claim the single build slot for `name`, or raise BuildInProgressError naming the running build."""
+    if not _build_lock.acquire(blocking=False):
+        running = _active_build.get("name")
+        detail = f" ({running})" if running else ""
+        raise BuildInProgressError(
+            f"Another dataset build is already in progress{detail}. "
+            "MagniData prepares one dataset at a time; try again once it finishes."
+        )
+    _active_build["name"] = name
+
+
+def _release_build_slot() -> None:
+    _active_build.clear()
+    _build_lock.release()
 
 
 def _update_job(job_id: str, **fields: Any) -> None:
@@ -353,19 +380,18 @@ def start_upload_build(
         raise BuildValidationError(f"upload too large (max {MAX_TOTAL_BYTES // (1024 * 1024)}MB)")
     if embeddings_file is not None:
         _validate_embeddings_file(embeddings_file)
-    if not _build_lock.acquire(blocking=False):
-        raise BuildInProgressError("a dataset build is already in progress")
-
-    job_id = _new_job()
-    stem = _unique_stem(_slugify(name))
     name, description = name.strip(), description.strip()
+    _acquire_build_slot(name)
+
+    job_id = _new_job(name)
+    stem = _unique_stem(_slugify(name))
 
     def worker() -> None:
         try:
             _run_upload_build(job_id, images, annotations, embeddings_file, name, description, stem)
         finally:
             _cleanup_upload_sources(images, annotations, embeddings_file)
-            _build_lock.release()
+            _release_build_slot()
 
     threading.Thread(target=worker, daemon=True).start()
     return job_id
@@ -530,17 +556,16 @@ def start_local_build(folder: str, name: str = "", description: str = "") -> str
 
     dataset_name = name.strip() or folder_name
     description = description.strip()
-    if not _build_lock.acquire(blocking=False):
-        raise BuildInProgressError("a dataset build is already in progress")
+    _acquire_build_slot(dataset_name)
 
-    job_id = _new_job()
+    job_id = _new_job(dataset_name)
     stem = _unique_stem(_local_stem(folder_name))
 
     def worker() -> None:
         try:
             _run_local_build(job_id, images, folder_path, folder_name, dataset_name, description, stem)
         finally:
-            _build_lock.release()
+            _release_build_slot()
 
     threading.Thread(target=worker, daemon=True).start()
     return job_id
@@ -605,16 +630,15 @@ def start_demo_build(demo_key: str) -> str:
     existing = db.get_created_dataset_by_source(f"{USER_DATA_REL}/{stem}.csv")
     if existing is not None:
         raise BuildValidationError(f"the {demo['name']} demo dataset has already been built")
-    if not _build_lock.acquire(blocking=False):
-        raise BuildInProgressError("a dataset build is already in progress")
+    _acquire_build_slot(demo["name"])
 
-    job_id = _new_job()
+    job_id = _new_job(demo["name"])
 
     def worker() -> None:
         try:
             worker_fn(job_id)
         finally:
-            _build_lock.release()
+            _release_build_slot()
 
     threading.Thread(target=worker, daemon=True).start()
     return job_id
@@ -787,7 +811,7 @@ def _run_agristress_build(job_id: str) -> None:
         total = len(pairs)
         for i, (basename, image_rel, mask_rel) in enumerate(pairs):
             pct = 5 + int(55 * i / total)
-            _update_job(job_id, status="staging", percent=pct, message=f"Downloading image {i + 1}/{total}…")
+            _update_job(job_id, status="staging", percent=pct, message="Downloading AgriStress-500…")
             manifest_rows.append(
                 _download_agristress_pair(images_dir, masks_dir, thumbs_dir, stem, image_rel, mask_rel, basename)
             )

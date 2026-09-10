@@ -1,11 +1,19 @@
 import { useCallback, useRef, useState } from 'react'
-import { api } from '../api'
+import { api, errorText } from '../api'
 import type { BuildJobStatus, DatasetMeta } from '../api'
 
 const POLL_MS = 1500
 
-function errorMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
+function isActive(job: BuildJobStatus | null): boolean {
+  return !!job && job.status !== 'done' && job.status !== 'error'
+}
+
+/** A rejected start (e.g. 409 while another build runs) must not overwrite the running
+ * job's badge — the poll loop would just flip it back, hiding the error and confusing
+ * which build is actually in progress. */
+function failedStart(message: string, e: unknown) {
+  return (prev: BuildJobStatus | null): BuildJobStatus =>
+    prev && isActive(prev) ? prev : { status: 'error', percent: 0, message, error: errorText(e) }
 }
 
 /** Tracks a dataset-build job at the App level so its progress stays visible (as a
@@ -25,7 +33,7 @@ export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
         pollTimer.current = setTimeout(() => poll(jobId), POLL_MS)
       }
     }).catch(e => {
-      setJob({ status: 'error', percent: 0, message: 'Lost track of the build', error: errorMessage(e) })
+      setJob({ status: 'error', percent: 0, message: 'Lost track of the build', error: errorText(e) })
     })
   }, [onDone])
 
@@ -36,7 +44,7 @@ export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
       poll(job_id)
       return job_id
     }).catch(e => {
-      setJob({ status: 'error', percent: 0, message: 'Could not start build', error: errorMessage(e) })
+      setJob(failedStart('Could not start build', e))
       throw e
     })
   }, [poll])
@@ -55,7 +63,7 @@ export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
       poll(job_id)
       return job_id
     }).catch(e => {
-      setJob({ status: 'error', percent: 0, message: 'Upload failed', error: errorMessage(e) })
+      setJob({ status: 'error', percent: 0, message: 'Upload failed', error: errorText(e) })
       throw e
     })
   }, [poll])
@@ -73,7 +81,7 @@ export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
     setDismissed(true)
   }, [])
 
-  const busy = !!job && job.status !== 'done' && job.status !== 'error'
+  const busy = isActive(job)
 
   return { job: dismissed ? null : job, busy, startUpload, startDemo, startLocal, dismiss }
 }

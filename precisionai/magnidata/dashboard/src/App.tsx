@@ -319,7 +319,7 @@ export default function App() {
             <div className="text-center p-8">
               <p className="text-4xl mb-3">⚠</p>
               <p className="font-semibold mb-1" style={{ color: 'var(--c-t1)' }}>Failed to parse CSV</p>
-              <p className="text-sm" style={{ color: 'var(--c-t3)' }}>{error}</p>
+              <p className="text-sm font-semibold" style={{ color: 'var(--c-t3)' }}>{error}</p>
             </div>
           </div>
         )}
@@ -557,6 +557,7 @@ export default function App() {
         <ByodDialog
           datasets={datasetMeta}
           buildJob={buildJob.job}
+          buildBusy={buildJob.busy}
           onClose={() => setShowByod(false)}
           startUpload={buildJob.startUpload}
           startDemo={buildJob.startDemo}

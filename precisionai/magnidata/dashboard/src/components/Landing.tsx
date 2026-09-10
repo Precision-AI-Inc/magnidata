@@ -29,8 +29,8 @@ export function Landing({ onOpenMagniData, onOpenByod, onOpenHelp }: Props) {
     <div className="landing-root">
       {/* Hero — MagniData is the main event on this screen */}
       <button className="landing-hero" onClick={onOpenMagniData}>
-        <img className="landing-hero-motif landing-hero-motif--light" src="/magnidata.png" alt="" aria-hidden="true" />
-        <img className="landing-hero-motif landing-hero-motif--dark" src="/magnidata2.png" alt="" aria-hidden="true" />
+        <img className="landing-hero-motif landing-hero-motif--light" src="/magnidata-hero-light.png" alt="" aria-hidden="true" />
+        <img className="landing-hero-motif landing-hero-motif--dark" src="/magnidata-hero-dark.png" alt="" aria-hidden="true" />
         <div className="landing-hero-icon"><Search size={26} /></div>
         <div className="landing-hero-body">
           <div className="landing-hero-eyebrow">Main workspace</div>

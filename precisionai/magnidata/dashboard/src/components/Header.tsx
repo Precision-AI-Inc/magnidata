@@ -19,6 +19,11 @@ interface Props {
   onOpenHelp: () => void
 }
 
+// The backend's step messages ("Extracting features…") don't always name the dataset.
+function buildJobLabel(job: BuildJobStatus): string {
+  return job.name && !job.message.includes(job.name) ? `${job.name} · ${job.message}` : job.message
+}
+
 function downloadBlob(content: string, filename: string, type: string) {
   const a = document.createElement('a')
   a.href = URL.createObjectURL(new Blob([content], { type }))
@@ -107,7 +112,9 @@ export function Header({ data, rows, filteredCount, embeddingsAvailable, dataset
             : buildJob.status === 'error'
               ? <AlertTriangle size={13} />
               : <Loader2 size={13} style={{ animation: 'spin 0.7s linear infinite' }} />}
-          <span>{buildJob.status === 'error' ? (buildJob.error || buildJob.message) : buildJob.message}</span>
+          <span style={buildJob.status === 'error' ? { fontWeight: 700, fontSize: 12 } : undefined}>
+            {buildJob.status === 'error' ? (buildJob.error || buildJob.message) : buildJobLabel(buildJob)}
+          </span>
           {buildJob.status !== 'error' && buildJob.status !== 'done' && (
             <span style={{ opacity: 0.75 }}>{buildJob.percent}%</span>
           )}

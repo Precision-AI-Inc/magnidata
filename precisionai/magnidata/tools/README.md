@@ -1,4 +1,4 @@
-# Dataviz feature extractor
+# MagniData feature extractor
 
 Batch tool: a CSV of image paths in → one dashboard-ready CSV out (schema-compatible
 with `data/datalake_4k.csv`, plus NIMA quality columns). Reproducible: deterministic

@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "magnidata"
 dynamic = ["version"]
-description = "Precision AI — interactive visual-query dashboard for image datasets: deterministic feature extraction, embeddings/PCA/cluster 3D exploration, and a Flask API + React dashboard."
+description = "Precision AI Open Source Data Visualization Tool for image datasets, with deterministic feature extraction, embeddings/PCA/cluster exploration, and a Flask API plus React dashboard."
 readme = "README.md"
 license = { file = "LICENSE.md" }
 authors = [{ name = "Precision AI", email = "reinier@precision.ai" }]

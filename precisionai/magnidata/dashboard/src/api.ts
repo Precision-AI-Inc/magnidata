@@ -65,6 +65,12 @@ function errorBody(body: string): string {
   }
 }
 
+/** User-facing text for a thrown API error — drops the "409: " status prefix the helpers
+ * above add, which means nothing to a user. */
+export function errorText(e: unknown): string {
+  return (e instanceof Error ? e.message : String(e)).replace(/^\d{3}: /, '')
+}
+
 export interface DatasetMeta {
   name: string
   description: string
@@ -129,6 +135,7 @@ export interface BuildJobStatus {
   status: 'uploading' | 'queued' | 'staging' | 'extracting_features' | 'registering' | 'done' | 'error'
   percent: number
   message: string
+  name?: string             // dataset being built, e.g. "AgriStress-500"
   dataset?: DatasetMeta
   error?: string
 }

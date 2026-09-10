@@ -1,4 +1,4 @@
-# Self-contained magnidata dev stack — API (Flask) + portal (React/nginx).
+# Self-contained MagniData dev stack — API (Flask) + portal (React/nginx).
 # Run from the repo root:   docker compose up --build
 #   portal -> http://localhost:5175   api -> http://localhost:5051
 #
@@ -35,6 +35,10 @@ services:
       DATA_ROOT: /app
       DB_PATH: /app/db/notes.db
       API_PORT: "5050"
+      # Host-facing URLs the API prints in its startup banner — keep in sync with the
+      # published ports (api 5051, web 5175) if you remap them.
+      MAGNIDATA_PORTAL_URL: "http://localhost:5175"
+      MAGNIDATA_API_URL: "http://localhost:5051"
       # BYOD upload cap for images + annotations. nginx.conf is set slightly above this
       # so Flask returns JSON validation errors for over-limit requests.
       DATASET_BUILD_MAX_TOTAL_BYTES: "17179869184"

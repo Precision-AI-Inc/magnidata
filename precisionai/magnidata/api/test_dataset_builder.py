@@ -39,6 +39,7 @@ def isolated_env(tmp_path, monkeypatch):
     dataset_builder._jobs.clear()
     if dataset_builder._build_lock.locked():
         dataset_builder._build_lock.release()
+    dataset_builder._active_build.clear()
     return
 
 
@@ -146,6 +147,15 @@ def test_upload_build_end_to_end_without_embeddings(monkeypatch):
     assert not os.path.isfile(rec["source"].replace(".csv", ".json"))
 
 
+def _wait_for_build_slot(timeout=2.0):
+    # A job reports "done" before its worker's `finally` cleans up and frees the slot.
+    deadline = time.monotonic() + timeout
+    while dataset_builder._build_lock.locked():
+        if time.monotonic() > deadline:
+            raise TimeoutError("build slot was never released")
+        time.sleep(0.01)
+
+
 def test_upload_build_with_source_backed_files_cleans_temp_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
     incoming = tmp_path / "data_user" / dataset_builder.INCOMING_UPLOAD_DIRNAME / "req-1" / "images"
@@ -156,6 +166,7 @@ def test_upload_build_with_source_backed_files_cleans_temp_dir(monkeypatch, tmp_
 
     job_id = dataset_builder.start_upload_build(images, [], None, "Source Backed Set", "")
     job = _wait_for_job(job_id)
+    _wait_for_build_slot()
 
     assert job["status"] == "done"
     assert not (tmp_path / "data_user" / dataset_builder.INCOMING_UPLOAD_DIRNAME / "req-1").exists()
@@ -617,3 +628,21 @@ def test_local_build_rejects_concurrent_build(tmp_path, monkeypatch):
 
     with pytest.raises(dataset_builder.BuildInProgressError, match="already in progress"):
         dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
+
+
+def test_concurrent_build_error_names_the_running_build(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+    dataset_builder._acquire_build_slot("AgriStress-500")
+
+    with pytest.raises(dataset_builder.BuildInProgressError, match=r"already in progress \(AgriStress-500\)"):
+        dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
+
+
+def test_build_job_reports_the_dataset_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+
+    job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
+
+    assert job["name"] == "MMDE POC"

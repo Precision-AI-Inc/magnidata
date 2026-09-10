@@ -17,7 +17,7 @@
   align-items: flex-start;
   text-align: left;
   width: 100%;
-  max-width: 600px;
+  max-width: 880px;
   flex-shrink: 0;
   margin-bottom: 40px;
   padding: 36px 32px 40px;
@@ -39,12 +39,13 @@
 .landing-hero-motif {
   position: absolute;
   right: 2%;
-  top: 68%;
+  top: 62%;
   transform: translateY(-50%);
-  width: 62%;
+  width: min(46%, 330px);
   height: auto;
-  -webkit-mask-image: linear-gradient(to left, black 45%, transparent 88%);
-          mask-image: linear-gradient(to left, black 45%, transparent 88%);
+  /* Only feather the left edge — a wider fade eats the wordmark's "M". */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, black 12%);
+          mask-image: linear-gradient(to right, transparent 0, black 12%);
   pointer-events: none;
 }
 
@@ -132,7 +133,7 @@
 
 .landing-more-label {
   width: 100%;
-  max-width: 600px;
+  max-width: 880px;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .08em;
@@ -146,7 +147,7 @@
   grid-template-columns: repeat(2, 1fr);
   gap: 14px;
   width: 100%;
-  max-width: 600px;
+  max-width: 880px;
 }
 
 .landing-card {
@@ -201,11 +202,10 @@
   .landing-cards { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 560px) {
-  /* Not enough card width left for the bled-in background image once the tagline
-     wraps to two lines — it starts overlapping the text, so drop it below this,
-     regardless of theme (!important needed: the [data-theme="dark"] visibility
-     rules above outrank this on specificity otherwise). */
+@media (max-width: 720px) {
+  /* Below this the artwork's left edge would slide under the tagline (it is only
+     feathered, not faded), so drop it, regardless of theme (!important needed: the
+     [data-theme="dark"] visibility rules above outrank this on specificity otherwise). */
   .landing-hero-motif--light,
   .landing-hero-motif--dark {
     display: none !important;

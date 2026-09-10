@@ -37,6 +37,29 @@ def app_client(tmp_path, monkeypatch):
         yield client, app_module
 
 
+# ── Startup banner ───────────────────────────────────────────────────────────────
+
+
+def test_access_banner_lists_host_urls(app_client, monkeypatch):
+    _, app_module = app_client
+    monkeypatch.setenv("MAGNIDATA_PORTAL_URL", "http://localhost:5175")
+    monkeypatch.setenv("MAGNIDATA_API_URL", "http://localhost:5051/")
+
+    banner = app_module._access_banner()
+
+    assert banner is not None
+    assert "portal -> http://localhost:5175" in banner
+    assert "api    -> http://localhost:5051/api/health" in banner
+
+
+def test_access_banner_is_silent_without_host_urls(app_client, monkeypatch):
+    _, app_module = app_client
+    monkeypatch.delenv("MAGNIDATA_PORTAL_URL", raising=False)
+    monkeypatch.delenv("MAGNIDATA_API_URL", raising=False)
+
+    assert app_module._access_banner() is None
+
+
 # ── GET /api/datasets/demos ──────────────────────────────────────────────────────
 
 

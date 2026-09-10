@@ -1132,10 +1132,32 @@ def embedding_compare() -> ResponseReturnValue:
     return jsonify(result)
 
 
+def _access_banner() -> str | None:
+    """Return the startup banner listing the host-facing portal/API URLs.
+
+    None when neither MAGNIDATA_PORTAL_URL nor MAGNIDATA_API_URL is set — outside Docker
+    Compose, Flask's own "Running on" line is already the right address.
+    """
+    portal = os.environ.get("MAGNIDATA_PORTAL_URL", "").strip()
+    api_url = os.environ.get("MAGNIDATA_API_URL", "").strip().rstrip("/")
+    if not portal and not api_url:
+        return None
+    lines = ["", "MagniData is starting. Open it in your browser at:"]
+    if portal:
+        lines.append(f"  portal -> {portal}")
+    if api_url:
+        lines.append(f"  api    -> {api_url}/api/health")
+    lines += ["(Any other address in these logs is the server's own, inside the container.)", ""]
+    return "\n".join(lines)
+
+
 def main() -> None:
     """Run the Flask development server."""
     port = int(os.environ.get("FLASK_PORT", os.environ.get("API_PORT", "5050")))
     debug = os.environ.get("API_DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
+    banner = _access_banner()
+    if banner:
+        print(banner, flush=True)
     app.run(debug=debug, port=port, host="0.0.0.0")
 
 

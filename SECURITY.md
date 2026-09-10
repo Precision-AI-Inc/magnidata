@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Security fixes are provided for the latest released version of `pai-myproject`.
+Security fixes are provided for the latest released version of `magnidata`.
 
 Older versions are not guaranteed to receive patches. Please upgrade to the latest release before reporting a vulnerability where practical.
 
@@ -12,14 +12,14 @@ Do not report security vulnerabilities through public GitHub issues, discussions
 
 Instead, report suspected vulnerabilities privately by emailing:
 
-**rinier@precision.ai**
+**reinier@precision.ai**
 
 Please include as much of the following as possible:
 
 - A brief description of the issue
 - Steps to reproduce, including any relevant request payload or input data
 - A minimal proof of concept, if available
-- The affected package version (`pip show pai-myproject`)
+- The affected package version (`pip show magnidata`)
 - Python version and operating system
 - Any known impact or realistic attack scenario
 
@@ -52,11 +52,3 @@ If a vulnerability is confirmed, we will:
 2. Prepare and test a fix
 3. Release a patched version through PyPI
 4. Publish an advisory or release note as appropriate
-
-## Security Updates
-
-Security fixes are distributed through normal package channels. Upgrade with:
-
-```bash
-pip install --upgrade pai-myproject
-```

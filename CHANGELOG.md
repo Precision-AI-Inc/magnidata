@@ -44,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pixel/COCO feature values (on a 201-image test set, `annotated_px_count` by up to
   125 px and `mean_pairwise_color_dist` by up to 0.012), so datasets built before and
   after this change are not byte-comparable; the NIMA/NIQE/BRISQUE columns are unchanged.
+- Releases are published only as GitHub Releases, with the sdist and wheel attached: the
+  release workflow no longer has a PyPI publishing job (it failed on every tag, since the
+  package isn't registered on PyPI).
 
 ### Fixed
 

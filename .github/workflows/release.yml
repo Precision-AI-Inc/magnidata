@@ -47,22 +47,6 @@ jobs:
           name: dist
           path: dist/
 
-  publish-pypi:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/project/magnidata/
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist
-          path: dist/
-
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
   github-release:
     needs: build
     runs-on: ubuntu-latest

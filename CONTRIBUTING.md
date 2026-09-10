@@ -65,6 +65,7 @@ This codebase was migrated from an existing, working application rather than sta
 - **`ruff check --all-files` and `pyright` are both clean** as of the docstring/type-hint/complexity cleanup that closed out the previous backlog here. A handful of bandit (`S`) findings are pre-ignored with inline justification rather than fixed in code, because the underlying rules do no control-flow analysis (`S310` on `urlopen()`, `S603`/`PLC0415` in `prepare_coco128_dashboard.py`) — see the comments in `pyproject.toml`'s `[tool.ruff.lint]` and `per-file-ignores` sections. If either check starts reporting a backlog again, please don't let it grow silently — fix as you go, the way `S311`/`S104` are handled.
 - **Flask, not FastAPI.** `CLAUDE.md`'s example layout assumes FastAPI; this project's API (`precisionai/magnidata/api/`) is Flask and is not laid out in the `api/routes/ + schemas/ + services/ + metrics/` shape the template describes. A full port is out of scope for the migration that produced this repo.
 - **Tests are colocated with source** (`precisionai/magnidata/**/test_*.py`), not under a top-level `tests/` mirroring the package — `pyproject.toml`'s `testpaths` and the ruff `per-file-ignores` are configured for this layout rather than the template's default.
+- **Not published to PyPI.** `CLAUDE.md`'s release flow publishes every `vX.Y.Z` tag to PyPI; here `.github/workflows/release.yml` stops at a GitHub Release with the built sdist and wheel attached. Install from a source checkout (`pip install -e .`) or from a release's wheel.
 
 ## Tests
 

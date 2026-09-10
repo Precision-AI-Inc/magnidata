@@ -50,5 +50,5 @@ If a vulnerability is confirmed, we will:
 
 1. Assess severity and the range of affected versions
 2. Prepare and test a fix
-3. Release a patched version through PyPI
+3. Publish a patched release on GitHub
 4. Publish an advisory or release note as appropriate

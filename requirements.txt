@@ -10,9 +10,9 @@ tqdm==4.70.0        # progress bar (optional — tool falls back to periodic pri
 
 # ── NIMA image quality (PyTorch via pyiqa) ───────────────────────────────────────
 # torch is large. For a CPU-only box install the matching CPU build first:
-#   pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
+#   pip install torch==2.14.0 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
 # then `pip install -r requirements.txt`. On a GPU box the default index is fine.
-torch==2.12.1
+torch==2.14.0
 torchvision==0.27.1
 pyiqa==0.1.13
 timm==1.0.27        # pyiqa backbone provider — pinned for reproducible weights/arch

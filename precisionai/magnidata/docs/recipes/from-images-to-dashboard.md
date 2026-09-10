@@ -89,7 +89,7 @@ python -m pip install --upgrade pip
 For a CPU-only machine, install the pinned CPU PyTorch wheels first:
 
 ```bash
-pip install torch==2.12.1 torchvision==0.27.1 --index-url https://download.pytorch.org/whl/cpu
+pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r precisionai/magnidata/requirements.txt
 ```
 

@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AgriStress-500 demo progress reads "Downloading AgriStress-500…" next to the overall
   percentage, instead of a per-image counter beside a different percentage.
 - Inline errors in the Bring Your Own Data dialog are larger, bold, and boxed with an icon.
+- Bumped Pillow to 12.3.0, torch to 2.14.0, torchvision to 0.29.0 and tqdm to 4.70.0
+  (Dependabot #9–#12), and brought the bundled `precisionai/magnidata/requirements.txt`
+  and the recipe's CPU install command in line. Pillow 12.3 slightly shifts some
+  pixel/COCO feature values (on a 201-image test set, `annotated_px_count` by up to
+  125 px and `mean_pairwise_color_dist` by up to 0.012), so datasets built before and
+  after this change are not byte-comparable; the NIMA/NIQE/BRISQUE columns are unchanged.
 
 ### Fixed
 

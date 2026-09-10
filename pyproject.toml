@@ -49,7 +49,7 @@ dependencies = [
 # itself (see Dockerfile.api); install this extra to run those CLI tools.
 ml = [
     "torch==2.14.0",
-    "torchvision==0.27.1",
+    "torchvision==0.29.0",
     "timm==1.0.27",
     "pyiqa==0.1.13",
     "tqdm>=4.66",

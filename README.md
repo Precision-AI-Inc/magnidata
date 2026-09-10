@@ -2,7 +2,7 @@
   <img src="assets/magnidata.png" alt="MagniData Logo" width="512"/>
 </p>
 
-# MagniData
+# Precision AI MagniData
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
 

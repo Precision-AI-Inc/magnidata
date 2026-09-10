@@ -351,7 +351,7 @@ def run(
 
 def main(argv: list[str] | None = None) -> None:
     """Parse CLI args and run the feature extractor."""
-    ap = argparse.ArgumentParser(description="Dataviz image feature extractor (CSV -> CSV).")
+    ap = argparse.ArgumentParser(description="MagniData image feature extractor (CSV -> CSV).")
     ap.add_argument("--input", required=True, help="input CSV with an image_path column")
     ap.add_argument("--output", required=True, help="output CSV path")
     ap.add_argument("--device", default="cpu", help="torch device for NIMA (cpu/cuda)")

@@ -7,7 +7,7 @@ export interface ColDesc {
 }
 
 // Extend the JSON with derived columns not in the original file. Keep this in sync with
-// the magnidata feature extractor's output schema so the Schema tab documents every column
+// the MagniData feature extractor's output schema so the Schema tab documents every column
 // that can appear as a parallel-coordinates axis.
 const EXTRA: Record<string, ColDesc> = {
   cluster: {

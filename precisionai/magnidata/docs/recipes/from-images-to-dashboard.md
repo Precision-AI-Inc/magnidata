@@ -1,6 +1,6 @@
 # Recipe: images to dashboard dataset
 
-This recipe starts with any local folder of images and ends with an magnidata dataset
+This recipe starts with any local folder of images and ends with a MagniData dataset
 that can be loaded in the dashboard with:
 
 - a dashboard-ready multiparametric CSV

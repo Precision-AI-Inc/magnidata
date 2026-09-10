@@ -39,6 +39,7 @@ def isolated_env(tmp_path, monkeypatch):
     dataset_builder._jobs.clear()
     if dataset_builder._build_lock.locked():
         dataset_builder._build_lock.release()
+    dataset_builder._active_build.clear()
     return
 
 
@@ -617,3 +618,21 @@ def test_local_build_rejects_concurrent_build(tmp_path, monkeypatch):
 
     with pytest.raises(dataset_builder.BuildInProgressError, match="already in progress"):
         dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
+
+
+def test_concurrent_build_error_names_the_running_build(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+    dataset_builder._acquire_build_slot("AgriStress-500")
+
+    with pytest.raises(dataset_builder.BuildInProgressError, match=r"already in progress \(AgriStress-500\)"):
+        dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
+
+
+def test_build_job_reports_the_dataset_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+
+    job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
+
+    assert job["name"] == "MMDE POC"

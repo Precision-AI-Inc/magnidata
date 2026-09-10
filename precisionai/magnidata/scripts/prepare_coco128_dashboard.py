@@ -1,10 +1,10 @@
 # Copyright 2026 Precision AI
 # SPDX-License-Identifier: Apache-2.0
 
-"""Download COCO128-seg and build an magnidata dashboard dataset.
+"""Download COCO128-seg and build a MagniData dashboard dataset.
 
 This script is intentionally standard-library-heavy so a user can run it from a
-fresh checkout after installing the normal magnidata tool dependencies:
+fresh checkout after installing the normal MagniData tool dependencies:
 
     python3 -m precisionai.magnidata.scripts.prepare_coco128_dashboard --device cpu
 
@@ -1001,10 +1001,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     argparse.Namespace
         Parsed CLI arguments.
     """
-    ap = argparse.ArgumentParser(description="Download COCO128 and build an magnidata dashboard dataset.")
+    ap = argparse.ArgumentParser(description="Download COCO128 and build a MagniData dashboard dataset.")
     ap.add_argument("--dataset-stem", default="coco128", help="output stem: data/<stem>.csv and data/<stem>.json")
     ap.add_argument("--dataset-name", default="COCO128", help="dashboard card name")
-    ap.add_argument("--description", default="Ultralytics COCO128 prepared for magnidata")
+    ap.add_argument("--description", default="Ultralytics COCO128 prepared for MagniData")
     ap.add_argument("--download-url", default=COCO128_URL, help="COCO128 zip URL")
     ap.add_argument("--cache-dir", default="image_sets/_downloads", help="download/extract cache under the repo root")
     ap.add_argument("--force-download", action="store_true", help="redownload the zip even if it is cached")

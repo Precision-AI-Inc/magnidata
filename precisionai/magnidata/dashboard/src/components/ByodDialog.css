@@ -114,9 +114,47 @@
   color: var(--c-t3);
 }
 
+.byod-error,
+.byod-busy {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.byod-error svg,
+.byod-busy svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
 .byod-error {
-  font-size: 12px;
-  color: #dc2626;
+  font-weight: 700;
+  border: 1px solid var(--color-danger, #dc2626);
+  background: var(--color-danger-bg, rgba(220, 38, 38, 0.08));
+  color: var(--color-danger, #dc2626);
+}
+
+.byod-busy {
+  font-weight: 600;
+  border: 1px solid var(--c-accent);
+  background: var(--c-raised);
+  color: var(--c-t1);
+}
+
+.byod-busy svg {
+  color: var(--c-accent);
+}
+
+.byod-spin {
+  animation: spin 0.7s linear infinite;
+}
+
+.byod-notice-row {
+  padding: 16px 16px 0;
 }
 
 .byod-hint code {

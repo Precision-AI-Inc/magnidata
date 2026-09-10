@@ -1,6 +1,6 @@
 # Data contract
 
-magnidata's dashboard consumes two kinds of files from `data/`: a **multiparametric
+MagniData's dashboard consumes two kinds of files from `data/`: a **multiparametric
 CSV** (one row per image, numeric/categorical columns for the parallel-coordinates
 and 3D views) and, optionally, an **embeddings JSON** (one vector per image, for the
 embeddings-space 3D view). Both can either be produced by the tools in this repo or

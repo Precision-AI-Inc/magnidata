@@ -1,4 +1,4 @@
-# magnidata — release bundle
+# MagniData - release bundle
 
 Self-contained copy of the Precision AI visual-query stack plus the feature-extraction
 tool, so the whole thing can be built and run from this folder. This is the only copy

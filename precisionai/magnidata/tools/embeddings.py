@@ -208,7 +208,7 @@ def run(
 
 def main(argv: list[str] | None = None) -> None:
     """Parse CLI args and run the embeddings generator, exiting 1 on total failure."""
-    ap = argparse.ArgumentParser(description="Dataviz embeddings generator (CSV -> JSON).")
+    ap = argparse.ArgumentParser(description="MagniData embeddings generator (CSV -> JSON).")
     ap.add_argument("--input", required=True, help="input CSV with an image_path column")
     ap.add_argument("--output", required=True, help="output embeddings JSON path")
     ap.add_argument("--model", default="dinov2", choices=sorted(MODELS), help="embedding model to use")

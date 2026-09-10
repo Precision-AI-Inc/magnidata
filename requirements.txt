@@ -1,4 +1,4 @@
-# Dataviz feature extractor — pinned for reproducible feature extraction.
+# MagniData feature extractor — pinned for reproducible feature extraction.
 # Exact pins (not ranges): float results can drift across library versions, and the
 # NIMA stack (pyiqa) constrains numpy to 2.x, so the whole set must be consistent.
 # These are the versions verified together (tests pass, output byte-stable on re-run).

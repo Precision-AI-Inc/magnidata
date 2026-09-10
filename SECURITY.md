@@ -52,11 +52,3 @@ If a vulnerability is confirmed, we will:
 2. Prepare and test a fix
 3. Release a patched version through PyPI
 4. Publish an advisory or release note as appropriate
-
-## Security Updates
-
-Security fixes are distributed through normal package channels. Upgrade with:
-
-```bash
-pip install --upgrade magnidata
-```

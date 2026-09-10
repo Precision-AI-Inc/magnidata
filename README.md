@@ -185,11 +185,6 @@ Dependencies: `pip install -r docs/requirements.txt`
 
 ---
 
-## Releasing
-
-Push a tag matching `v*.*.*` (e.g. `v0.1.0`) to trigger `.github/workflows/release.yml`, which runs the test suite, builds the sdist/wheel, publishes to PyPI via trusted publishing, and creates a GitHub Release. The package version is derived from the git tag via `setuptools-scm` — update `CHANGELOG.md` before tagging.
-
----
 
 ## Security
 

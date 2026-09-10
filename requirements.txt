@@ -5,7 +5,7 @@
 
 # ── Core (pixel / COCO / metadata features) ──────────────────────────────────────
 numpy==2.4.6        # required by pyiqa; tool also passes under 1.26.4 for skip-nima runs
-pillow==10.4.0
+pillow==12.3.0
 tqdm==4.70.0        # progress bar (optional — tool falls back to periodic prints)
 
 # ── NIMA image quality (PyTorch via pyiqa) ───────────────────────────────────────

@@ -147,6 +147,15 @@ def test_upload_build_end_to_end_without_embeddings(monkeypatch):
     assert not os.path.isfile(rec["source"].replace(".csv", ".json"))
 
 
+def _wait_for_build_slot(timeout=2.0):
+    # A job reports "done" before its worker's `finally` cleans up and frees the slot.
+    deadline = time.monotonic() + timeout
+    while dataset_builder._build_lock.locked():
+        if time.monotonic() > deadline:
+            raise TimeoutError("build slot was never released")
+        time.sleep(0.01)
+
+
 def test_upload_build_with_source_backed_files_cleans_temp_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
     incoming = tmp_path / "data_user" / dataset_builder.INCOMING_UPLOAD_DIRNAME / "req-1" / "images"
@@ -157,6 +166,7 @@ def test_upload_build_with_source_backed_files_cleans_temp_dir(monkeypatch, tmp_
 
     job_id = dataset_builder.start_upload_build(images, [], None, "Source Backed Set", "")
     job = _wait_for_job(job_id)
+    _wait_for_build_slot()
 
     assert job["status"] == "done"
     assert not (tmp_path / "data_user" / dataset_builder.INCOMING_UPLOAD_DIRNAME / "req-1").exists()

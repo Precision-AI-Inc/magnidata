@@ -17,7 +17,8 @@ COPY precisionai/magnidata/tools ./precisionai/magnidata/tools
 COPY precisionai/magnidata/scripts ./precisionai/magnidata/scripts
 
 COPY precisionai/magnidata/api/app.py precisionai/magnidata/api/db.py \
-     precisionai/magnidata/api/local_files.py precisionai/magnidata/api/dataset_builder.py ./
+     precisionai/magnidata/api/local_files.py precisionai/magnidata/api/dataset_builder.py \
+     precisionai/magnidata/api/embeddings_io.py precisionai/magnidata/api/projections.py ./
 
 EXPOSE 5050
 

@@ -12,18 +12,17 @@ import contextlib
 import csv
 import glob
 import io
-import json
 import os
 import re
 import shutil
+import threading
 import uuid
-from collections.abc import Sequence
 from typing import Any, cast
 
 import numpy as np
 import yaml
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask.typing import ResponseReturnValue
 from flask_cors import CORS
 from PIL import Image
@@ -34,7 +33,6 @@ from PIL import Image
 # render — whichever request happens to be the first to hit one of these endpoints.
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE, LocallyLinearEmbedding
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import normalize
 from werkzeug.datastructures import FileStorage
@@ -54,7 +52,9 @@ os.makedirs(USER_DATA_DIR, exist_ok=True)
 # which that import relies on.
 import dataset_builder
 import db
+import embeddings_io
 import local_files
+import projections
 
 from precisionai.magnidata.tools import coco_labels as coco_labels_mod
 
@@ -104,6 +104,20 @@ def _lfs_pointer_info(path: str) -> dict | None:
             with contextlib.suppress(ValueError):
                 info["size"] = int(line[5:].strip())
     return info
+
+
+def _data_path(relative_path: str) -> str:
+    """Resolve a data-relative path while preventing traversal and symlink escape."""
+    if not relative_path or os.path.isabs(relative_path):
+        raise ValueError("invalid data path")
+    root = os.path.realpath(DATA_ROOT)
+    path = os.path.realpath(os.path.join(root, relative_path))
+    try:
+        if os.path.commonpath((root, path)) != root:
+            raise ValueError("invalid data path")
+    except ValueError as exc:
+        raise ValueError("invalid data path") from exc
+    return path
 
 
 def _img_from_bytes(data: bytes, max_size: int = 1600) -> Image.Image:
@@ -499,10 +513,10 @@ def _resolve_emb_source(source: str) -> str | None:
         if not emb_source:
             return None
         stem = os.path.splitext(emb_source)[0]
-        emb_path = os.path.normpath(os.path.join(DATA_ROOT, stem + ".json"))
+        emb_path = _data_path(stem + ".json")
         return emb_source if os.path.isfile(emb_path) and _lfs_pointer_info(emb_path) is None else None
     stem = os.path.splitext(source)[0]
-    emb_path = os.path.normpath(os.path.join(DATA_ROOT, stem + ".json"))
+    emb_path = _data_path(stem + ".json")
     return source if os.path.isfile(emb_path) and _lfs_pointer_info(emb_path) is None else None
 
 
@@ -561,14 +575,6 @@ def list_datasets() -> ResponseReturnValue:
         return jsonify({"error": str(exc)}), 500
 
 
-def _detect_path_col(cols: Sequence[str]) -> str | None:
-    for c in cols:
-        lc = c.lower()
-        if lc == "image_path" or ("image" in lc and "path" in lc):
-            return c
-    return next((c for c in cols if "path" in c.lower()), cols[0] if cols else None)
-
-
 def _slugify(name: str) -> str:
     s = re.sub(r"[^A-Za-z0-9_-]+", "_", name.strip()).strip("_").lower()
     return s or "dataset"
@@ -603,7 +609,7 @@ def create_dataset() -> ResponseReturnValue:
         reader = csv.DictReader(f)
         cols = reader.fieldnames or []
         rows = list(reader)
-    col = _detect_path_col(cols)
+    col = embeddings_io.image_path_column(cols)
     wanted = {os.path.basename(str(x)) for x in image_names}
     kept = [r for r in rows if col and os.path.basename(str(r.get(col, ""))) in wanted]
     if not kept:
@@ -664,6 +670,7 @@ def remove_dataset(ds_id: int) -> ResponseReturnValue:
             stem = os.path.splitext(csv_path)[0]
             _remove_file(stem + ".json")
             _remove_file(stem + ".json.provenance.json")
+            _remove_file(stem + "_projections.json")
             images_dir = stem + "_images"
             if os.path.isdir(images_dir):
                 shutil.rmtree(images_dir, ignore_errors=True)
@@ -813,16 +820,33 @@ def get_build_job(job_id: str) -> ResponseReturnValue:
     return jsonify(job)
 
 
+def _send_dataset_file(relative_path: str, mimetype: str) -> ResponseReturnValue:
+    """Send a dataset CSV/embeddings file that can be rebuilt in place at the same path.
+
+    `conditional=False` turns off ETag/Last-Modified/Range handling, and the explicit
+    `no-store` stops the browser caching the body at all — both close the same failure
+    mode: a client resumes or revalidates against bytes it cached from this URL earlier,
+    which no longer match after the dataset behind it has been rebuilt. Without this, a
+    stale cache entry surfaces to the user as a plain "failed to fetch", with no sign
+    that a rebuild — not a network problem — is the cause.
+    """
+    # Werkzeug's safe join keeps this endpoint protected even if a path is later
+    # assembled from a new request parameter.
+    resp = send_from_directory(DATA_ROOT, relative_path, mimetype=mimetype, as_attachment=False, conditional=False)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/dataset/csv")
 def get_dataset_csv() -> ResponseReturnValue:
     """Stream a dataset CSV from local disk. `source` is the path from confi.yaml."""
     source = request.args.get("source", "").strip()
     if not source:
         return jsonify({"error": "source required"}), 400
-    # Prevent path traversal
-    if os.path.isabs(source) or ".." in source:
+    try:
+        path = _data_path(source)
+    except ValueError:
         return jsonify({"error": "invalid source path"}), 400
-    path = os.path.normpath(os.path.join(DATA_ROOT, source))
     if not os.path.isfile(path):
         return jsonify({"error": "dataset not found"}), 404
     lfs_info = _lfs_pointer_info(path)
@@ -833,11 +857,11 @@ def get_dataset_csv() -> ResponseReturnValue:
                 "lfs_size_bytes": lfs_info.get("size"),
             }
         ), 409
-    return send_file(path, mimetype="text/csv", as_attachment=False)
+    return _send_dataset_file(source, mimetype="text/csv")
 
 
 @app.get("/api/dataset/embeddings")
-def get_dataset_embeddings() -> ResponseReturnValue:
+def get_dataset_embeddings() -> ResponseReturnValue:  # noqa: PLR0911
     """Stream an embeddings JSON for a dataset. `source` is the CSV path from confi.yaml.
 
     Base embeddings = <stem>.json. An optional `variant` (model name) selects a
@@ -847,13 +871,18 @@ def get_dataset_embeddings() -> ResponseReturnValue:
     variant = request.args.get("variant", "").strip()
     if not source:
         return jsonify({"error": "source required"}), 400
-    if os.path.isabs(source) or ".." in source:
+    try:
+        _data_path(source)
+    except ValueError:
         return jsonify({"error": "invalid source path"}), 400
     if variant and not re.fullmatch(r"[A-Za-z0-9_-]+", variant):
         return jsonify({"error": "invalid variant"}), 400
     stem = os.path.splitext(_resolve_emb_source(source) or source)[0]  # child → parent's embeddings
     json_source = f"{stem}_{variant}.json" if variant else f"{stem}.json"
-    path = os.path.normpath(os.path.join(DATA_ROOT, json_source))
+    try:
+        path = _data_path(json_source)
+    except ValueError:
+        return jsonify({"error": "invalid source path"}), 400
     if not os.path.isfile(path):
         return jsonify({"error": "embeddings not found"}), 404
     lfs_info = _lfs_pointer_info(path)
@@ -864,7 +893,7 @@ def get_dataset_embeddings() -> ResponseReturnValue:
                 "lfs_size_bytes": lfs_info.get("size"),
             }
         ), 409
-    return send_file(path, mimetype="application/json", as_attachment=False)
+    return _send_dataset_file(json_source, mimetype="application/json")
 
 
 @app.get("/api/dataset/embeddings/variants")
@@ -891,23 +920,44 @@ def list_embedding_variants() -> ResponseReturnValue:
 
 
 # ── Embedding compute (projection / clustering / comparison) ────────────────────
-# Heavy embedding math runs HERE, not in the browser. Endpoints return only small arrays
-# (3D positions, cluster labels, neighbour indices). Results are cached in-process by key.
+# Heavy embedding math runs HERE, not in the browser. The ordinary endpoints return compact
+# arrays (3D positions, cluster labels, neighbour indices); the user-visible analysis job
+# deliberately returns only the selected projection together with its labels. Results are
+# cached in-process by key.
 _COMPUTE_CACHE: dict = {}
-_PCA_PRE_DIMS = 30
+# One lock per cache key, so concurrent requests for the same dataset share a single
+# parse/compute instead of each doing their own (see _base_matrix).
+_COMPUTE_LOCKS: dict[tuple, threading.Lock] = {}
+_COMPUTE_LOCKS_GUARD = threading.Lock()
+
+# Long-running, user-visible embedding analysis jobs.  The browser polls these instead of
+# holding an HTTP request open while LLE or a new K-means result is computed.
+_ANALYSIS_JOBS: dict[str, dict[str, Any]] = {}
+_ANALYSIS_JOBS_LOCK = threading.Lock()
+
+
+def _compute_lock(key: tuple) -> threading.Lock:
+    """Return the lock guarding one compute-cache key, creating it on first use."""
+    with _COMPUTE_LOCKS_GUARD:
+        return _COMPUTE_LOCKS.setdefault(key, threading.Lock())
 
 
 def _safe_source(source: str) -> str:
-    if not source or os.path.isabs(source) or ".." in source:
-        raise ValueError("invalid source path")
+    _data_path(source)
     return source
+
+
+def _safe_variant(variant: str | None) -> str | None:
+    if variant and not re.fullmatch(r"[A-Za-z0-9_-]+", variant):
+        raise ValueError("invalid variant")
+    return variant or None
 
 
 def _emb_json_path(source: str, variant: str | None) -> str:
     # Child datasets inherit the parent's embeddings file; align to the child's own CSV rows.
     stem = os.path.splitext(_resolve_emb_source(source) or source)[0]
     rel = f"{stem}_{variant}.json" if variant else f"{stem}.json"
-    return os.path.normpath(os.path.join(DATA_ROOT, rel))
+    return _data_path(rel)
 
 
 def _dataset_paths(source: str) -> list[str]:
@@ -915,52 +965,47 @@ def _dataset_paths(source: str) -> list[str]:
     key = ("paths", source)
     if key in _COMPUTE_CACHE:
         return _COMPUTE_CACHE[key]
-    path = os.path.normpath(os.path.join(DATA_ROOT, source))
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        cols = reader.fieldnames or []
-        rows = list(reader)
-    col = None
-    for c in cols:
-        lc = c.lower()
-        if lc == "image_path" or ("image" in lc and "path" in lc):
-            col = c
-            break
-    if col is None:
-        col = next((c for c in cols if "path" in c.lower()), cols[0] if cols else None)
-    paths = [r.get(col, "") if col else "" for r in rows]
+    path = _data_path(source)
+    paths = embeddings_io.csv_image_paths(path)
     _COMPUTE_CACHE[key] = paths
     return paths
 
 
-def _load_emb_by_name(source: str, variant: str | None) -> dict:
-    """Parse an embeddings JSON → {image_basename: vector}. Not cached (can be very large)."""
+def _resolved_emb_path(source: str, variant: str | None) -> str:
+    """Return the readable embeddings JSON path for a dataset, or raise if there isn't one."""
     path = _emb_json_path(source, variant)
     if not os.path.isfile(path):
         raise FileNotFoundError("embeddings not found")
     if _lfs_pointer_info(path) is not None:
         raise FileNotFoundError("embeddings file is a Git LFS pointer; run git lfs pull")
-    with open(path) as f:
-        data = json.load(f)
-    emb = data.get("embeddings", data)
-    return {os.path.basename(str(k)): v for k, v in emb.items()}
+    return path
+
+
+def _load_emb_by_name(source: str, variant: str | None) -> dict:
+    """Parse an embeddings JSON → {image_basename: vector}. Not cached (can be very large)."""
+    return dict(embeddings_io.iter_entries(_resolved_emb_path(source, variant)))
+
+
+def _build_base_matrix(source: str, variant: str | None) -> np.ndarray:
+    """Stream an embeddings JSON into an [n, d] array aligned to CSV row order."""
+    return embeddings_io.matrix_for_names(_dataset_paths(source), _resolved_emb_path(source, variant))
 
 
 def _base_matrix(source: str, variant: str | None) -> np.ndarray:
     """[n, d] aligned to CSV row order (rows without an embedding → zeros). Cached as a small array."""
     key = ("mat", source, variant)
-    if key in _COMPUTE_CACHE:
-        return _COMPUTE_CACHE[key]
-    paths = _dataset_paths(source)
-    by_name = _load_emb_by_name(source, variant)
-    dim = next((len(v) for v in by_name.values() if v), 0)
-    matrix = np.zeros((len(paths), dim), dtype=np.float32)
-    for i, p in enumerate(paths):
-        v = by_name.get(os.path.basename(str(p)))
-        if v is not None and len(v) == dim:
-            matrix[i] = v
-    _COMPUTE_CACHE[key] = matrix
-    return matrix
+    cached = _COMPUTE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    # One parse per key: without this, every request arriving during a large file's parse
+    # starts its own, and peak memory scales with how many happen to overlap.
+    with _compute_lock(key):
+        cached = _COMPUTE_CACHE.get(key)
+        if cached is not None:
+            return cached
+        matrix = _build_base_matrix(source, variant)
+        _COMPUTE_CACHE[key] = matrix
+        return matrix
 
 
 @app.get("/api/embedding/projection")
@@ -971,34 +1016,46 @@ def embedding_projection() -> ResponseReturnValue:
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     method = request.args.get("method", "pca").lower()
-    variant = request.args.get("variant", "").strip() or None
+    if method not in projections.METHODS:
+        return jsonify({"error": "unknown method"}), 400
+    try:
+        variant = _safe_variant(request.args.get("variant", "").strip())
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     cache_key = ("proj", source, variant, method)
     if cache_key in _COMPUTE_CACHE:
         return jsonify({"positions": _COMPUTE_CACHE[cache_key]})
+    with _compute_lock(cache_key):
+        if cache_key in _COMPUTE_CACHE:
+            return jsonify({"positions": _COMPUTE_CACHE[cache_key]})
+        return _projection_response(source, variant, method, cache_key)
+
+
+def _stored_projection(source: str, variant: str | None, method: str) -> list[list[float]] | None:
+    """Positions precomputed when the dataset was prepared, or None to compute on demand.
+
+    Sidecars cover a dataset's own base embeddings: a `variant` selects a different
+    model's vectors, and a child dataset carves its own row order out of the parent, so
+    neither can reuse one.
+    """
+    if variant:
+        return None
+    path = _data_path(projections.sidecar_path(source))
+    return projections.read(path, len(_dataset_paths(source)), method)
+
+
+def _projection_response(source: str, variant: str | None, method: str, cache_key: tuple) -> ResponseReturnValue:
+    """Return the 3D projection for one (dataset, variant, method), computing it if needed."""
+    stored = _stored_projection(source, variant, method)
+    if stored is not None:
+        _COMPUTE_CACHE[cache_key] = stored
+        return jsonify({"positions": stored})
+
     try:
         matrix = _base_matrix(source, variant)
     except (FileNotFoundError, ValueError) as e:
         return jsonify({"error": str(e)}), 404
-    n, d = matrix.shape
-    if n < 3 or d < 1:
-        return jsonify({"positions": [[0.0, 0.0, 0.0]] * n})
-
-    if method == "pca":
-        proj = PCA(n_components=3, random_state=0).fit_transform(matrix)
-    else:
-        pre = (
-            PCA(n_components=min(_PCA_PRE_DIMS, d), random_state=0).fit_transform(matrix)
-            if d > _PCA_PRE_DIMS
-            else matrix
-        )
-        if method == "tsne":
-            perp = max(5, min(30, (n - 1) // 3))
-            proj = TSNE(n_components=3, init="pca", perplexity=perp, random_state=0).fit_transform(pre)
-        elif method == "lle":
-            proj = LocallyLinearEmbedding(n_components=3, n_neighbors=min(12, n - 1), random_state=0).fit_transform(pre)
-        else:
-            return jsonify({"error": "unknown method"}), 400
-    positions = np.asarray(proj, dtype=float).tolist()
+    positions = projections.project(matrix, method)
     _COMPUTE_CACHE[cache_key] = positions
     return jsonify({"positions": positions})
 
@@ -1010,14 +1067,25 @@ def embedding_clusters() -> ResponseReturnValue:
         source = _safe_source(request.args.get("source", "").strip())
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    variant = request.args.get("variant", "").strip() or None
     try:
-        k = max(2, min(50, int(request.args.get("k", "20"))))
+        variant = _safe_variant(request.args.get("variant", "").strip())
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    try:
+        k = max(1, min(50, int(request.args.get("k", "20"))))
     except ValueError:
         k = 20
     cache_key = ("clust", source, variant, k)
     if cache_key in _COMPUTE_CACHE:
         return jsonify({"labels": _COMPUTE_CACHE[cache_key]})
+    with _compute_lock(cache_key):
+        if cache_key in _COMPUTE_CACHE:
+            return jsonify({"labels": _COMPUTE_CACHE[cache_key]})
+        return _clusters_response(source, variant, k, cache_key)
+
+
+def _clusters_response(source: str, variant: str | None, k: int, cache_key: tuple) -> ResponseReturnValue:
+    """Compute, cache and return spherical k-means labels for one (dataset, variant, k)."""
     try:
         matrix = _base_matrix(source, variant)
     except (FileNotFoundError, ValueError) as e:
@@ -1030,6 +1098,97 @@ def embedding_clusters() -> ResponseReturnValue:
     out = labels.astype(int).tolist()
     _COMPUTE_CACHE[cache_key] = out
     return jsonify({"labels": out})
+
+
+def _set_analysis_job(job_id: str, **updates: Any) -> None:
+    """Update one background analysis job atomically."""
+    with _ANALYSIS_JOBS_LOCK:
+        job = _ANALYSIS_JOBS.get(job_id)
+        if job is not None:
+            job.update(updates)
+
+
+def _run_analysis_job(job_id: str, source: str, variant: str | None, k: int, reduction: str) -> None:
+    """Compute one requested 3D projection and K-means labels for one UI request."""
+    try:
+        _set_analysis_job(job_id, status="running", progress=5, stage="loading embeddings")
+        matrix = _base_matrix(source, variant)
+        n = matrix.shape[0]
+        if n == 0 or matrix.shape[1] == 0:
+            raise ValueError("dataset has no usable embedding vectors")
+
+        _set_analysis_job(job_id, progress=35, stage=f"computing {reduction.upper()} projection")
+        stored = _stored_projection(source, variant, reduction)
+        positions = {reduction: stored if stored is not None else projections.project(matrix, reduction)}
+
+        _set_analysis_job(job_id, progress=65, stage=f"running K-means (k={k})")
+        normalized = normalize(matrix)
+        labels = KMeans(n_clusters=min(k, n), n_init=cast(Any, 4), random_state=0).fit_predict(normalized)
+        label_list = labels.astype(int).tolist()
+        cache_key = ("clust", source, variant, k)
+        _COMPUTE_CACHE[cache_key] = label_list
+        _set_analysis_job(
+            job_id,
+            status="done",
+            progress=100,
+            stage="complete",
+            labels=label_list,
+            projections=positions,
+        )
+    except Exception:
+        app.logger.exception("Embedding analysis job %s failed", job_id)
+        _set_analysis_job(
+            job_id,
+            status="error",
+            progress=100,
+            stage="failed",
+            error="embedding analysis failed; check the API logs for details",
+        )
+
+
+@app.post("/api/embedding/analysis")
+def start_embedding_analysis() -> ResponseReturnValue:
+    """Start a background job returning one selected projection and K-means labels."""
+    payload = request.get_json(silent=True) or {}
+    try:
+        source = _safe_source(str(payload.get("source", "")).strip())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        variant = _safe_variant(str(payload.get("variant", "")).strip())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        k = max(1, min(50, int(payload.get("k", 20))))
+    except (TypeError, ValueError):
+        k = 20
+    reduction = str(payload.get("reduction", "pca")).lower()
+    if reduction not in projections.METHODS:
+        return jsonify({"error": f"unknown projection method: {reduction}"}), 400
+
+    job_id = uuid.uuid4().hex
+    with _ANALYSIS_JOBS_LOCK:
+        _ANALYSIS_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "stage": "queued",
+            "source": source,
+            "k": k,
+            "reduction": reduction,
+        }
+    threading.Thread(target=_run_analysis_job, args=(job_id, source, variant, k, reduction), daemon=True).start()
+    return jsonify({"job_id": job_id}), 202
+
+
+@app.get("/api/embedding/analysis/<job_id>")
+def get_embedding_analysis(job_id: str) -> ResponseReturnValue:
+    """Return progress or the completed result for a background embedding analysis job."""
+    with _ANALYSIS_JOBS_LOCK:
+        job = _ANALYSIS_JOBS.get(job_id)
+        if job is None:
+            return jsonify({"error": "analysis job not found"}), 404
+        return jsonify(dict(job))
 
 
 def _compare_matrix(comp: dict[str, list[float]]) -> tuple[list[str], np.ndarray]:
@@ -1070,9 +1229,10 @@ def _neighbor_rows_and_weights(
 
 def _compare_result(names: list[str], matrix: np.ndarray, name_to_row: dict[str, int]) -> dict[str, list]:
     """Return neighbour rows/weights/origIdx for every comparison item in `names`."""
+    pre_dims = projections.PCA_PRE_DIMS
     reduced = (
-        PCA(n_components=min(_PCA_PRE_DIMS, matrix.shape[1]), random_state=0).fit_transform(matrix)
-        if matrix.shape[1] > _PCA_PRE_DIMS
+        PCA(n_components=min(pre_dims, matrix.shape[1]), random_state=0).fit_transform(matrix)
+        if matrix.shape[1] > pre_dims
         else matrix
     )
     kk = min(7, len(names))  # self + 6 neighbours
@@ -1110,7 +1270,14 @@ def embedding_compare() -> ResponseReturnValue:
     cache_key = ("cmp", source, variant)
     if cache_key in _COMPUTE_CACHE:
         return jsonify(_COMPUTE_CACHE[cache_key])
+    with _compute_lock(cache_key):
+        if cache_key in _COMPUTE_CACHE:
+            return jsonify(_COMPUTE_CACHE[cache_key])
+        return _compare_response(source, variant, cache_key)
 
+
+def _compare_response(source: str, variant: str, cache_key: tuple) -> ResponseReturnValue:
+    """Compute, cache and return the comparison-overlay payload for one (dataset, variant)."""
     try:
         paths = _dataset_paths(source)
         comp = _load_emb_by_name(source, variant)

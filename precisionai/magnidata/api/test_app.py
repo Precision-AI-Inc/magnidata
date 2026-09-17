@@ -14,6 +14,7 @@ import importlib
 import io
 import json
 import os
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -624,3 +625,240 @@ def test_build_local_returns_409_when_a_build_is_in_progress(app_client, monkeyp
     )
 
     assert r.status_code == 409
+
+
+# ── Base matrix ──────────────────────────────────────────────────────────────────
+
+
+def _write_dataset(tmp_path, stem, rows, payload):
+    """Write a minimal dataset CSV plus its embeddings JSON and return the CSV source path."""
+    csv_path = tmp_path / "data_user" / f"{stem}.csv"
+    csv_path.write_text("image_path\n" + "".join(f"images/{r}\n" for r in rows))
+    (tmp_path / "data_user" / f"{stem}.json").write_text(json.dumps(payload))
+    return f"data_user/{stem}.csv"
+
+
+def test_base_matrix_aligns_vectors_to_csv_row_order(app_client, tmp_path):
+    _, app_module = app_client
+    source = _write_dataset(
+        tmp_path, "aligned", ["b.jpg", "a.jpg"], {"embeddings": {"a.jpg": [1.0, 2.0], "b.jpg": [3.0, 4.0]}}
+    )
+
+    matrix = app_module._base_matrix(source, None)
+
+    np.testing.assert_array_equal(matrix, np.array([[3.0, 4.0], [1.0, 2.0]], dtype=np.float32))
+
+
+def test_base_matrix_zero_fills_rows_without_an_embedding(app_client, tmp_path):
+    _, app_module = app_client
+    source = _write_dataset(tmp_path, "sparse", ["a.jpg", "missing.jpg"], {"embeddings": {"a.jpg": [1.0, 2.0]}})
+
+    matrix = app_module._base_matrix(source, None)
+
+    np.testing.assert_array_equal(matrix, np.array([[1.0, 2.0], [0.0, 0.0]], dtype=np.float32))
+
+
+def test_base_matrix_zero_fills_wrong_length_vectors(app_client, tmp_path):
+    _, app_module = app_client
+    source = _write_dataset(
+        tmp_path, "ragged", ["a.jpg", "b.jpg"], {"embeddings": {"a.jpg": [1.0, 2.0], "b.jpg": [9.0]}}
+    )
+
+    matrix = app_module._base_matrix(source, None)
+
+    np.testing.assert_array_equal(matrix, np.array([[1.0, 2.0], [0.0, 0.0]], dtype=np.float32))
+
+
+def test_base_matrix_repeats_a_vector_across_duplicate_image_names(app_client, tmp_path):
+    _, app_module = app_client
+    source = _write_dataset(tmp_path, "dupes", ["a.jpg", "a.jpg"], {"embeddings": {"a.jpg": [1.0, 2.0]}})
+
+    matrix = app_module._base_matrix(source, None)
+
+    np.testing.assert_array_equal(matrix, np.array([[1.0, 2.0], [1.0, 2.0]], dtype=np.float32))
+
+
+def test_base_matrix_parses_the_file_once_for_concurrent_callers(app_client, tmp_path):
+    """Concurrent requests must share one parse — otherwise peak memory scales with how
+    many overlap, which is what OOM-kills the API on a multi-gigabyte embeddings file."""
+    _, app_module = app_client
+    source = _write_dataset(tmp_path, "shared", ["a.jpg", "b.jpg"], {"embeddings": {"a.jpg": [1.0], "b.jpg": [2.0]}})
+
+    parses = []
+    original = app_module.embeddings_io.iter_entries
+    started = threading.Event()
+
+    def counting_iter(path, **kwargs):
+        parses.append(path)
+        started.set()
+        yield from original(path, **kwargs)
+
+    app_module.embeddings_io.iter_entries = counting_iter
+    try:
+        results = []
+        threads = [
+            threading.Thread(target=lambda: results.append(app_module._base_matrix(source, None))) for _ in range(6)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+    finally:
+        app_module.embeddings_io.iter_entries = original
+
+    assert len(parses) == 1
+    assert len(results) == 6
+    for matrix in results:
+        np.testing.assert_array_equal(matrix, np.array([[1.0], [2.0]], dtype=np.float32))
+
+
+# ── Precomputed projections ──────────────────────────────────────────────────────
+
+
+def _write_projection_sidecar(tmp_path, stem, row_count, positions_by_method):
+    (tmp_path / "data_user" / f"{stem}_projections.json").write_text(
+        json.dumps({"row_count": row_count, "projections": positions_by_method})
+    )
+
+
+def test_projection_serves_precomputed_positions(app_client, tmp_path, monkeypatch):
+    """The whole point of the sidecar: the view renders stored points, nothing is reduced."""
+    client, app_module = app_client
+    source = _write_dataset(
+        tmp_path,
+        "stored",
+        ["a.jpg", "b.jpg", "c.jpg"],
+        {"embeddings": {"a.jpg": [1.0], "b.jpg": [2.0], "c.jpg": [3.0]}},
+    )
+    stored = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
+    _write_projection_sidecar(tmp_path, "stored", 3, {"pca": stored})
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("projection was computed despite a usable sidecar")
+
+    monkeypatch.setattr(app_module.projections, "project", fail_if_called)
+
+    resp = client.get(f"/api/embedding/projection?source={source}&method=pca")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["positions"] == stored
+
+
+def test_projection_ignores_a_sidecar_with_a_stale_row_count(app_client, tmp_path):
+    client, _ = app_client
+    source = _write_dataset(
+        tmp_path, "stale", ["a.jpg", "b.jpg", "c.jpg"], {"embeddings": {"a.jpg": [1.0], "b.jpg": [2.0], "c.jpg": [3.0]}}
+    )
+    _write_projection_sidecar(tmp_path, "stale", 99, {"pca": [[0.0, 0.0, 0.0]]})
+
+    resp = client.get(f"/api/embedding/projection?source={source}&method=pca")
+
+    assert resp.status_code == 200
+    assert len(resp.get_json()["positions"]) == 3  # computed, not the one stale position
+
+
+def test_projection_ignores_the_sidecar_for_a_variant(app_client, tmp_path):
+    """A variant selects another model's vectors; the base dataset's sidecar does not describe them."""
+    client, _ = app_client
+    source = _write_dataset(
+        tmp_path, "var", ["a.jpg", "b.jpg", "c.jpg"], {"embeddings": {"a.jpg": [1.0], "b.jpg": [2.0], "c.jpg": [3.0]}}
+    )
+    (tmp_path / "data_user" / "var_other.json").write_text(
+        json.dumps({"embeddings": {"a.jpg": [9.0], "b.jpg": [8.0], "c.jpg": [7.0]}})
+    )
+    stored = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
+    _write_projection_sidecar(tmp_path, "var", 3, {"pca": stored})
+
+    resp = client.get(f"/api/embedding/projection?source={source}&method=pca&variant=other")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["positions"] != stored
+
+
+def test_projection_falls_back_to_computing_without_a_sidecar(app_client, tmp_path):
+    client, _ = app_client
+    source = _write_dataset(
+        tmp_path,
+        "nosidecar",
+        ["a.jpg", "b.jpg", "c.jpg"],
+        {"embeddings": {"a.jpg": [1.0, 0.0], "b.jpg": [0.0, 1.0], "c.jpg": [1.0, 1.0]}},
+    )
+
+    resp = client.get(f"/api/embedding/projection?source={source}&method=pca")
+
+    assert resp.status_code == 200
+    assert len(resp.get_json()["positions"]) == 3
+
+
+def test_projection_rejects_an_unknown_method(app_client, tmp_path):
+    client, _ = app_client
+    source = _write_dataset(
+        tmp_path,
+        "unknown",
+        ["a.jpg", "b.jpg", "c.jpg"],
+        {"embeddings": {"a.jpg": [1.0], "b.jpg": [2.0], "c.jpg": [3.0]}},
+    )
+
+    resp = client.get(f"/api/embedding/projection?source={source}&method=umap")
+
+    assert resp.status_code == 400
+
+
+def test_embedding_routes_reject_traversal_and_invalid_variants(app_client):
+    client, _ = app_client
+
+    assert client.get("/api/dataset/csv?source=../secret.csv").status_code == 400
+    assert client.get("/api/embedding/projection?source=data_user/demo.csv&variant=../secret").status_code == 400
+    assert client.get("/api/embedding/clusters?source=data_user/demo.csv&variant=secret%2Fother").status_code == 400
+
+
+def test_data_path_rejects_symlink_escape(app_client, tmp_path):
+    _, app_module = app_client
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.csv"
+    outside.write_text("not served\n")
+    link = tmp_path / "data_user" / "escape.csv"
+    link.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="invalid data path"):
+        app_module._data_path("data_user/escape.csv")
+
+
+# ── Dataset CSV/embeddings caching ─────────────────────────────────────────────────
+
+
+def test_dataset_csv_is_not_cacheable(app_client, tmp_path):
+    """A dataset's CSV can be rebuilt in place at the same path, so its response must
+    never be cached or resumed by the client against bytes that no longer match."""
+    client, _ = app_client
+    (tmp_path / "data_user" / "plain.csv").write_text("image_path\nimages/a.jpg\n")
+
+    resp = client.get("/api/dataset/csv?source=data_user/plain.csv")
+
+    assert resp.status_code == 200
+    # no-store is what actually matters: the browser must never keep this body around to
+    # revalidate or range-resume against later, regardless of what conditional headers
+    # Werkzeug still attaches to the response.
+    assert resp.headers["Cache-Control"] == "no-store"
+
+
+def test_dataset_csv_ignores_a_range_header(app_client, tmp_path):
+    """Range support is what lets a client resume a stale cached body; it is turned off
+    for a file that can be rebuilt in place."""
+    client, _ = app_client
+    (tmp_path / "data_user" / "ranged.csv").write_text("image_path\nimages/a.jpg\n")
+
+    resp = client.get("/api/dataset/csv?source=data_user/ranged.csv", headers={"Range": "bytes=0-2"})
+
+    assert resp.status_code == 200  # not 206 — the whole, current file every time
+    assert resp.data == b"image_path\nimages/a.jpg\n"
+
+
+def test_dataset_embeddings_is_not_cacheable(app_client, tmp_path):
+    client, _ = app_client
+    (tmp_path / "data_user" / "plain.csv").write_text("image_path\nimages/a.jpg\n")
+    (tmp_path / "data_user" / "plain.json").write_text('{"embeddings": {"a.jpg": [1.0]}}')
+
+    resp = client.get("/api/dataset/embeddings?source=data_user/plain.csv")
+
+    assert resp.status_code == 200
+    assert resp.headers["Cache-Control"] == "no-store"

@@ -140,6 +140,17 @@ export interface BuildJobStatus {
   error?: string
 }
 
+export interface EmbeddingAnalysisStatus {
+  job_id: string
+  status: 'queued' | 'running' | 'done' | 'error'
+  progress: number
+  stage: string
+  k?: number
+  error?: string
+  labels?: number[]
+  projections?: Record<string, number[][]>
+}
+
 export const api = {
   health: () => get<{ status: string; local: { datalake_accessible: boolean; root: string } }>(`${BASE}/health`),
 
@@ -183,6 +194,10 @@ export const api = {
   embeddingClusters: (source: string, k: number, variant?: string) =>
     get<{ labels: number[] }>(
       `${BASE}/embedding/clusters?source=${encodeURIComponent(source)}&k=${k}${variant ? `&variant=${encodeURIComponent(variant)}` : ''}`),
+  startEmbeddingAnalysis: (source: string, k: number, reduction = 'pca', variant?: string) =>
+    mutate<{ job_id: string }>('POST', `${BASE}/embedding/analysis`, { source, k, reduction, ...(variant ? { variant } : {}) }),
+  getEmbeddingAnalysis: (jobId: string) =>
+    get<EmbeddingAnalysisStatus>(`${BASE}/embedding/analysis/${encodeURIComponent(jobId)}`),
   embeddingCompare: (source: string, variant: string) =>
     get<{ nbr: number[][]; w: number[][]; origIdx: number[] }>(
       `${BASE}/embedding/compare?source=${encodeURIComponent(source)}&variant=${encodeURIComponent(variant)}`),

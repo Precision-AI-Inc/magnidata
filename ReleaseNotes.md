@@ -10,18 +10,10 @@ parallel coordinates, 3D views, histograms, table filters, and image previews.
 Parallel coordinates is the main working view: each axis is an extracted signal, and
 brushing several axes together becomes a combined feature-extraction query.
 
-## Dashboard preview
-
 <p align="center">
   <img src="assets/preview.png" alt="MagniData Dashboard Preview" width="720"/>
 </p>
 
-### Example feature output
-
-```csv
-image_path,annotation_ratio,blur_laplacian,noise_sigma,colorfulness,complexity_score,camera_angle
-image_sets/field/images/img_001.jpg,0.421,318.7,4.8,27.1,0.63,oriented
-```
 
 In data-centric computer vision, a recurring bottleneck is incomplete understanding of the training distribution. Large image collections are often uncategorized, sparsely labeled, or annotated under inconsistent protocols. Under these conditions, architectural changes and additional annotation are frequently undertaken before the dominant visual statistics, coverage gaps, and quality structure of the data are known. The practical questions are straightforward, but sample-centric viewers do not make them easy to answer:
 
@@ -133,10 +125,19 @@ From the landing screen, open MagniData and choose a prepared demo, build from a
 folder under `image_sets/`, upload your own images, or load a CSV that follows the
 MagniData data contract.
 
-For feature extraction only:
+
+### Feature Extraction
 
 ```bash
 python -m precisionai.magnidata.tools.features --input images.csv --output features.csv
+```
+
+
+# Feature Format
+
+```csv
+image_path,annotation_ratio,blur_laplacian,noise_sigma,colorfulness,complexity_score,camera_angle
+image_sets/field/images/img_001.jpg,0.421,318.7,4.8,27.1,0.63,oriented
 ```
 
 Minimal requirements are Docker for the full application or Python for the feature

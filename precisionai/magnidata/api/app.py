@@ -22,7 +22,7 @@ from typing import Any, cast
 import numpy as np
 import yaml
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask.typing import ResponseReturnValue
 from flask_cors import CORS
 from PIL import Image
@@ -104,6 +104,20 @@ def _lfs_pointer_info(path: str) -> dict | None:
             with contextlib.suppress(ValueError):
                 info["size"] = int(line[5:].strip())
     return info
+
+
+def _data_path(relative_path: str) -> str:
+    """Resolve a data-relative path while preventing traversal and symlink escape."""
+    if not relative_path or os.path.isabs(relative_path):
+        raise ValueError("invalid data path")
+    root = os.path.realpath(DATA_ROOT)
+    path = os.path.realpath(os.path.join(root, relative_path))
+    try:
+        if os.path.commonpath((root, path)) != root:
+            raise ValueError("invalid data path")
+    except ValueError as exc:
+        raise ValueError("invalid data path") from exc
+    return path
 
 
 def _img_from_bytes(data: bytes, max_size: int = 1600) -> Image.Image:
@@ -499,10 +513,10 @@ def _resolve_emb_source(source: str) -> str | None:
         if not emb_source:
             return None
         stem = os.path.splitext(emb_source)[0]
-        emb_path = os.path.normpath(os.path.join(DATA_ROOT, stem + ".json"))
+        emb_path = _data_path(stem + ".json")
         return emb_source if os.path.isfile(emb_path) and _lfs_pointer_info(emb_path) is None else None
     stem = os.path.splitext(source)[0]
-    emb_path = os.path.normpath(os.path.join(DATA_ROOT, stem + ".json"))
+    emb_path = _data_path(stem + ".json")
     return source if os.path.isfile(emb_path) and _lfs_pointer_info(emb_path) is None else None
 
 
@@ -806,7 +820,7 @@ def get_build_job(job_id: str) -> ResponseReturnValue:
     return jsonify(job)
 
 
-def _send_dataset_file(path: str, mimetype: str) -> ResponseReturnValue:
+def _send_dataset_file(relative_path: str, mimetype: str) -> ResponseReturnValue:
     """Send a dataset CSV/embeddings file that can be rebuilt in place at the same path.
 
     `conditional=False` turns off ETag/Last-Modified/Range handling, and the explicit
@@ -816,7 +830,9 @@ def _send_dataset_file(path: str, mimetype: str) -> ResponseReturnValue:
     stale cache entry surfaces to the user as a plain "failed to fetch", with no sign
     that a rebuild — not a network problem — is the cause.
     """
-    resp = send_file(path, mimetype=mimetype, as_attachment=False, conditional=False)
+    # Werkzeug's safe join keeps this endpoint protected even if a path is later
+    # assembled from a new request parameter.
+    resp = send_from_directory(DATA_ROOT, relative_path, mimetype=mimetype, as_attachment=False, conditional=False)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -827,10 +843,10 @@ def get_dataset_csv() -> ResponseReturnValue:
     source = request.args.get("source", "").strip()
     if not source:
         return jsonify({"error": "source required"}), 400
-    # Prevent path traversal
-    if os.path.isabs(source) or ".." in source:
+    try:
+        path = _data_path(source)
+    except ValueError:
         return jsonify({"error": "invalid source path"}), 400
-    path = os.path.normpath(os.path.join(DATA_ROOT, source))
     if not os.path.isfile(path):
         return jsonify({"error": "dataset not found"}), 404
     lfs_info = _lfs_pointer_info(path)
@@ -841,11 +857,11 @@ def get_dataset_csv() -> ResponseReturnValue:
                 "lfs_size_bytes": lfs_info.get("size"),
             }
         ), 409
-    return _send_dataset_file(path, mimetype="text/csv")
+    return _send_dataset_file(source, mimetype="text/csv")
 
 
 @app.get("/api/dataset/embeddings")
-def get_dataset_embeddings() -> ResponseReturnValue:
+def get_dataset_embeddings() -> ResponseReturnValue:  # noqa: PLR0911
     """Stream an embeddings JSON for a dataset. `source` is the CSV path from confi.yaml.
 
     Base embeddings = <stem>.json. An optional `variant` (model name) selects a
@@ -855,13 +871,18 @@ def get_dataset_embeddings() -> ResponseReturnValue:
     variant = request.args.get("variant", "").strip()
     if not source:
         return jsonify({"error": "source required"}), 400
-    if os.path.isabs(source) or ".." in source:
+    try:
+        _data_path(source)
+    except ValueError:
         return jsonify({"error": "invalid source path"}), 400
     if variant and not re.fullmatch(r"[A-Za-z0-9_-]+", variant):
         return jsonify({"error": "invalid variant"}), 400
     stem = os.path.splitext(_resolve_emb_source(source) or source)[0]  # child → parent's embeddings
     json_source = f"{stem}_{variant}.json" if variant else f"{stem}.json"
-    path = os.path.normpath(os.path.join(DATA_ROOT, json_source))
+    try:
+        path = _data_path(json_source)
+    except ValueError:
+        return jsonify({"error": "invalid source path"}), 400
     if not os.path.isfile(path):
         return jsonify({"error": "embeddings not found"}), 404
     lfs_info = _lfs_pointer_info(path)
@@ -872,7 +893,7 @@ def get_dataset_embeddings() -> ResponseReturnValue:
                 "lfs_size_bytes": lfs_info.get("size"),
             }
         ), 409
-    return _send_dataset_file(path, mimetype="application/json")
+    return _send_dataset_file(json_source, mimetype="application/json")
 
 
 @app.get("/api/dataset/embeddings/variants")
@@ -922,16 +943,21 @@ def _compute_lock(key: tuple) -> threading.Lock:
 
 
 def _safe_source(source: str) -> str:
-    if not source or os.path.isabs(source) or ".." in source:
-        raise ValueError("invalid source path")
+    _data_path(source)
     return source
+
+
+def _safe_variant(variant: str | None) -> str | None:
+    if variant and not re.fullmatch(r"[A-Za-z0-9_-]+", variant):
+        raise ValueError("invalid variant")
+    return variant or None
 
 
 def _emb_json_path(source: str, variant: str | None) -> str:
     # Child datasets inherit the parent's embeddings file; align to the child's own CSV rows.
     stem = os.path.splitext(_resolve_emb_source(source) or source)[0]
     rel = f"{stem}_{variant}.json" if variant else f"{stem}.json"
-    return os.path.normpath(os.path.join(DATA_ROOT, rel))
+    return _data_path(rel)
 
 
 def _dataset_paths(source: str) -> list[str]:
@@ -939,7 +965,7 @@ def _dataset_paths(source: str) -> list[str]:
     key = ("paths", source)
     if key in _COMPUTE_CACHE:
         return _COMPUTE_CACHE[key]
-    path = os.path.normpath(os.path.join(DATA_ROOT, source))
+    path = _data_path(source)
     paths = embeddings_io.csv_image_paths(path)
     _COMPUTE_CACHE[key] = paths
     return paths
@@ -992,7 +1018,10 @@ def embedding_projection() -> ResponseReturnValue:
     method = request.args.get("method", "pca").lower()
     if method not in projections.METHODS:
         return jsonify({"error": "unknown method"}), 400
-    variant = request.args.get("variant", "").strip() or None
+    try:
+        variant = _safe_variant(request.args.get("variant", "").strip())
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     cache_key = ("proj", source, variant, method)
     if cache_key in _COMPUTE_CACHE:
         return jsonify({"positions": _COMPUTE_CACHE[cache_key]})
@@ -1011,7 +1040,7 @@ def _stored_projection(source: str, variant: str | None, method: str) -> list[li
     """
     if variant:
         return None
-    path = os.path.normpath(os.path.join(DATA_ROOT, projections.sidecar_path(source)))
+    path = _data_path(projections.sidecar_path(source))
     return projections.read(path, len(_dataset_paths(source)), method)
 
 
@@ -1038,7 +1067,10 @@ def embedding_clusters() -> ResponseReturnValue:
         source = _safe_source(request.args.get("source", "").strip())
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    variant = request.args.get("variant", "").strip() or None
+    try:
+        variant = _safe_variant(request.args.get("variant", "").strip())
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     try:
         k = max(1, min(50, int(request.args.get("k", "20"))))
     except ValueError:
@@ -1103,8 +1135,15 @@ def _run_analysis_job(job_id: str, source: str, variant: str | None, k: int, red
             labels=label_list,
             projections=positions,
         )
-    except Exception as exc:
-        _set_analysis_job(job_id, status="error", progress=100, stage="failed", error=str(exc))
+    except Exception:
+        app.logger.exception("Embedding analysis job %s failed", job_id)
+        _set_analysis_job(
+            job_id,
+            status="error",
+            progress=100,
+            stage="failed",
+            error="embedding analysis failed; check the API logs for details",
+        )
 
 
 @app.post("/api/embedding/analysis")
@@ -1115,7 +1154,10 @@ def start_embedding_analysis() -> ResponseReturnValue:
         source = _safe_source(str(payload.get("source", "")).strip())
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    variant = str(payload.get("variant", "")).strip() or None
+    try:
+        variant = _safe_variant(str(payload.get("variant", "")).strip())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     try:
         k = max(1, min(50, int(payload.get("k", 20))))
     except (TypeError, ValueError):

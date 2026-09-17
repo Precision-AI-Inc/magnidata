@@ -804,6 +804,25 @@ def test_projection_rejects_an_unknown_method(app_client, tmp_path):
     assert resp.status_code == 400
 
 
+def test_embedding_routes_reject_traversal_and_invalid_variants(app_client):
+    client, _ = app_client
+
+    assert client.get("/api/dataset/csv?source=../secret.csv").status_code == 400
+    assert client.get("/api/embedding/projection?source=data_user/demo.csv&variant=../secret").status_code == 400
+    assert client.get("/api/embedding/clusters?source=data_user/demo.csv&variant=secret%2Fother").status_code == 400
+
+
+def test_data_path_rejects_symlink_escape(app_client, tmp_path):
+    _, app_module = app_client
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.csv"
+    outside.write_text("not served\n")
+    link = tmp_path / "data_user" / "escape.csv"
+    link.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="invalid data path"):
+        app_module._data_path("data_user/escape.csv")
+
+
 # ── Dataset CSV/embeddings caching ─────────────────────────────────────────────────
 
 

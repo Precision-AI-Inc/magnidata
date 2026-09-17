@@ -54,6 +54,8 @@ from pathlib import Path
 from typing import Any
 
 import db
+import embeddings_io
+import projections
 from PIL import Image
 
 
@@ -267,7 +269,7 @@ def _dataset_meta(rec: dict) -> dict:
 
 def _cleanup_partial(stem: str) -> None:
     base = os.path.join(DATA_ROOT, USER_DATA_REL, stem)
-    for suffix in (".csv", ".csv.provenance.json", ".json", ".json.provenance.json"):
+    for suffix in (".csv", ".csv.provenance.json", ".json", ".json.provenance.json", "_projections.json"):
         with contextlib.suppress(OSError):
             os.remove(base + suffix)
     shutil.rmtree(base + "_images", ignore_errors=True)
@@ -397,6 +399,26 @@ def start_upload_build(
     return job_id
 
 
+def _precompute_projections(job_id: str, feature_csv_rel: str, emb_json_rel: str) -> None:
+    """Reduce a freshly built dataset's embeddings to 3D and store them beside the CSV.
+
+    Doing this here rather than on first view is the whole point of the sidecar: the 3D
+    view then renders stored points instead of waiting on a reduction. A failure is
+    logged into the job and otherwise ignored — the dataset is still perfectly usable,
+    the viewer just falls back to computing the projection on demand.
+    """
+    _update_job(job_id, status="projecting", percent=92, message="Precomputing 3D projections…")
+    csv_path = os.path.join(DATA_ROOT, feature_csv_rel)
+    json_path = os.path.join(DATA_ROOT, emb_json_rel)
+    try:
+        matrix = embeddings_io.matrix_for_csv(csv_path, json_path)
+        positions = projections.compute(matrix)
+        if positions:
+            projections.write(projections.sidecar_path(csv_path), matrix.shape[0], positions)
+    except Exception as exc:  # a projection is a speed-up, never a reason to fail the build
+        _update_job(job_id, message=f"Projections skipped: {exc}")
+
+
 def _run_upload_build(
     job_id: str,
     images: list,
@@ -419,6 +441,9 @@ def _run_upload_build(
         if embeddings_file is not None:
             emb_json_rel = f"{USER_DATA_REL}/{stem}.json"
             _write_uploaded_file(embeddings_file, emb_json_rel)
+
+        if emb_json_rel is not None:
+            _precompute_projections(job_id, feature_csv_rel, emb_json_rel)
 
         _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
         row_count = _count_csv_rows(feature_csv_rel)
@@ -681,10 +706,12 @@ def _run_demo_build(job_id: str) -> None:
         shutil.copyfile(COCO128_EMBEDDINGS_ASSET, embeddings_json)
         _check_embeddings_match_csv(feature_csv, embeddings_json)
 
-        _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
-        row_count = _count_csv_rows(str(feature_csv))
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
         emb_rel = f"{USER_DATA_REL}/{stem}.json"
+        _precompute_projections(job_id, feature_csv_rel, emb_rel)
+
+        _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
+        row_count = _count_csv_rows(str(feature_csv))
         rec = db.create_dataset_record(COCO128_NAME, COCO128_DESCRIPTION, feature_csv_rel, None, emb_rel, row_count)
 
         _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
@@ -836,6 +863,8 @@ def _run_agristress_build(job_id: str) -> None:
             open(os.path.join(DATA_ROOT, emb_rel), "wb") as f,
         ):
             f.write(resp.read())
+
+        _precompute_projections(job_id, feature_csv_rel, emb_rel)
 
         _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
         row_count = _count_csv_rows(feature_csv_rel)

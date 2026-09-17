@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useMemo } from 'react'
 import { api } from '../api'
-import type { EmbeddingVariant } from '../api'
+import type { EmbeddingAnalysisStatus, EmbeddingVariant } from '../api'
 import type { CSSProperties } from 'react'
 import * as THREE from 'three'
 import { OrbitControls }   from 'three/examples/jsm/controls/OrbitControls.js'
@@ -635,7 +635,7 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
   useEffect(() => { onPointClickRef.current = onPointClick }, [onPointClick])
   useEffect(() => { rowsRef.current = rows }, [rows])
 
-  const [mode,  setMode]  = useState<LayoutMode>('pca')
+  const [mode,  setMode]  = useState<LayoutMode>('cluster')
   const [k,     setK]     = useState(20)
   const [featureSource, setFeatureSource] = useState<FeatureSource>('multiparametric')
   const [reduction, setReduction] = useState<ReductionMethod>('pca')
@@ -685,9 +685,23 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
   // with a "computing" flag for the overlay.
   const [projection, setProjection] = useState<[number, number, number][]>([])
   const [projecting, setProjecting] = useState(false)
+  const [analysisStatus, setAnalysisStatus] = useState<EmbeddingAnalysisStatus | null>(null)
+  const [analysisProjections, setAnalysisProjections] = useState<Record<string, number[][]>>({})
   useEffect(() => {
     let cancelled = false
     if (useEmbeddings && datasetSource) {
+      // Cluster mode owns the projection request: the analysis job returns the selected
+      // reduction and labels from one backend snapshot, so do not start a duplicate request.
+      if (mode === 'cluster') {
+        setProjecting(false)
+        return () => { cancelled = true }
+      }
+      const ready = analysisProjections[reduction]
+      if (ready) {
+        setProjection(ready as [number, number, number][])
+        setProjecting(false)
+        return () => { cancelled = true }
+      }
       setProjecting(true)
       // A transient failure here (network blip, or the server's first request after startup
       // paying a one-off cold-import cost) used to permanently strand the view with every
@@ -722,23 +736,47 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
       if (!cancelled) { setProjection(result); setProjecting(false) }
     }, 16)
     return () => { cancelled = true; clearTimeout(id) }
-  }, [featureMatrix, reduction, useEmbeddings, datasetSource]) // eslint-disable-line
+  }, [analysisProjections, featureMatrix, mode, reduction, useEmbeddings, datasetSource]) // eslint-disable-line
 
-  // Cluster labels (cosine spherical k-means on the full feature space). Embeddings → API; else client.
+  // Cluster labels (cosine spherical k-means on the full feature space). Embedding analysis is a
+  // single background job so the UI receives PCA, t-SNE, LLE, and labels from the same snapshot.
   const [clusterLabels, setClusterLabels] = useState<number[] | null>(null)
   useEffect(() => {
     let cancelled = false
-    if (mode !== 'cluster') { setClusterLabels(null); return }
+    if (mode !== 'cluster') { setClusterLabels(null); setAnalysisStatus(null); return }
     if (useEmbeddings && datasetSource) {
-      api.embeddingClusters(datasetSource, k)
-        .then(r => { if (!cancelled) setClusterLabels(r.labels) })
-        .catch(() => { if (!cancelled) setClusterLabels(null) })
+      setClusterLabels(null)
+      setAnalysisProjections({})
+      setAnalysisStatus({ job_id: '', status: 'queued', progress: 0, stage: 'starting analysis' })
+      const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+      const run = async () => {
+        const { job_id } = await api.startEmbeddingAnalysis(datasetSource, k, reduction)
+        while (!cancelled) {
+          const result = await api.getEmbeddingAnalysis(job_id)
+          if (cancelled) return
+          setAnalysisStatus(result)
+          if (result.status === 'done') {
+            setClusterLabels(result.labels ?? null)
+            setAnalysisProjections(result.projections ?? {})
+            return
+          }
+          if (result.status === 'error') {
+            setClusterLabels(null)
+            return
+          }
+          await wait(350)
+        }
+      }
+      run().catch(error => {
+        if (!cancelled) setAnalysisStatus({ job_id: '', status: 'error', progress: 100, stage: 'failed', error: String(error) })
+      })
       return () => { cancelled = true }
     }
+    setAnalysisStatus(null)
     if (!featureMatrix.length || !featureMatrix[0]?.length) { setClusterLabels(null); return }
     setClusterLabels(kmeansCosine(featureMatrix, k, { standardize: true }))
     return () => { cancelled = true }
-  }, [featureMatrix, mode, k, useEmbeddings, datasetSource]) // eslint-disable-line
+  }, [featureMatrix, mode, k, reduction, useEmbeddings, datasetSource]) // eslint-disable-line
 
   // ── Commit ("make partition"): snapshot the current k-means clustering onto the filtered selection ──
   // Writes the CSV cluster column (1-based ids: "Cluster 1, 2, …") — the ONLY thing that modifies the
@@ -832,9 +870,9 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
   // When the preset comes from a CSV cluster column, also switch to the Clusters layout to show it.
   const kInitFor = useRef<string | null>(null)
   useEffect(() => {
-    if (preset && preset.count >= 2 && kInitFor.current !== data.fileName) {
+    if (preset && preset.count >= 1 && kInitFor.current !== data.fileName) {
       kInitFor.current = data.fileName
-      setK(Math.max(2, Math.min(50, preset.count)))
+      setK(Math.max(1, Math.min(50, preset.count)))
       if (preset.fromColumn) setMode('cluster')
     }
   }, [preset, data.fileName])
@@ -1474,8 +1512,8 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
         {mode === 'cluster' && (!hasPreset || clusterSource === 'computed') && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={lblS}>K</span>
-            <input type="number" min={2} max={50} value={k}
-              onChange={e => { setK(Math.max(2, Math.min(50, +e.target.value))); setClusterSource('computed') }}
+            <input type="number" min={1} max={50} value={k}
+              onChange={e => { setK(Math.max(1, Math.min(50, +e.target.value))); setClusterSource('computed') }}
               style={{ ...selS, width: 44, textAlign: 'center' }} />
           </span>
         )}
@@ -1568,7 +1606,7 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
       )}
 
       {/* Computing overlay — while the server-side projection/clustering/comparison is in flight */}
-      {(projecting || comparing) && (
+      {(projecting || comparing || analysisStatus?.status === 'queued' || analysisStatus?.status === 'running') && (
         <div style={{
           position: 'absolute', inset: 0, zIndex: 20, display: 'flex',
           alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10,
@@ -1580,7 +1618,9 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
             animation: 'spin 0.8s linear infinite',
           }} />
           <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(141,231,184,0.95)', letterSpacing: '.3px' }}>
-            {projecting ? `Computing ${useEmbeddings ? REDUCTION_LABELS[reduction] : 'PCA'} projection…` : 'Placing comparison embeddings…'}
+            {analysisStatus?.status === 'queued' || analysisStatus?.status === 'running'
+              ? `${analysisStatus.stage} · ${analysisStatus.progress}%`
+              : projecting ? `Computing ${useEmbeddings ? REDUCTION_LABELS[reduction] : 'PCA'} projection…` : 'Placing comparison embeddings…'}
           </span>
         </div>
       )}

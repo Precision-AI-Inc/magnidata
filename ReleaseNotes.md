@@ -37,7 +37,7 @@ Standard inspection tools are useful for examining individual images, labels, tr
 
 Proposed masks, when used, are treated as derived features for exploration. They are not presented as ground truth.
 
-## What it unlocks
+## MagniData Offerings
 
 - Find dataset outliers, low-quality images, and difficult samples faster.
 - Use parallel-coordinate brushes as a human-readable feature extraction layer.
@@ -133,7 +133,7 @@ python -m precisionai.magnidata.tools.features --input images.csv --output featu
 ```
 
 
-# Feature Format
+### Feature Format
 
 ```csv
 image_path,annotation_ratio,blur_laplacian,noise_sigma,colorfulness,complexity_score,camera_angle

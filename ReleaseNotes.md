@@ -37,14 +37,6 @@ Standard inspection tools are useful for examining individual images, labels, tr
 
 Proposed masks, when used, are treated as derived features for exploration. They are not presented as ground truth.
 
-## MagniData Offerings
-
-- Find dataset outliers, low-quality images, and difficult samples faster.
-- Use parallel-coordinate brushes as a human-readable feature extraction layer.
-- Compare multiparametric features with embedding-space structure.
-- Build and save curated subsets for training, review, or downstream analysis.
-- Bring your own images, build demo datasets, or load an existing feature CSV.
-
 ## Relation to instance-centric tools
 
 Instance-centric tools are optimized for tasks such as frame inspection, label and prediction review, multimodal playback, similarity search, and dataset engineering. They can also expose custom fields, histograms, embeddings, and linked plots. The difference is the default analytical priority. In MagniData, parallel coordinates are the primary query surface: many engineered variables can be brushed at once, while the effect on global geometry, distributions, and selected samples is immediate. MagniData organizes the workflow around simultaneous, interpretable, multivariate constraints and a structural view of the dataset.
@@ -58,6 +50,15 @@ A typical query combines a quality threshold, an object-area ratio, and a photom
 ## Methodological constraints
 
 Engineered features support explanation; embeddings support neighborhood structure. Both should be available, with engineered quantities on the parallel-coordinate axes and embeddings (or a joint projection) in the spatial view. Parallel coordinates scale poorly with undifferentiated high-dimensional input; axes therefore require grouping, ranking by variance or association with the current selection, and optional suggested brushes. Clustering over heterogeneous units (photometry, quality, geometry) requires explicit normalization and a means of attributing cluster membership to a small set of driving dimensions. These are interface and estimation problems, not afterthoughts.
+
+## MagniData Offerings
+
+- Find dataset outliers, low-quality images, and difficult samples faster.
+- Use parallel-coordinate brushes as a human-readable feature extraction layer.
+- Compare multiparametric features with embedding-space structure.
+- Build and save curated subsets for training, review, or downstream analysis.
+- Bring your own images, build demo datasets, or load an existing feature CSV.
+
 
 ## Scope
 

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reference segmentation trainer (`python -m precisionai.magnidata.training.train`): trains a small
+  U-Net or LRASPP model on a MagniData dataset with masks and logs params, loss/mIoU curves,
+  per-sample loss files, hardest-sample predictions and a checkpoint to an MLflow run. Install its
+  dependencies with `pip install -e ".[training]"`.
 - `LossRecorder` and `python -m precisionai.magnidata.training.attach`: record per-sample loss terms
   per epoch in the training-contract CSV format and log them to an MLflow run, including for runs
   that already exist. Torch-free, so external trainers can use the same writer.

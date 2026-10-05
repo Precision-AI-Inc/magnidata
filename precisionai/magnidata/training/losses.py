@@ -117,6 +117,14 @@ def iou_per_sample(
         return torch.where(n_present > 0, mean, torch.ones_like(mean))
 
 
+def mean_confidence_per_sample(
+    logits: torch.Tensor, target: torch.Tensor, ignore_index: int = IGNORE_INDEX
+) -> torch.Tensor:
+    """Return each image's mean max-softmax probability over its valid pixels (no gradient)."""
+    with torch.no_grad():
+        return _masked_mean(logits.softmax(1).max(1).values, _valid_mask(target, ignore_index))
+
+
 def confusion_counts(
     logits: torch.Tensor, target: torch.Tensor, num_classes: int, ignore_index: int = IGNORE_INDEX
 ) -> torch.Tensor:

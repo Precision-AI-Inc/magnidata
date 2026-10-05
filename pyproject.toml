@@ -55,6 +55,13 @@ ml = [
     "pyiqa==0.1.13",
     "tqdm>=4.66",
 ]
+# Reference trainer (precisionai.magnidata.training.train) and the trainer worker — versions
+# match the `ml` extra. Not a dependency of the API image.
+training = [
+    "torch==2.14.0",
+    "torchvision==0.29.0",
+    "mlflow-skinny==3.11.1",
+]
 test = [
     "pytest>=7.0",
     "pytest-cov>=5.0",

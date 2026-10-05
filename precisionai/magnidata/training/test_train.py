@@ -1,0 +1,179 @@
+# Copyright 2026 Precision AI
+# SPDX-License-Identifier: Apache-2.0
+
+"""End-to-end tests of the reference trainer on a synthetic dataset, on CPU with tiny_unet."""
+
+import csv
+
+import numpy as np
+import pytest
+from PIL import Image
+
+from precisionai.magnidata.training import contract
+
+pytest.importorskip("torch")
+train = pytest.importorskip("precisionai.magnidata.training.train")
+models = pytest.importorskip("precisionai.magnidata.training.models")
+
+QUICK = {
+    "epochs": "2",
+    "batch_size": "4",
+    "image_size": "32",
+    "lr": "0.01",
+    "score_every": "1",
+    "top_k_predictions": "3",
+}
+
+
+def _make_learnable(ds):
+    """Make each image a noisy copy of its mask so the task is trivially learnable."""
+    rng = np.random.default_rng(1)
+    for name in ds.names:
+        mask = np.asarray(Image.open(ds.root / "data_user" / "syn" / "masks" / name).convert("RGB"))
+        noise = rng.integers(0, 20, mask.shape, dtype=np.uint8)
+        Image.fromarray(np.clip(mask.astype(int) + noise, 0, 255).astype(np.uint8)).save(
+            ds.root / "data_user" / "syn" / "images" / name
+        )
+
+
+def _new_run(make_run, params=None, tags=None, source="data_user/syn.csv"):
+    uri, client, run_id = make_run()
+    for key, value in {**QUICK, **(params or {})}.items():
+        client.log_param(run_id, key, value)
+    for key, value in {contract.TAG_DATASET_SOURCE: source, **(tags or {})}.items():
+        client.set_tag(run_id, key, value)
+    return uri, client, run_id
+
+
+def _artifacts(client, run_id, path):
+    return sorted(f.path for f in client.list_artifacts(run_id, path) if not f.is_dir)
+
+
+def _history(client, run_id, key):
+    return [m.value for m in client.get_metric_history(run_id, key)]
+
+
+def test_two_epoch_run_logs_everything(mlflow_tracking, synthetic_dataset):
+    uri, client, run_id = _new_run(mlflow_tracking)
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+
+    run = client.get_run(run_id)
+    assert run.info.status == "FINISHED"
+    assert len(_history(client, run_id, "train_loss/loss")) == 2
+    assert len(_history(client, run_id, "val_loss/dice")) == 2
+    assert _history(client, run_id, "val_metric/miou")
+    assert _history(client, run_id, "val_metric/iou_background")
+    assert _history(client, run_id, "Learning_rate/lr")
+    assert run.data.tags[contract.TAG_SCORED_EPOCHS] == "1,2"
+    assert run.data.tags[contract.TAG_PER_SAMPLE_SCHEMA] == contract.SCHEMA_VERSION
+    assert run.data.params["num_classes"] == "3"
+
+    assert _artifacts(client, run_id, "magnidata/per_sample") == [
+        contract.per_sample_path(1),
+        contract.per_sample_path(2),
+    ]
+    assert contract.SPLIT_ARTIFACT in _artifacts(client, run_id, "magnidata")
+    assert contract.PALETTE_ARTIFACT in _artifacts(client, run_id, "magnidata")
+    assert _artifacts(client, run_id, "checkpoints") == [contract.CHECKPOINT_ARTIFACT]
+    predictions = _artifacts(client, run_id, "magnidata/predictions/epoch_0002")
+    assert 0 < len(predictions) <= 3
+
+    path = client.download_artifacts(run_id, contract.per_sample_path(2))
+    with open(path, newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert sorted(r["image_name"] for r in rows) == synthetic_dataset.names
+    assert set(rows[0]) == {"image_name", "split", "loss_total", "loss_dice", "loss_cce", "confidence", "iou"}
+    contract.validate_header(list(rows[0]), ["dice", "cce"])
+
+
+def test_loss_decreases_on_learnable_data(mlflow_tracking, synthetic_dataset):
+    _make_learnable(synthetic_dataset)
+    uri, client, run_id = _new_run(mlflow_tracking, {"batch_size": "2", "epochs": "4", "lr": "0.02"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+
+    def mean_total(epoch):
+        path = client.download_artifacts(run_id, contract.per_sample_path(epoch))
+        with open(path, newline="") as fh:
+            return np.mean([float(r["loss_total"]) for r in csv.DictReader(fh)])
+
+    assert mean_total(4) < mean_total(1)
+
+
+def test_cancel_before_start_kills_run(mlflow_tracking, synthetic_dataset):
+    uri, client, run_id = _new_run(mlflow_tracking, tags={contract.TAG_CANCEL_REQUESTED: "true"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+    assert client.get_run(run_id).info.status == "KILLED"
+    assert _history(client, run_id, "train_loss/loss") == []
+
+
+def test_missing_dataset_fails_run(mlflow_tracking, synthetic_dataset, capsys):
+    uri, client, run_id = _new_run(mlflow_tracking, source="data_user/nope.csv")
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") != 0
+    run = client.get_run(run_id)
+    assert run.info.status == "FAILED"
+    assert "dataset CSV not found" in run.data.tags["magnidata.error"]
+    assert "Traceback" in capsys.readouterr().out
+
+
+def test_unknown_preset_fails_run(mlflow_tracking, synthetic_dataset):
+    uri, client, run_id = _new_run(mlflow_tracking, tags={contract.TAG_PRESET: "giant"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") != 0
+    assert "unknown preset" in client.get_run(run_id).data.tags["magnidata.error"]
+
+
+def test_cli_without_run_id_creates_external_run(mlflow_tracking, synthetic_dataset, tmp_path):
+    uri, client, _ = mlflow_tracking()
+    code = train.main(
+        [
+            "--dataset", "data_user/syn.csv",
+            "--data-root", str(synthetic_dataset.root),
+            "--tracking-uri", uri,
+            "--experiment", "cli",
+            "--artifact-location", (tmp_path / "cli-artifacts").as_uri(),
+            "--device", "cpu",
+            *[arg for k, v in QUICK.items() for arg in ("--param", f"{k}={v}")],
+        ]
+    )  # fmt: skip
+    assert code == 0
+    experiment = client.get_experiment_by_name("cli")
+    assert experiment is not None
+    (run,) = client.search_runs([experiment.experiment_id])
+    assert run.info.status == "FINISHED"
+    assert run.data.tags[contract.TAG_ORIGIN] == contract.ORIGIN_EXTERNAL
+    assert run.data.tags[contract.TAG_DATASET_SOURCE] == "data_user/syn.csv"
+
+
+def test_cli_requires_run_or_dataset():
+    with pytest.raises(SystemExit):
+        train.main([])
+
+
+def test_config_defaults_and_overrides():
+    cfg = train.config_from_run(
+        {"epochs": "3", "weight_dice": "2.5", "pretrained": "false"},
+        {contract.TAG_DATASET_SOURCE: "x.csv", contract.TAG_LOSS_TERMS: "dice,bce"},
+    )
+    assert (cfg.epochs, cfg.loss_terms, cfg.loss_weights, cfg.pretrained) == (3, ["dice", "bce"], {"dice": 2.5}, False)
+    assert cfg.as_params()["weight_dice"] == "2.5"
+    with pytest.raises(ValueError, match="dataset_source"):
+        train.config_from_run({}, {})
+
+
+def test_iou_from_confusion():
+    torch = pytest.importorskip("torch")
+    miou, per_class = train.iou_from_confusion(torch.tensor([[4, 0, 0], [1, 1, 0], [0, 0, 0]]))
+    assert per_class == pytest.approx([4 / 5, 1 / 2, None])
+    assert miou == pytest.approx((4 / 5 + 1 / 2) / 2)
+
+
+@pytest.mark.parametrize("preset", contract.MODEL_PRESETS)
+def test_models_output_logits_at_input_resolution(preset):
+    torch = pytest.importorskip("torch")
+    model = models.build_model(preset, num_classes=4, pretrained=False).eval()
+    with torch.no_grad():
+        assert model(torch.zeros(2, 3, 40, 56)).shape == (2, 4, 40, 56)
+
+
+def test_unknown_model_preset():
+    with pytest.raises(ValueError, match="unknown preset"):
+        models.build_model("giant", 3)

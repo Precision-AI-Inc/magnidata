@@ -1,0 +1,239 @@
+# Copyright 2026 Precision AI
+# SPDX-License-Identifier: Apache-2.0
+
+"""Tests for training presets, validation, launch and cancel, against a real sqlite MLflow store.
+
+Run:  python -m pytest precisionai/magnidata/api/test_training_launch.py -q
+"""
+
+import os
+import time
+
+import experiments
+import mlflow_store as store_module
+import pytest
+import trainer_backend
+import training_presets
+from flask import Flask
+
+from precisionai.magnidata.training import contract
+
+VALID = {"name": "first", "dataset_source": "data_user/syn.csv", "preset": "tiny_unet", "params": {"epochs": 3}}
+
+
+@pytest.fixture
+def root(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    folder = tmp_path / "data_user" / "syn"
+    (folder / "images").mkdir(parents=True)
+    (folder / "masks").mkdir()
+    (folder / "images" / "a.png").write_bytes(b"x")
+    (folder / "masks" / "a.png").write_bytes(b"x")
+    (tmp_path / "data_user" / "syn.csv").write_text("image_path\ndata_user/syn/images/a.png\n")
+    (tmp_path / "data_user" / "plain.csv").write_text("image_path\ndata_user/plain/images/a.png\n")
+    return tmp_path
+
+
+@pytest.fixture
+def client(mlflow_store, root):
+    experiments.clear_cache()
+    store_module.set_store(mlflow_store)
+    app = Flask(__name__)
+    app.register_blueprint(experiments.bp)
+    yield app.test_client()
+    store_module.set_store(None)
+    experiments.clear_cache()
+
+
+def _heartbeat(root, age_s=0.0):
+    path = root / "data_user" / ".trainer_heartbeat"
+    path.write_text("")
+    stamp = time.time() - age_s
+    os.utime(path, (stamp, stamp))
+
+
+def test_presets_endpoint_reports_worker_availability(client, root):
+    body = client.get("/api/training/presets").get_json()
+    assert [p["key"] for p in body["presets"]] == ["tiny_unet", "lraspp_mobilenet"]
+    assert body["bounds"]["epochs"] == {"type": "int", "min": 1, "max": 200}
+    assert body["loss_terms"] == ["dice", "cce", "bce"]
+    assert body["mlflow"]["reachable"] is True
+    assert body["backend"]["available"] is False
+    assert body["backend"]["worker_heartbeat"] is None
+
+    _heartbeat(root)
+    assert client.get("/api/training/presets").get_json()["backend"]["available"] is True
+    _heartbeat(root, age_s=60)
+    stale = client.get("/api/training/presets").get_json()["backend"]
+    assert stale["available"] is False
+    assert "last seen" in stale["reason"]
+
+
+def test_valid_launch_creates_scheduled_run(client, mlflow_store):
+    resp = client.post("/api/training/runs", json=VALID)
+    assert resp.status_code == 201
+    body = resp.get_json()
+    run = mlflow_store.get_run(body["run_id"])
+    assert run["status"] == "SCHEDULED"
+    assert run["name"] == "first"
+    assert run["params"]["epochs"] == "3"
+    assert run["params"]["loss_terms"] == "dice,cce"
+    assert run["params"]["pretrained"] == "false"
+    assert run["params"]["preset"] == "tiny_unet"
+    tags = run["tags"]
+    assert tags[contract.TAG_ORIGIN] == contract.ORIGIN_UI
+    assert tags[contract.TAG_DATASET_SOURCE] == "data_user/syn.csv"
+    assert tags[contract.TAG_DATASET_NAME] == "syn"
+    assert tags[contract.TAG_PRESET] == "tiny_unet"
+    assert tags[contract.TAG_LOSS_TERMS] == "dice,cce"
+    assert [e["name"] for e in mlflow_store.search_experiments() if e["name"].startswith("magnidata/")] == [
+        "magnidata/syn"
+    ]
+
+
+def test_launch_records_parent_and_weights(client, mlflow_store):
+    parent = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
+    client.post(f"/api/runs/{parent}/cancel")
+    body = {**VALID, "parent_run_id": parent, "params": {"loss_weights": {"dice": 2.0}, "loss_terms": ["dice", "bce"]}}
+    run = mlflow_store.get_run(client.post("/api/training/runs", json=body).get_json()["run_id"])
+    assert run["tags"][contract.TAG_PARENT_RUN_ID] == parent
+    assert run["params"]["weight_dice"] == "2.0"
+    assert run["params"]["loss_terms"] == "dice,bce"
+
+
+def test_experiment_prefix_is_configurable(client, mlflow_store, monkeypatch):
+    monkeypatch.setenv("MAGNIDATA_MLFLOW_EXPERIMENT_PREFIX", "lab")
+    assert client.post("/api/training/runs", json=VALID).status_code == 201
+    assert "lab/syn" in [e["name"] for e in mlflow_store.search_experiments()]
+
+
+@pytest.mark.parametrize(
+    ("params", "field"),
+    [
+        ({"epochs": 0}, "params.epochs"),
+        ({"epochs": 201}, "params.epochs"),
+        ({"epochs": 1.5}, "params.epochs"),
+        ({"epochs": True}, "params.epochs"),
+        ({"epochs": 5, "score_every": 6}, "params.score_every"),
+        ({"score_every": 0}, "params.score_every"),
+        ({"batch_size": 65}, "params.batch_size"),
+        ({"image_size": 100}, "params.image_size"),
+        ({"image_size": 130}, "params.image_size"),
+        ({"image_size": 2048}, "params.image_size"),
+        ({"lr": 0}, "params.lr"),
+        ({"lr": 0.5}, "params.lr"),
+        ({"lr": "fast"}, "params.lr"),
+        ({"val_fraction": 0.01}, "params.val_fraction"),
+        ({"val_fraction": 0.9}, "params.val_fraction"),
+        ({"seed": -1}, "params.seed"),
+        ({"split_mode": "stratified"}, "params.split_mode"),
+        ({"loss_terms": []}, "params.loss_terms"),
+        ({"loss_terms": ["dice", "focal"]}, "params.loss_terms"),
+        ({"loss_terms": ["dice", "dice"]}, "params.loss_terms"),
+        ({"loss_weights": {"dice": 11}}, "params.loss_weights.dice"),
+        ({"loss_weights": {"bce": 1}}, "params.loss_weights.bce"),
+        ({"top_k_predictions": 201}, "params.top_k_predictions"),
+        ({"pretrained": "yes"}, "params.pretrained"),
+        ({"command": "rm -rf /"}, "params: unknown parameter"),
+    ],
+)
+def test_parameter_violations_name_the_field(client, params, field):
+    resp = client.post("/api/training/runs", json={**VALID, "params": params})
+    assert resp.status_code == 400
+    assert field in resp.get_json()["error"]
+
+
+@pytest.mark.parametrize(
+    ("patch", "message"),
+    [
+        ({"preset": "huge"}, "preset"),
+        ({"command": "rm -rf /"}, "unknown field"),
+        ({"dataset_source": "data_user/plain.csv"}, "no segmentation masks"),
+        ({"dataset_source": "data_user/missing.csv"}, "dataset not found"),
+        ({"dataset_source": "../etc/passwd"}, "dataset not found"),
+        ({"dataset_source": ""}, "dataset_source"),
+        ({"parent_run_id": "nope"}, "parent_run_id"),
+        ({"parent_run_id": "0" * 32}, "parent_run_id: run not found"),
+        ({"name": "x" * 101}, "name"),
+        ({"params": ["epochs"]}, "params"),
+    ],
+)
+def test_other_request_violations(client, patch, message):
+    resp = client.post("/api/training/runs", json={**VALID, **patch})
+    assert resp.status_code == 400
+    assert message in resp.get_json()["error"]
+
+
+def test_non_object_body_is_rejected(client):
+    assert client.post("/api/training/runs", json=["a"]).status_code == 400
+    assert client.post("/api/training/runs", data="not json").status_code == 400
+
+
+def test_second_launch_while_active_is_refused(client):
+    assert client.post("/api/training/runs", json=VALID).status_code == 201
+    resp = client.post("/api/training/runs", json=VALID)
+    assert resp.status_code == 409
+    assert "scheduled or running" in resp.get_json()["error"]
+
+
+def test_running_run_also_blocks_launch(client, mlflow_store):
+    run_id = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
+    mlflow_store.set_status(run_id, "RUNNING")
+    assert client.post("/api/training/runs", json=VALID).status_code == 409
+    mlflow_store.set_terminated(run_id, "FINISHED")
+    assert client.post("/api/training/runs", json=VALID).status_code == 201
+
+
+def test_cancel_scheduled_run_kills_it(client, mlflow_store):
+    run_id = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
+    body = client.post(f"/api/runs/{run_id}/cancel").get_json()
+    assert body["status"] == "KILLED"
+    assert body["cancel_requested"] is False
+    assert mlflow_store.get_run(run_id)["status"] == "KILLED"
+
+
+def test_cancel_running_run_sets_tag(client, mlflow_store):
+    run_id = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
+    mlflow_store.set_status(run_id, "RUNNING")
+    body = client.post(f"/api/runs/{run_id}/cancel").get_json()
+    assert body["cancel_requested"] is True
+    run = mlflow_store.get_run(run_id)
+    assert run["status"] == "RUNNING"
+    assert run["tags"][contract.TAG_CANCEL_REQUESTED] == "true"
+
+
+def test_cancel_finished_run_conflicts(client, mlflow_store):
+    run_id = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
+    mlflow_store.set_terminated(run_id, "FINISHED")
+    resp = client.post(f"/api/runs/{run_id}/cancel")
+    assert resp.status_code == 409
+    assert "FINISHED" in resp.get_json()["error"]
+    assert client.post("/api/runs/bad/cancel").status_code == 400
+    assert client.post(f"/api/runs/{'0' * 32}/cancel").status_code == 404
+
+
+def test_validate_launch_defaults_are_complete():
+    spec = training_presets.validate_launch({"dataset_source": "a/b.csv", "preset": "lraspp_mobilenet"})
+    assert spec.name == "lraspp_mobilenet on b"
+    assert spec.params["pretrained"] == "true"
+    assert spec.params["epochs"] == "20"
+    assert spec.params["split_mode"] == "random"
+    assert spec.loss_terms == ["dice", "cce"]
+
+
+def test_custom_backend_can_be_injected(client):
+    class Fake:
+        def submit(self, spec):
+            return "0" * 32
+
+        def cancel(self, run_id):
+            return "KILLED"
+
+        def available(self):
+            return {"available": True, "reason": None, "worker_heartbeat": 0}
+
+    trainer_backend.set_backend(Fake())
+    try:
+        assert client.get("/api/training/presets").get_json()["backend"]["available"] is True
+    finally:
+        trainer_backend.set_backend(None)

@@ -73,6 +73,7 @@ class TrainConfig:
     pretrained: bool = True
     checkpoint_every_score: bool = False
     num_workers: int = 0
+    split_mode: str = "random"
 
     def as_params(self) -> dict[str, str]:
         """Return every setting as MLflow param strings."""
@@ -88,6 +89,7 @@ class TrainConfig:
             "seed": str(self.seed),
             "score_every": str(self.score_every),
             "top_k_predictions": str(self.top_k_predictions),
+            "split_mode": self.split_mode,
             "pretrained": str(self.pretrained).lower(),
             "checkpoint_every_score": str(self.checkpoint_every_score).lower(),
             **{f"weight_{t}": str(w) for t, w in self.loss_weights.items()},
@@ -117,6 +119,9 @@ def config_from_run(params: Mapping[str, str], tags: Mapping[str, str]) -> Train
     for name in ("pretrained", "checkpoint_every_score"):
         if name in params:
             setattr(cfg, name, _as_bool(params[name]))
+    cfg.split_mode = params.get("split_mode", cfg.split_mode)
+    if cfg.split_mode not in {"random", "column"}:
+        raise ValueError(f"unknown split_mode {cfg.split_mode!r}: choose random or column")
     if cfg.preset not in contract.MODEL_PRESETS:
         raise ValueError(f"unknown preset {cfg.preset!r}: choose from {', '.join(contract.MODEL_PRESETS)}")
     return cfg
@@ -342,7 +347,9 @@ def prepare_data(cfg: TrainConfig, data_root: Path, recorder: LossRecorder) -> _
             f"{len(report.missing_image)} without image"
         )
     palette = data.build_palette([s.mask_path for s in samples])
-    column = {s.image_name: s.csv_split for s in samples if s.csv_split}
+    column = {s.image_name: s.csv_split for s in samples if s.csv_split} if cfg.split_mode == "column" else {}
+    if cfg.split_mode == "column" and not column:
+        raise ValueError("split_mode=column but the dataset CSV has no split column")
     splits = data.make_split([s.image_name for s in samples], cfg.val_fraction, cfg.seed, column or None)
     recorder.write_split(splits)
     recorder.write_palette(palette.as_mapping())

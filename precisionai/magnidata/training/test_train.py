@@ -177,3 +177,43 @@ def test_models_output_logits_at_input_resolution(preset):
 def test_unknown_model_preset():
     with pytest.raises(ValueError, match="unknown preset"):
         models.build_model("giant", 3)
+
+
+def _add_split_column(ds, labels):
+    with open(ds.csv, newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    with open(ds.csv, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=[*rows[0], "split"])
+        writer.writeheader()
+        for row, label in zip(rows, labels, strict=True):
+            writer.writerow({**row, "split": label})
+
+
+def test_column_split_mode_uses_csv_labels(mlflow_tracking, synthetic_dataset):
+    labels = ["train"] * 5 + ["val"] * 2 + ["test"]
+    _add_split_column(synthetic_dataset, labels)
+    uri, client, run_id = _new_run(mlflow_tracking, {"split_mode": "column", "epochs": "1"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+    path = client.download_artifacts(run_id, contract.SPLIT_ARTIFACT)
+    with open(path, newline="") as fh:
+        assert [r["split"] for r in csv.DictReader(fh)] == labels
+
+
+def test_column_split_mode_without_column_fails(mlflow_tracking, synthetic_dataset):
+    uri, client, run_id = _new_run(mlflow_tracking, {"split_mode": "column"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") != 0
+    assert "no split column" in client.get_run(run_id).data.tags["magnidata.error"]
+
+
+def test_random_split_mode_ignores_csv_column(mlflow_tracking, synthetic_dataset):
+    _add_split_column(synthetic_dataset, ["test"] * 8)
+    uri, client, run_id = _new_run(mlflow_tracking, {"epochs": "1"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+    path = client.download_artifacts(run_id, contract.SPLIT_ARTIFACT)
+    with open(path, newline="") as fh:
+        assert {r["split"] for r in csv.DictReader(fh)} == {"train", "val"}
+
+
+def test_unknown_split_mode():
+    with pytest.raises(ValueError, match="split_mode"):
+        train.config_from_run({"split_mode": "stratified"}, {contract.TAG_DATASET_SOURCE: "x.csv"})

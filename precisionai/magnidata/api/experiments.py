@@ -19,13 +19,15 @@ from typing import Any
 import artifact_cache
 import mlflow_store
 import run_axes
+import trainer_backend
+import training_presets
 from flask import Blueprint, Response, jsonify, request
 from flask.typing import ResponseReturnValue
 from mlflow_store import MlflowNotFoundError, MlflowUnavailableError
 from werkzeug.exceptions import BadRequest, Conflict
 
 from precisionai.magnidata.training import contract
-from precisionai.magnidata.training.dataset_check import resolve_under
+from precisionai.magnidata.training.dataset_check import has_masks, resolve_under
 
 bp = Blueprint("experiments", __name__)
 
@@ -408,3 +410,58 @@ def run_match(run_id: str) -> ResponseReturnValue:
             "dataset_only_examples": sorted(dataset_names - run_names)[:5],
         }
     )
+
+
+@bp.get("/api/training/presets")
+def training_presets_view() -> ResponseReturnValue:
+    """Return the presets with their bounds, plus trainer-worker and MLflow availability."""
+    store = mlflow_store.get_store()
+    return jsonify(
+        {
+            **training_presets.describe(),
+            "backend": trainer_backend.get_backend(store).available(),
+            "mlflow": store.status(),
+        }
+    )
+
+
+def _check_dataset(source: str) -> None:
+    root = os.environ.get("DATA_ROOT", ".")
+    path = resolve_under(root, source)
+    if path is None or not path.is_file():
+        raise _bad("dataset_source: dataset not found")
+    if not has_masks(path, root):
+        raise _bad("dataset_source: dataset has no segmentation masks to train on")
+
+
+@bp.post("/api/training/runs")
+def launch_training() -> ResponseReturnValue:
+    """Validate a launch request and queue it as a ``SCHEDULED`` MLflow run."""
+    try:
+        spec = training_presets.validate_launch(request.get_json(silent=True))
+    except ValueError as err:
+        raise _bad(str(err)) from None
+    _check_dataset(spec.dataset_source)
+    store = mlflow_store.get_store()
+    if spec.parent_run_id:
+        try:
+            store.get_run(spec.parent_run_id)
+        except MlflowNotFoundError:
+            raise _bad("parent_run_id: run not found") from None
+    try:
+        run_id = trainer_backend.get_backend(store).submit(spec)
+    except trainer_backend.TrainerBusyError as err:
+        raise Conflict(str(err)) from None
+    clear_cache()
+    return jsonify(run_summary(store.get_run(run_id)) | {"run_id": run_id}), 201
+
+
+@bp.post("/api/runs/<run_id>/cancel")
+def cancel_run(run_id: str) -> ResponseReturnValue:
+    """Cancel a run: a scheduled one is killed at once, a running one is asked to stop."""
+    try:
+        status = trainer_backend.get_backend(mlflow_store.get_store()).cancel(_run_id(run_id))
+    except trainer_backend.RunNotCancellableError as err:
+        raise Conflict(str(err)) from None
+    clear_cache()
+    return jsonify({"run_id": run_id, "status": status, "cancel_requested": status != "KILLED"})

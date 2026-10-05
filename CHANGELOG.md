@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Launch and cancel training through the API: `GET /api/training/presets` (presets, bounds, trainer
+  and MLflow availability), `POST /api/training/runs` (validated request becomes a `SCHEDULED` MLflow
+  run that a trainer worker claims; one UI-launched run at a time) and `POST /api/runs/<id>/cancel`.
+  The trainer also gained a `split_mode` parameter (`random` or `column`).
 - `GET /api/runs/<id>/columns` serves per-sample loss axes derived from a run's MLflow artifacts: the
   loss at an epoch plus its mean, improvement, trend and within-split rank over the scored epochs, and a
   `hardness` score for samples that stay in the worst fifth. `GET /api/runs/<id>/match` reports how

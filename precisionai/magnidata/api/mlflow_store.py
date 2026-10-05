@@ -48,6 +48,7 @@ def _run_to_dict(run: mlflow.entities.Run) -> dict[str, Any]:
         "run_id": info.run_id,
         "experiment_id": info.experiment_id,
         "name": info.run_name,
+        "user": info.user_id,
         "status": info.status,
         "start_time": info.start_time,
         "end_time": info.end_time,
@@ -65,12 +66,19 @@ def _experiment_to_dict(exp: mlflow.entities.Experiment) -> dict[str, Any]:
         "artifact_location": exp.artifact_location,
         "lifecycle_stage": exp.lifecycle_stage,
         "creation_time": exp.creation_time,
+        "last_update_time": exp.last_update_time,
         "tags": dict(exp.tags),
     }
 
 
 def _metric_to_dict(metric: mlflow.entities.Metric) -> dict[str, Any]:
     return {"key": metric.key, "value": metric.value, "step": metric.step, "timestamp": metric.timestamp}
+
+
+def _token(found: Any) -> str | None:
+    """Return a paged result's continuation token as text (stores differ between str and bytes)."""
+    token = found.token
+    return token.decode() if isinstance(token, bytes) else token or None
 
 
 def _file_to_dict(info: mlflow.entities.FileInfo) -> dict[str, Any]:
@@ -138,15 +146,43 @@ class MlflowStore:
             return None
         return resp.text.strip() or None
 
-    def search_experiments(self, max_results: int = 100) -> list[dict[str, Any]]:
-        """Return the active experiments, newest first."""
+    def search_experiments_page(
+        self, name_contains: str = "", max_results: int = 100, page_token: str | None = None
+    ) -> dict[str, Any]:
+        """Return one page of active experiments, newest first, with the next page token."""
         found = self._call(
             "experiments",
             self._client.search_experiments,
             max_results=max_results,
-            order_by=["creation_time DESC"],
+            filter_string=f"name LIKE '%{name_contains}%'" if name_contains else None,
+            order_by=["last_update_time DESC"],
+            page_token=page_token,
         )
-        return [_experiment_to_dict(e) for e in found]
+        return {"items": [_experiment_to_dict(e) for e in found], "next_page_token": _token(found)}
+
+    def search_experiments(self, max_results: int = 100) -> list[dict[str, Any]]:
+        """Return the active experiments, newest first."""
+        return self.search_experiments_page(max_results=max_results)["items"]
+
+    def search_runs_page(
+        self,
+        experiment_ids: Sequence[str],
+        filter_string: str = "",
+        max_results: int = 100,
+        order_by: Sequence[str] | None = None,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        """Return one page of runs matching an MLflow filter string, with the next page token."""
+        found = self._call(
+            "runs",
+            self._client.search_runs,
+            list(experiment_ids),
+            filter_string=filter_string,
+            max_results=max_results,
+            order_by=list(order_by) if order_by else ["attributes.start_time DESC"],
+            page_token=page_token,
+        )
+        return {"items": [_run_to_dict(r) for r in found], "next_page_token": _token(found)}
 
     def search_runs(
         self,
@@ -156,15 +192,7 @@ class MlflowStore:
         order_by: Sequence[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return runs of the given experiments matching an MLflow filter string."""
-        found = self._call(
-            "runs",
-            self._client.search_runs,
-            list(experiment_ids),
-            filter_string=filter_string,
-            max_results=max_results,
-            order_by=list(order_by) if order_by else ["attributes.start_time DESC"],
-        )
-        return [_run_to_dict(r) for r in found]
+        return self.search_runs_page(experiment_ids, filter_string, max_results, order_by)["items"]
 
     def get_run(self, run_id: str) -> dict[str, Any]:
         """Return one run, raising `MlflowNotFoundError` if it does not exist."""

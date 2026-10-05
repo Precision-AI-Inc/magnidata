@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- API endpoints to browse MLflow: `GET /api/experiments`, `GET /api/runs` (filter by experiment, dataset,
+  status or an allow-listed MLflow filter), run detail, metric histories (downsampled), multi-run metrics
+  for comparison, artifact listing and download, and `POST /api/runs/<id>/link` to attach an external run
+  to a dataset.
 - Reference segmentation trainer (`python -m precisionai.magnidata.training.train`): trains a small
   U-Net or LRASPP model on a MagniData dataset with masks and logs params, loss/mIoU curves,
   per-sample loss files, hardest-sample predictions and a checkpoint to an MLflow run. Install its

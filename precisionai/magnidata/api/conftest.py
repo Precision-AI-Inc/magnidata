@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from mlflow.entities import Metric
 from mlflow_store import MlflowStore
 
 
@@ -32,9 +33,11 @@ def seed_run(
     run_id = client.create_run(experiment_id, tags=dict(tags or {})).info.run_id
     for key, value in (params or {}).items():
         client.log_param(run_id, key, value)
-    for key, values in (metrics or {}).items():
-        for step, value in enumerate(values):
-            client.log_metric(run_id, key, value, step=step)
+    points = [
+        Metric(key, value, 0, step) for key, values in (metrics or {}).items() for step, value in enumerate(values)
+    ]
+    for start in range(0, len(points), 1000):
+        client.log_batch(run_id, metrics=points[start : start + 1000])
     for path, text in (artifacts or {}).items():
         client.log_text(run_id, text, path)
     client.set_terminated(run_id, status)

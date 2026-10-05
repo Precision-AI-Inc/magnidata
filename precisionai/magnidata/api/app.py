@@ -53,6 +53,7 @@ os.makedirs(USER_DATA_DIR, exist_ok=True)
 import dataset_builder
 import db
 import embeddings_io
+import experiments
 import local_files
 import mlflow_store
 import projections
@@ -64,6 +65,7 @@ db.init_db()
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = dataset_builder.MAX_REQUEST_BYTES
 CORS(app)
+app.register_blueprint(experiments.bp)
 
 # Background threshold: pixels whose R+G+B sum is below this are treated as
 # background and rendered transparent in the mask/overlay views.

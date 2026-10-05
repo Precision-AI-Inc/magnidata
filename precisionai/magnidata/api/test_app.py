@@ -879,3 +879,9 @@ def test_mlflow_status_reachable_and_unreachable(app_client, tmp_path):
         assert resp.get_json()["reachable"] is False
     finally:
         mlflow_store.set_store(None)
+
+
+def test_experiment_routes_are_registered(app_client):
+    _, app_module = app_client
+    rules = {rule.rule for rule in app_module.app.url_map.iter_rules()}
+    assert {"/api/experiments", "/api/runs", "/api/runs/<run_id>/metrics", "/api/runs/<run_id>/link"} <= rules

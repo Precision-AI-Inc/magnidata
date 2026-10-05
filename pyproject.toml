@@ -41,6 +41,7 @@ dependencies = [
     "scikit-learn>=1.4",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
+    "mlflow-skinny==3.11.1",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +62,7 @@ test = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=5.0",
+    "mlflow==3.11.1",
     "pre-commit>=3.7",
     # Pinned to the rev in .pre-commit-config.yaml — a different ruff version
     # reports a different rule set, so an unpinned local run would disagree with CI.

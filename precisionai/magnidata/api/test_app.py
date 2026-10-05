@@ -17,6 +17,7 @@ import os
 import threading
 from pathlib import Path
 
+import mlflow_store
 import numpy as np
 import pytest
 from PIL import Image
@@ -862,3 +863,19 @@ def test_dataset_embeddings_is_not_cacheable(app_client, tmp_path):
 
     assert resp.status_code == 200
     assert resp.headers["Cache-Control"] == "no-store"
+
+
+def test_mlflow_status_reachable_and_unreachable(app_client, tmp_path):
+    client, _ = app_client
+    try:
+        mlflow_store.set_store(mlflow_store.MlflowStore(f"sqlite:///{tmp_path / 'mlflow.db'}"))
+        resp = client.get("/api/mlflow/status")
+        assert resp.status_code == 200
+        assert resp.get_json()["reachable"] is True
+
+        mlflow_store.set_store(mlflow_store.MlflowStore("http://127.0.0.1:1"))
+        resp = client.get("/api/mlflow/status")
+        assert resp.status_code == 200
+        assert resp.get_json()["reachable"] is False
+    finally:
+        mlflow_store.set_store(None)

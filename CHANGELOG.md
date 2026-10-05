@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Local MLflow tracking server (`mlflow` service in `docker-compose.yml`, UI on :5052, data in the
+  `magnidata-mlflow` volume) and an API adapter around it. `GET /api/mlflow/status` reports
+  whether the server is reachable.
 - Training contract (`precisionai.magnidata.training.contract`): the MLflow tags, metric keys,
   artifact layout and per-sample loss columns shared by the trainer, API and external trainers.
   Documented in `docs/training-contract.md`. Imports without torch or mlflow.

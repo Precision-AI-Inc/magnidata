@@ -8,6 +8,9 @@
 pytest>=7.0
 pytest-cov>=5.0
 
+# Real sqlite-backed tracking store for the MLflow tests (the API itself uses mlflow-skinny)
+mlflow==3.11.1
+
 # Linting and formatting (pinned to the rev in .pre-commit-config.yaml)
 ruff==0.16.7
 

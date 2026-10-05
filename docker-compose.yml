@@ -1,6 +1,7 @@
-# Self-contained MagniData dev stack — API (Flask) + portal (React/nginx).
+# Self-contained MagniData dev stack — API (Flask) + portal (React/nginx) + MLflow.
 # Run from the repo root:   docker compose up --build
 #   portal -> http://localhost:5175   api -> http://localhost:5051
+#   MLflow UI -> http://localhost:5052
 #
 # This compose file and both Dockerfiles (Dockerfile.api, Dockerfile.dashboard)
 # live at the repo root; the application source they build stays under
@@ -30,7 +31,13 @@ services:
       # the API starts fine without it; local_files.local_status() reports it as unavailable.
       # - /path/to/your/datalake:/mnt/disks/ssd-raid/datalake-clone:ro
       # - /path/to/your/thumbnails:/mnt/disks/ssd-raid/datalake-clone-thumbnails:ro
+    depends_on:
+      mlflow:
+        condition: service_healthy
     environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      # Browser-facing MLflow URL, used for deep links from the dashboard.
+      MAGNIDATA_MLFLOW_UI_URL: http://localhost:5052
       CONFIG_PATH: /app/confi.yaml
       DATA_ROOT: /app
       DB_PATH: /app/db/notes.db
@@ -47,6 +54,28 @@ services:
     # env_file:
     #   - ./precisionai/magnidata/api/.env
 
+  # Local experiment tracking: the system of record for training runs. No auth — it is
+  # meant for the developer's machine only. Host-side tools (e.g. a pai-seed run on the
+  # host) log to it with MLFLOW_TRACKING_URI=http://localhost:5052.
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.11.1
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts --serve-artifacts
+      --allowed-hosts "*"
+    ports:
+      - "5052:5000"
+    volumes:
+      - magnidata-mlflow:/mlflow
+    restart: unless-stopped
+    healthcheck:
+      # The image ships no curl.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   web:
     build:
       context: ./precisionai/magnidata/dashboard
@@ -58,3 +87,4 @@ services:
 
 volumes:
   magnidata-api-db:
+  magnidata-mlflow:

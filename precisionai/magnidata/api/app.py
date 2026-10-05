@@ -54,6 +54,7 @@ import dataset_builder
 import db
 import embeddings_io
 import local_files
+import mlflow_store
 import projections
 
 from precisionai.magnidata.tools import coco_labels as coco_labels_mod
@@ -172,6 +173,13 @@ def _to_png(img: Image.Image) -> bytes:
 def health() -> ResponseReturnValue:
     """Return service status and local-filesystem/datalake accessibility."""
     return jsonify({"status": "ok", "local": local_files.local_status()})
+
+
+# ── MLflow ─────────────────────────────────────────────────────────────────────
+@app.get("/api/mlflow/status")
+def mlflow_status() -> ResponseReturnValue:
+    """Return MLflow reachability; 200 with `reachable: false` when the server is down."""
+    return jsonify(mlflow_store.get_store().status())
 
 
 # ── Images ─────────────────────────────────────────────────────────────────────

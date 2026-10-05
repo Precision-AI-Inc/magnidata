@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Training contract (`precisionai.magnidata.training.contract`): the MLflow tags, metric keys,
+  artifact layout and per-sample loss columns shared by the trainer, API and external trainers.
+  Documented in `docs/training-contract.md`. Imports without torch or mlflow.
 - PCA and t-SNE are now computed while a dataset is being prepared, not the first time
   its 3D view is opened. Preparation writes a `<stem>_projections.json` sidecar holding
   one 3D position per CSV row, and the viewer renders those points directly. On a

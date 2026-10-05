@@ -15,6 +15,8 @@ COPY precisionai/__init__.py ./precisionai/__init__.py
 COPY precisionai/magnidata/__init__.py ./precisionai/magnidata/__init__.py
 COPY precisionai/magnidata/tools ./precisionai/magnidata/tools
 COPY precisionai/magnidata/scripts ./precisionai/magnidata/scripts
+# Torch- and mlflow-free: the shared training contract is imported by embeddings_io.
+COPY precisionai/magnidata/training ./precisionai/magnidata/training
 
 COPY precisionai/magnidata/api/app.py precisionai/magnidata/api/db.py \
      precisionai/magnidata/api/local_files.py precisionai/magnidata/api/dataset_builder.py \

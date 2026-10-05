@@ -1,5 +1,5 @@
 # Applies to the repo-root build context (currently just the `api` service —
-# see docker-compose.yml). Keeps the context upload small; none of this is ever
+# see docker-compose.yml) and the trainer image. Keeps the context upload small; none of this is ever
 # COPYed by Dockerfile.api anyway.
 .git
 **/__pycache__
@@ -9,3 +9,10 @@
 precisionai/magnidata/dashboard/node_modules
 precisionai/magnidata/dashboard/dist
 precisionai/magnidata/api/.venv
+
+# Datasets are bind-mounted at run time, never baked into an image.
+data
+image_sets
+tasks
+precisionai/magnidata/data_user
+precisionai/magnidata/dashboard

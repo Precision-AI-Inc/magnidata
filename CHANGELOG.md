@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `trainer` service in `docker-compose.yml` (`Dockerfile.trainer`, CPU torch by default, optional CUDA build
+  arg): a worker that claims `SCHEDULED` runs launched from the dashboard, trains them in a subprocess and
+  fails runs a crashed worker left behind. `docker compose up --build` now starts the portal, API, MLflow
+  and the trainer.
 - Launch and cancel training through the API: `GET /api/training/presets` (presets, bounds, trainer
   and MLflow availability), `POST /api/training/runs` (validated request becomes a `SCHEDULED` MLflow
   run that a trainer worker claims; one UI-launched run at a time) and `POST /api/runs/<id>/cancel`.

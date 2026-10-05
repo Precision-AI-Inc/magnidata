@@ -1,0 +1,16 @@
+# Trainer worker: claims SCHEDULED MagniData runs from MLflow and trains them.
+# CPU torch by default. For a CUDA build, pass a wheel index, e.g.
+#   docker compose build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128 trainer
+FROM python:3.12-slim
+
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir torch==2.14.0 torchvision==0.29.0 --index-url ${TORCH_INDEX_URL}
+
+COPY pyproject.toml README.md LICENSE.md ./
+COPY precisionai ./precisionai
+RUN SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --no-cache-dir ".[training]"
+
+CMD ["python", "-m", "precisionai.magnidata.training.worker", "--data-root", "/app"]

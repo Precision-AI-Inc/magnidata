@@ -1,4 +1,4 @@
-# Self-contained MagniData dev stack — API (Flask) + portal (React/nginx) + MLflow.
+# Self-contained MagniData dev stack — API (Flask) + portal (React/nginx) + MLflow + trainer worker.
 # Run from the repo root:   docker compose up --build
 #   portal -> http://localhost:5175   api -> http://localhost:5051
 #   MLflow UI -> http://localhost:5052
@@ -75,6 +75,33 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  # Runs the training jobs the dashboard schedules in MLflow. One worker only: MLflow has no
+  # compare-and-set, so two workers could claim the same run. CPU by default; to use a GPU,
+  # build with a CUDA wheel index (see Dockerfile.trainer) and uncomment the deploy block.
+  trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile.trainer
+    hostname: trainer   # stable, so a restarted worker can recognise runs its predecessor left behind
+    restart: unless-stopped
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      DATA_ROOT: /app
+    volumes:
+      - ./data:/app/data:ro
+      - ./image_sets:/app/image_sets:ro
+      - ./precisionai/magnidata/data_user:/app/data_user
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   web:
     build:

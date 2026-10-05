@@ -211,6 +211,11 @@ ignore = [
 # as the S310 case above.
 "precisionai/magnidata/scripts/prepare_coco128_dashboard.py" = ["PLC0415", "S603"]
 
+# worker.py: S603 is the trainer subprocess in run_one(). Its argv is built in
+# trainer_argv() from sys.executable and a run id read from MLflow; nothing from an HTTP
+# request reaches it, and ruff cannot see that (same limitation as above).
+"precisionai/magnidata/training/worker.py" = ["S603"]
+
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 

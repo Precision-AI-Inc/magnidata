@@ -250,3 +250,75 @@ def test_mlflow_down_returns_503(client):
         resp = client.get(url)
         assert resp.status_code == 503
         assert resp.get_json()["mlflow_unavailable"] is True
+
+
+@pytest.fixture
+def scored_run(mlflow_store, client, tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "root"))
+    (tmp_path / "root" / "data_user").mkdir(parents=True)
+    artifacts = {}
+    for epoch, losses in ((1, (0.9, 0.2)), (2, (0.7, 0.3)), (3, (0.5, 0.4))):
+        rows = "".join(f"{n},{s},{v}\n" for n, s, v in zip(("a.png", "b.png"), ("train", "val"), losses, strict=True))
+        artifacts[contract.per_sample_path(epoch)] = "image_name,split,loss_total\n" + rows
+    artifacts[contract.SPLIT_ARTIFACT] = "image_name,split\na.png,train\nb.png,val\n"
+    tags = {contract.TAG_PER_SAMPLE_SCHEMA: contract.SCHEMA_VERSION, contract.TAG_SCORED_EPOCHS: "1,2,3"}
+    return seed_run(mlflow_store, tags=tags, artifacts=artifacts)
+
+
+def test_columns_returns_derived_csv(client, scored_run):
+    resp = client.get(f"/api/runs/{scored_run}/columns")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/csv"
+    assert resp.headers["Cache-Control"] == "no-store"
+    lines = resp.get_data(as_text=True).splitlines()
+    header = lines[0].split(",")
+    assert header[0] == "image_name"
+    assert {"loss_total_rank", "hardness", "loss_total_mean", "loss_total_slope"} <= set(header)
+    row = dict(zip(header, lines[1].split(","), strict=True))
+    assert row["image_name"] == "a.png"
+    assert float(row["loss_total"]) == pytest.approx(0.5)
+    assert float(row["loss_total_delta"]) == pytest.approx(0.4)
+
+    early = client.get(f"/api/runs/{scored_run}/columns?epoch=1").get_data(as_text=True).splitlines()
+    assert float(dict(zip(header, early[1].split(","), strict=True))["loss_total"]) == pytest.approx(0.9)
+
+
+def test_columns_validation(client, scored_run, mlflow_store):
+    assert client.get(f"/api/runs/{scored_run}/columns?epoch=9").status_code == 400
+    assert client.get(f"/api/runs/{scored_run}/columns?epoch=abc").status_code == 400
+    plain = seed_run(mlflow_store)
+    resp = client.get(f"/api/runs/{plain}/columns")
+    assert resp.status_code == 409
+    assert "per-sample" in resp.get_json()["error"]
+    assert client.get(f"/api/runs/{'0' * 32}/columns").status_code == 404
+
+
+def test_columns_are_cached_per_latest_epoch(client, scored_run, mlflow_store):
+    experiments.AXES_CACHE.clear()
+    client.get(f"/api/runs/{scored_run}/columns")
+    assert (scored_run, 3, 3) in experiments.AXES_CACHE
+    mlflow_store._client.log_text(
+        scored_run, "image_name,split,loss_total\na.png,train,0.1\nb.png,val,0.4\n", contract.per_sample_path(4)
+    )
+    mlflow_store.set_tag(scored_run, contract.TAG_SCORED_EPOCHS, "1,2,3,4")
+    latest = client.get(f"/api/runs/{scored_run}/columns").get_data(as_text=True).splitlines()
+    assert latest[1].split(",")[2] == "0.1"
+    assert (scored_run, 4, 4) in experiments.AXES_CACHE
+
+
+def test_match_counts_overlap(client, scored_run, tmp_path):
+    (tmp_path / "root" / "data_user" / "ds.csv").write_text(
+        "image_path,width\ndata_user/ds/images/a.png,1\ndata_user/ds/images/z.png,1\ndata_user/ds/images/y.png,1\n"
+    )
+    body = client.get(f"/api/runs/{scored_run}/match?dataset=data_user/ds.csv").get_json()
+    assert (body["matched"], body["run_only"], body["dataset_only"]) == (1, 1, 2)
+    assert body["run_only_examples"] == ["b.png"]
+    assert body["dataset_only_examples"] == ["y.png", "z.png"]
+
+
+def test_match_errors(client, scored_run, mlflow_store):
+    assert client.get(f"/api/runs/{scored_run}/match").status_code == 400
+    assert client.get(f"/api/runs/{scored_run}/match?dataset=data_user/missing.csv").status_code == 404
+    assert client.get(f"/api/runs/{scored_run}/match?dataset=../x.csv").status_code == 404
+    plain = seed_run(mlflow_store)
+    assert client.get(f"/api/runs/{plain}/match?dataset=data_user/ds.csv").status_code == 409

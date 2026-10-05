@@ -12,7 +12,7 @@ named. It deliberately imports neither torch nor mlflow.
 
 import os
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from enum import Enum
 
 SCHEMA_VERSION = "magnidata-training/1.0.0"
@@ -135,6 +135,12 @@ def validate_header(header: Sequence[str], terms: Iterable[str]) -> None:
     missing += [loss_column(t) for t in terms if loss_column(t) not in present]
     if missing:
         raise ValueError(f"per-sample header is missing columns: {', '.join(missing)}")
+
+
+def parse_scored_epochs(tags: Mapping[str, str]) -> list[int]:
+    """Return the sorted epochs listed in a run's ``magnidata.scored_epochs`` tag."""
+    raw = tags.get(TAG_SCORED_EPOCHS, "")
+    return sorted({int(e) for e in raw.split(",") if e.strip().isdigit()})
 
 
 def image_key(value: str) -> str:

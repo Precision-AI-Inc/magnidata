@@ -93,3 +93,10 @@ def test_import_does_not_pull_in_torch_or_mlflow():
         "assert 'torch' not in sys.modules and 'mlflow' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_parse_scored_epochs():
+    assert contract.parse_scored_epochs({contract.TAG_SCORED_EPOCHS: "3,1,2,2"}) == [1, 2, 3]
+    assert contract.parse_scored_epochs({contract.TAG_SCORED_EPOCHS: ""}) == []
+    assert contract.parse_scored_epochs({}) == []
+    assert contract.parse_scored_epochs({contract.TAG_SCORED_EPOCHS: "1,x, 4"}) == [1, 4]

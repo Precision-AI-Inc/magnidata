@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `GET /api/runs/<id>/columns` serves per-sample loss axes derived from a run's MLflow artifacts: the
+  loss at an epoch plus its mean, improvement, trend and within-split rank over the scored epochs, and a
+  `hardness` score for samples that stay in the worst fifth. `GET /api/runs/<id>/match` reports how
+  many of a run's images exist in a dataset. Downloaded artifacts are cached under
+  `data_user/.mlflow_cache` (bounded by `MLFLOW_CACHE_MAX_MB`, default 2048).
 - API endpoints to browse MLflow: `GET /api/experiments`, `GET /api/runs` (filter by experiment, dataset,
   status or an allow-listed MLflow filter), run detail, metric histories (downsampled), multi-run metrics
   for comparison, artifact listing and download, and `POST /api/runs/<id>/link` to attach an external run

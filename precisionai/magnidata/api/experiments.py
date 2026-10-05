@@ -6,6 +6,7 @@
 The browser never talks to MLflow directly; every handler goes through `mlflow_store`.
 """
 
+import csv
 import mimetypes
 import os
 import re
@@ -15,13 +16,16 @@ import time
 from pathlib import Path
 from typing import Any
 
+import artifact_cache
 import mlflow_store
+import run_axes
 from flask import Blueprint, Response, jsonify, request
 from flask.typing import ResponseReturnValue
 from mlflow_store import MlflowNotFoundError, MlflowUnavailableError
-from werkzeug.exceptions import BadRequest
+from werkzeug.exceptions import BadRequest, Conflict
 
 from precisionai.magnidata.training import contract
+from precisionai.magnidata.training.dataset_check import resolve_under
 
 bp = Blueprint("experiments", __name__)
 
@@ -80,6 +84,11 @@ def _unavailable(err: MlflowUnavailableError) -> ResponseReturnValue:
 @bp.errorhandler(MlflowNotFoundError)
 def _not_found(err: MlflowNotFoundError) -> ResponseReturnValue:
     return jsonify({"error": str(err)}), 404
+
+
+@bp.errorhandler(Conflict)
+def _conflict(err: Conflict) -> ResponseReturnValue:
+    return jsonify({"error": err.description}), 409
 
 
 @bp.errorhandler(BadRequest)
@@ -179,12 +188,6 @@ def run_summary(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def parse_scored_epochs(tags: dict[str, str]) -> list[int]:
-    """Return the epochs listed in a run's ``magnidata.scored_epochs`` tag."""
-    raw = tags.get(contract.TAG_SCORED_EPOCHS, "")
-    return sorted(int(e) for e in raw.split(",") if e.strip().isdigit())
-
-
 @bp.get("/api/experiments")
 def list_experiments() -> ResponseReturnValue:
     """List active experiments, optionally filtered by name."""
@@ -221,7 +224,7 @@ def get_run(run_id: str) -> ResponseReturnValue:
             **run_summary(run),
             "tags": run["tags"],
             "metric_keys": sorted(run["metrics"]),
-            "scored_epochs": parse_scored_epochs(run["tags"]),
+            "scored_epochs": contract.parse_scored_epochs(run["tags"]),
             "artifact_uri": run["artifact_uri"],
             "artifacts": store.list_artifacts(run_id),
         }
@@ -330,3 +333,78 @@ def link_run(run_id: str) -> ResponseReturnValue:
     store.set_tag(run_id, contract.TAG_DATASET_NAME, Path(source).stem)
     clear_cache()
     return jsonify(run_summary(store.get_run(run_id)))
+
+
+AXES_CACHE = run_axes.RunAxesCache()
+
+
+def _per_sample_run(run_id: str) -> dict[str, Any]:
+    """Return the run, or raise 409 if it has no per-sample artifacts."""
+    run = mlflow_store.get_store().get_run(_run_id(run_id))
+    if contract.TAG_PER_SAMPLE_SCHEMA not in run["tags"] or not contract.parse_scored_epochs(run["tags"]):
+        raise Conflict("run has no per-sample artifacts")
+    return run
+
+
+@bp.get("/api/runs/<run_id>/columns")
+def run_columns(run_id: str) -> ResponseReturnValue:
+    """Return the derived per-sample axes at an epoch as CSV (``image_name`` first)."""
+    run = _per_sample_run(run_id)
+    scored = contract.parse_scored_epochs(run["tags"])
+    raw = request.args.get("epoch", "latest")
+    if raw != "latest" and not raw.isdigit():
+        raise _bad("epoch must be 'latest' or a number")
+    selected = scored[-1] if raw == "latest" else int(raw)
+    if selected not in scored:
+        raise _bad(f"epoch {selected} has no per-sample file (scored: {', '.join(map(str, scored))})")
+
+    def compute() -> run_axes.DerivedAxes:
+        files = artifact_cache.sync_per_sample(mlflow_store.get_store(), run_id, with_split=False)
+        return run_axes.derive_axes(files, selected)
+
+    axes = AXES_CACHE.get_or_compute((run_id, selected, scored[-1]), compute)
+    return Response(
+        axes.to_csv(),
+        mimetype="text/csv",
+        headers={"Cache-Control": "no-store", "X-Magnidata-Epoch": str(axes.epoch)},
+    )
+
+
+def _dataset_names(source: str) -> set[str]:
+    path = resolve_under(os.environ.get("DATA_ROOT", "."), source)
+    if path is None or not path.is_file():
+        raise MlflowNotFoundError(f"dataset not found: {source}")
+    with open(path, newline="") as fh:
+        reader = csv.DictReader(fh)
+        column = contract.image_path_column(reader.fieldnames or [])
+        return {contract.image_key(row[column]) for row in reader} if column else set()
+
+
+def _run_names(run_id: str, scored: list[int]) -> set[str]:
+    files = artifact_cache.sync_per_sample(mlflow_store.get_store(), run_id, epochs=[scored[-1]])
+    split = artifact_cache.cached_split(run_id)
+    if split is None and not files:
+        raise Conflict("run has no per-sample artifacts")
+    path = split or files[0][1]
+    with open(path, newline="") as fh:
+        return {row["image_name"] for row in csv.DictReader(fh)}
+
+
+@bp.get("/api/runs/<run_id>/match")
+def run_match(run_id: str) -> ResponseReturnValue:
+    """Compare the run's image names with a dataset's, so linking can warn about mismatches."""
+    source = request.args.get("dataset", "")
+    if not source:
+        raise _bad("dataset is required")
+    run = _per_sample_run(run_id)
+    run_names = _run_names(run_id, contract.parse_scored_epochs(run["tags"]))
+    dataset_names = _dataset_names(source)
+    return jsonify(
+        {
+            "matched": len(run_names & dataset_names),
+            "run_only": len(run_names - dataset_names),
+            "dataset_only": len(dataset_names - run_names),
+            "run_only_examples": sorted(run_names - dataset_names)[:5],
+            "dataset_only_examples": sorted(dataset_names - run_names)[:5],
+        }
+    )

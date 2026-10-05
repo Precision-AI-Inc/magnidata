@@ -13,9 +13,12 @@ from precisionai.magnidata.training.contract import (
     prediction_path,
     validate_header,
 )
+from precisionai.magnidata.training.recorder import LocalDirSink, LossRecorder
 
 __all__ = [
     "SCHEMA_VERSION",
+    "LocalDirSink",
+    "LossRecorder",
     "RunStatus",
     "image_key",
     "image_path_column",

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `LossRecorder` and `python -m precisionai.magnidata.training.attach`: record per-sample loss terms
+  per epoch in the training-contract CSV format and log them to an MLflow run, including for runs
+  that already exist. Torch-free, so external trainers can use the same writer.
 - Local MLflow tracking server (`mlflow` service in `docker-compose.yml`, UI on :5052, data in the
   `magnidata-mlflow` volume) and an API adapter around it. `GET /api/mlflow/status` reports
   whether the server is reachable.

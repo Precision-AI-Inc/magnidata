@@ -55,3 +55,25 @@ image_name,split,loss_total,loss_dice,loss_cce,confidence,iou
 img_0001.png,train,0.412,0.301,0.111,0.93,0.81
 img_0002.png,val,0.870,0.640,0.230,0.71,0.44
 ```
+
+## Writing the files
+
+Use `LossRecorder` (`training/recorder.py`) so every trainer writes identical files. It
+needs only numpy; values may be numpy arrays, lists or detached torch tensors.
+
+```python
+sink = MlflowSink(run_id)                      # training/mlflow_sink.py
+rec = LossRecorder(["dice", "cce"], sink, scratch_dir)
+rec.write_split({"a.png": "train", "b.png": "val"})
+rec.begin_epoch(1)
+rec.add_batch(names, "train", {"total": total, "dice": dice, "cce": cce})
+rec.end_epoch()                                # logs magnidata/per_sample/epoch_0001.csv
+```
+
+For a run that already exists, attach files after the fact; a long-format file with an
+`epoch` column is split into one artifact per epoch, and nothing is logged unless the whole
+file validates:
+
+```bash
+python -m precisionai.magnidata.training.attach --run-id <id> --epoch 12 --file losses.csv --split split.csv
+```

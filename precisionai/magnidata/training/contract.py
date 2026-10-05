@@ -39,6 +39,8 @@ CHECKPOINT_ARTIFACT = "checkpoints/last.pt"
 LEARNING_RATE_METRIC = "Learning_rate/lr"
 MIOU_METRIC = "val_metric/miou"
 
+SEGMENTATION_LOSS_TERMS = ("dice", "cce", "bce")
+
 REQUIRED_COLUMNS = ("image_name", "split", "loss_total")
 SPLITS = ("train", "val", "test")
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, useMemo, useCallback, Fragment, type CSSProperties } from 'react'
 import type Plotly from 'plotly.js-dist-min'
 import { Play, ChevronUp, ChevronDown, ChevronsUpDown, Download, Columns, X, RotateCcw } from 'lucide-react'
 import type { CSVData, CSVRow } from '../types'
@@ -153,6 +153,13 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     setConstraints({})
     onConstraintsChange({})
   }, [data.fileName]) // eslint-disable-line
+
+  // A newly overlaid run: show its headline columns without the user having to dig through the picker.
+  const runColumnsKey = (data.runColumns ?? []).join(',')
+  useEffect(() => {
+    const headline = ['loss_total', 'hardness'].filter(c => data.numericCols.includes(c) && (data.runColumns ?? []).includes(c))
+    if (headline.length) setSelectedCols(prev => new Set([...prev, ...headline]))
+  }, [runColumnsKey]) // eslint-disable-line
 
   // 3D cluster selection (null = no selection; Set = row indices selected from 3D view)
   const [filter3D, setFilter3D] = useState<Set<number> | null>(null)
@@ -481,6 +488,10 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     ? data.numericCols.filter(c => c.toLowerCase().includes(fieldSearch.toLowerCase()))
     : data.numericCols
 
+  // Training-run columns (per-sample losses merged in) are listed first, under their own heading.
+  const trainingSet = useMemo(() => new Set(data.runColumns ?? []), [data.runColumns])
+  const orderedFieldCols = [...visibleFieldCols.filter(c => trainingSet.has(c)), ...visibleFieldCols.filter(c => !trainingSet.has(c))]
+
   const visibleCatCols = fieldSearch
     ? data.categoricalCols.filter(c => c.toLowerCase().includes(fieldSearch.toLowerCase()))
     : data.categoricalCols
@@ -639,10 +650,17 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
           {/* Numeric checkbox grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
                         gap: '3px 10px', maxHeight: 140, overflowY: 'auto' }}>
-            {visibleFieldCols.map(col => {
+            {orderedFieldCols.map((col, i) => {
               const checked = selectedCols.has(col)
+              const heading = trainingSet.size > 0 && (i === 0 || (trainingSet.has(orderedFieldCols[i - 1]) && !trainingSet.has(col)))
+                ? (trainingSet.has(col) ? 'Training' : 'Features') : null
               return (
-                <label key={col}
+                <Fragment key={col}>
+                {heading && (
+                  <div style={{ gridColumn: '1/-1', fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                                letterSpacing: '.5px', color: 'var(--c-t3)', marginTop: i === 0 ? 0 : 4 }}>{heading}</div>
+                )}
+                <label
                        style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
                                 padding: '3px 6px', borderRadius: 5,
                                 background: checked ? 'var(--c-hover)' : 'transparent' }}>
@@ -654,6 +672,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
                     {col}
                   </ColTooltip>
                 </label>
+                </Fragment>
               )
             })}
             {visibleFieldCols.length === 0 && (

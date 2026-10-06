@@ -210,6 +210,14 @@ export interface RunDetailData extends RunSummary {
   artifacts: ArtifactEntry[]
 }
 
+export interface RunMatch {
+  matched: number
+  run_only: number
+  dataset_only: number
+  run_only_examples: string[]
+  dataset_only_examples: string[]
+}
+
 export interface MetricHistory { step: number; value: number; timestamp: number }
 
 export interface ArtifactEntry { path: string; is_dir: boolean; file_size: number | null }
@@ -318,6 +326,16 @@ export const api = {
       `${BASE}/runs/${runId}/metrics?keys=${encodeURIComponent(keys.join(','))}`),
   getRunsMetrics: (runIds: string[], keys: string[]) =>
     mutate<{ runs: Record<string, Record<string, MetricHistory[]>> }>('POST', `${BASE}/runs/metrics`, { run_ids: runIds, keys }),
+  /** Derived per-sample columns of a run at an epoch, as CSV text (`image_name` first). */
+  getRunColumns: async (runId: string, epoch: number | 'latest' = 'latest') => {
+    const r = await fetch(`${BASE}/runs/${runId}/columns?epoch=${epoch}`)
+    if (!r.ok) throw new ApiError(`${r.status}: ${await r.text()}`, r.status)
+    return r.text()
+  },
+  getRunMatch: (runId: string, datasetSource: string) =>
+    get<RunMatch>(`${BASE}/runs/${runId}/match?dataset=${encodeURIComponent(datasetSource)}`),
+  linkRun: (runId: string, datasetSource: string) =>
+    mutate<RunSummary>('POST', `${BASE}/runs/${runId}/link`, { dataset_source: datasetSource }),
   listRunArtifacts: (runId: string, path = '') =>
     get<{ artifacts: ArtifactEntry[] }>(`${BASE}/runs/${runId}/artifacts${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   runArtifactUrl: (runId: string, path: string) =>

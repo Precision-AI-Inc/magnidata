@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, ExternalLink, File as FileIcon, Folder, X } from 'lucide-react'
 import { api } from '../../api'
-import type { ArtifactEntry, MetricHistory, RunDetailData } from '../../api'
+import type { ArtifactEntry, MetricHistory, RunDetailData, RunMatch } from '../../api'
 import { BRAND_CATEGORICAL } from '../../data/vizColors'
 import { formatDuration } from '../../lib/experiments'
 import { ema, groupMetricKeys, pairTrainVal, toRelativeTime } from '../../lib/metrics'
@@ -12,8 +12,11 @@ import { StatusBadge } from './ExperimentsTab'
 interface Props {
   runId: string
   /** Dataset sources the API knows, to decide whether "Load dataset" is offered. */
+  /** Dataset open in the app, if any: the target of "Link to current dataset". */
+  currentDataset: string | null
   knownDatasets: string[]
   onLoadDataset: (source: string) => void
+  onOverlay: (runId: string, source: string) => void
   onClose: () => void
 }
 
@@ -28,7 +31,7 @@ const VAL_COLOR = '#E08A1E'     // amber: stays distinguishable from the teal tr
 
 type XAxis = 'step' | 'time'
 
-export function RunDetail({ runId, knownDatasets, onLoadDataset, onClose }: Props) {
+export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset, onOverlay, onClose }: Props) {
   const [run, setRun] = useState<RunDetailData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [histories, setHistories] = useState<Record<string, MetricHistory[]>>({})
@@ -37,6 +40,8 @@ export function RunDetail({ runId, knownDatasets, onLoadDataset, onClose }: Prop
   const [logY, setLogY] = useState(false)
   const [hidden, setHidden] = useState<Set<string>>(new Set())
   const [paramFilter, setParamFilter] = useState('')
+  const [linkReport, setLinkReport] = useState<RunMatch | null>(null)
+  const [linkError, setLinkError] = useState<string | null>(null)
 
   const keys = run?.metric_keys ?? []
   const groups = useMemo(() => groupMetricKeys(keys), [keys])
@@ -56,7 +61,7 @@ export function RunDetail({ runId, knownDatasets, onLoadDataset, onClose }: Prop
     } catch { /* the run request surfaces connection errors */ }
   }, [runId, visibleKeys])
 
-  useEffect(() => { setRun(null); setHistories({}); void loadRun() }, [loadRun])
+  useEffect(() => { setRun(null); setHistories({}); setLinkReport(null); setLinkError(null); void loadRun() }, [loadRun])
   useEffect(() => { void loadMetrics() }, [loadMetrics])
   useEffect(() => {
     if (!status || !LIVE.has(status)) return
@@ -78,6 +83,15 @@ export function RunDetail({ runId, knownDatasets, onLoadDataset, onClose }: Prop
   if (!run) return <Panel onClose={onClose}><p className="text-xs p-4" style={{ color: 'var(--c-t3)' }}>Loading run…</p></Panel>
 
   const source = run.magnidata['magnidata.dataset_source']
+  const showReport = async () => {
+    if (!currentDataset) return
+    setLinkError(null)
+    try { setLinkReport(await api.getRunMatch(runId, currentDataset)) } catch (e) { setLinkError(e instanceof Error ? e.message : String(e)) }
+  }
+  const confirmLink = async () => {
+    if (!currentDataset) return
+    try { await api.linkRun(runId, currentDataset); setLinkReport(null); await loadRun() } catch (e) { setLinkError(e instanceof Error ? e.message : String(e)) }
+  }
   const copy = () => { try { void navigator.clipboard.writeText(run.run_id) } catch { /* clipboard unavailable */ } }
   const pairs = pairTrainVal(visibleKeys)
   const tags = Object.entries(run.tags)
@@ -112,6 +126,24 @@ export function RunDetail({ runId, knownDatasets, onLoadDataset, onClose }: Prop
               </span>
             )}
           </div>
+          {!source && run.has_per_sample && currentDataset && (
+            <div className="mt-2 text-xs" style={{ color: 'var(--c-t2)' }}>
+              {!linkReport ? (
+                <button className="underline" style={{ color: 'var(--c-accent)' }} onClick={() => void showReport()}>Link to current dataset</button>
+              ) : (
+                <div className="p-2 rounded-lg" style={{ background: 'var(--c-raised)', border: '1px solid var(--c-border)' }}>
+                  {linkReport.matched.toLocaleString()} images match <span className="font-mono">{currentDataset}</span>;
+                  {' '}{linkReport.run_only.toLocaleString()} only in the run, {linkReport.dataset_only.toLocaleString()} only in the dataset.
+                  <button className="btn-primary ml-3" style={{ fontSize: 11, padding: '2px 10px' }} onClick={() => void confirmLink()}>Link</button>
+                  <button className="ml-2 underline" onClick={() => setLinkReport(null)}>Cancel</button>
+                </div>
+              )}
+              {linkError && <span role="alert" style={{ color: 'var(--color-danger)' }}> {linkError}</span>}
+            </div>
+          )}
+          {source && run.has_per_sample && knownDatasets.includes(source) && (
+            <button className="mt-2 btn-primary" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => onOverlay(runId, source)}>Overlay on dataset</button>
+          )}
           {run.tags['magnidata.error'] && (
             <div role="alert" className="mt-2 flex items-start gap-2 p-2 rounded-lg text-xs font-semibold"
                  style={{ background: 'var(--color-danger-bg)', color: 'var(--color-danger)', border: '1px solid var(--color-danger)' }}>

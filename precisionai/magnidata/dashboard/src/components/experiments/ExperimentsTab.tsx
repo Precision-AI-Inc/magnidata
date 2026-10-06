@@ -18,6 +18,7 @@ interface Props {
   onCloseRun: () => void
   knownDatasets: string[]
   onLoadDataset: (source: string) => void
+  onOverlayRun: (runId: string, source: string) => void
 }
 
 const STATUSES: RunStatus[] = ['SCHEDULED', 'RUNNING', 'FINISHED', 'FAILED', 'KILLED']
@@ -40,7 +41,7 @@ export function StatusBadge({ status }: { status: string }) {
   )
 }
 
-export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset }: Props) {
+export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset, onOverlayRun }: Props) {
   const x = useExperiments(datasetSource)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [checked, setChecked] = useState<string[]>([])
@@ -209,6 +210,12 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
                   {x.columns.metrics.map(k => <Td key={`m${k}`} mono right>{formatMetric(run.metrics[k])}</Td>)}
                   {x.columns.params.map(k => <Td key={`p${k}`} mono right>{run.params[k] ?? '—'}</Td>)}
                   <Td>
+                    {run.has_per_sample && run.magnidata['magnidata.dataset_source'] && knownDatasets.includes(run.magnidata['magnidata.dataset_source']) && (
+                      <button className="text-[11px] underline mr-3" style={{ color: 'var(--c-accent)', background: 'none', border: 'none', cursor: 'pointer' }}
+                              onClick={e => { e.stopPropagation(); onOverlayRun(run.run_id, run.magnidata['magnidata.dataset_source']) }}>
+                        Overlay on dataset
+                      </button>
+                    )}
                     {run.mlflow_ui_url && (
                       <a href={run.mlflow_ui_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
                          className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--c-accent)' }}>
@@ -240,7 +247,8 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
       </section>
       )}
       {comparing.length < 2 && selectedRunId && (
-        <RunDetail runId={selectedRunId} knownDatasets={knownDatasets} onLoadDataset={onLoadDataset} onClose={onCloseRun} />
+        <RunDetail runId={selectedRunId} currentDataset={datasetSource} knownDatasets={knownDatasets} onLoadDataset={onLoadDataset}
+                   onOverlay={onOverlayRun} onClose={onCloseRun} />
       )}
     </div>
   )

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Overlay a training run on a dataset: pick a run in the new **Run** dropdown (or "Overlay on dataset" in the
+  Experiments tab) and its per-sample losses, ranks, trends and `hardness` become regular columns in the
+  parallel coordinates, 3D colour-by, charts, table and Schema tab, grouped under "Training". A run that was
+  not launched from MagniData can be linked to the open dataset after checking how many images match.
 - Compare 2–10 runs in the Experiments tab: overlaid metric curves, a final/best summary with the better
   run highlighted, and a params table that shows only the settings that differ. The comparison is kept in
   the URL, so a reload restores it.

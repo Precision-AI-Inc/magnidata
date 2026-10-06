@@ -6,6 +6,8 @@ import { useCSV } from './hooks/useCSV'
 import { useFilters } from './hooks/useFilters'
 import { usePartitions } from './hooks/usePartitions'
 import { useBuildJob } from './hooks/useBuildJob'
+import { useRunOverlay } from './hooks/useRunOverlay'
+import { RunOverlayPicker } from './components/RunOverlayPicker'
 import type { CSVRow, TabId } from './types'
 
 import { Header }         from './components/Header'
@@ -43,6 +45,7 @@ export default function App() {
   const [landingView, setLandingView] = useState<LandingView>('landing')
   const [showByod, setShowByod] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [pendingOverlay, setPendingOverlay] = useState<{ runId: string; source: string } | null>(null)
   // A reloaded `#compare=…` link goes straight to the experiments view.
   useEffect(() => { if (window.location.hash.startsWith('#compare=')) setLandingView('experiments') }, [])
 
@@ -72,7 +75,7 @@ export default function App() {
     [datasetSource, datasetMeta],
   )
 
-  const { data, loading, error, load, setClusterColumn, clear } = useCSV()
+  const { data, loading, error, load, setClusterColumn, clear, replaceData } = useCSV()
   const {
     filters, filteredRows,
     setRange, setCategory, setSearch, setPCConstraints,
@@ -236,6 +239,26 @@ export default function App() {
     }
   }
 
+  const runOverlay = useRunOverlay(data, datasetSource, replaceData)
+
+  // "Overlay on dataset" from the runs table: load the run's dataset first if it is not the open one.
+  const overlayRun = (runId: string, source: string) => {
+    if (data && datasetSource === source) {
+      void runOverlay.select(runId)
+      setTab('visual-explorer')
+    } else {
+      setPendingOverlay({ runId, source })
+      void loadDatasetBySource(source)
+    }
+  }
+  useEffect(() => {
+    if (pendingOverlay && data && datasetSource === pendingOverlay.source) {
+      void runOverlay.select(pendingOverlay.runId)
+      setPendingOverlay(null)
+      setTab('visual-explorer')
+    }
+  }, [pendingOverlay, data, datasetSource]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Experiments are global (MLflow), so they open without a dataset too.
   const goToExperiments = () => {
     clear()
@@ -334,7 +357,7 @@ export default function App() {
         {!data && !loading && !error && tab !== 'schema' && landingView === 'experiments' && (
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
             <ExperimentsTab datasetSource={null} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)}
-              onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} />
+              onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun} />
           </div>
         )}
 
@@ -377,6 +400,12 @@ export default function App() {
               ))}
               <div style={{ flex: 1 }} />
 
+              {data && datasetSource && (
+                <RunOverlayPicker runs={runOverlay.runs} overlay={runOverlay.overlay} match={runOverlay.match}
+                                  loading={runOverlay.loading} error={runOverlay.error}
+                                  onSelect={id => void runOverlay.select(id)} onClear={runOverlay.clear} />
+              )}
+
               {/* Visual-explorer plot controls — moved up here from the explorer panel.
                   Vertical split, then Color by / Sort / Fields on the right. */}
               {data && tab === 'visual-explorer' && visibleData && (
@@ -386,7 +415,12 @@ export default function App() {
                   <select value={colorBy} onChange={e => setColorBy(e.target.value)}
                           style={{ fontSize: 11, borderRadius: 7, padding: '3px 8px', outline: 'none',
                                    background: 'var(--c-surface)', border: '1px solid var(--c-border)', color: 'var(--c-t1)' }}>
-                    {[...visibleData.categoricalCols, ...visibleData.numericCols].map(c => <option key={c} value={c}>{c}</option>)}
+                    {[...visibleData.categoricalCols, ...visibleData.numericCols].filter(c => !visibleData.runColumns?.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
+                    {!!visibleData.runColumns?.length && (
+                      <optgroup label="Training">
+                        {[...visibleData.categoricalCols, ...visibleData.numericCols].filter(c => visibleData.runColumns!.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
+                      </optgroup>
+                    )}
                   </select>
                   <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--c-t3)' }}>Sort</span>
                   <select value={sortMode}
@@ -580,7 +614,7 @@ export default function App() {
                 {data && tab === 'experiments' && (
                   <ExperimentsTab datasetSource={datasetSource} selectedRunId={selectedRunId}
                                   onSelectRun={r => setSelectedRunId(r.run_id)} onCloseRun={() => setSelectedRunId(null)}
-                                  knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} />
+                                  knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun} />
                 )}
                 {data && tab === 'schema' && (
                   <Schema data={data} hiddenCols={hiddenCols} onToggleCol={toggleCol} />

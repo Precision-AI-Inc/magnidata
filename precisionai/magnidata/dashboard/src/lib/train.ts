@@ -21,6 +21,9 @@ export interface TrainParams {
   loss_weights: Record<string, number>
   top_k_predictions: number
   pretrained: boolean
+  amp: boolean
+  /** Data-loader processes; unset lets the trainer choose from its CPU count. */
+  num_workers?: number
 }
 
 export type FieldErrors = Partial<Record<keyof TrainParams, string>>
@@ -46,6 +49,12 @@ export function validateParams(params: TrainParams, bounds: Record<string, Bound
     const [lo, hi] = range(bound, params)
     if (value < lo || value > hi) errors[field] = `must be between ${lo} and ${hi}`
     else if (bound.multiple_of && value % bound.multiple_of) errors[field] = `must be a multiple of ${bound.multiple_of}`
+  }
+  const workers = bounds.num_workers
+  if (params.num_workers !== undefined && workers) {
+    const n = params.num_workers
+    if (!Number.isInteger(n)) errors.num_workers = 'must be a whole number'
+    else if (n < (workers.min ?? 0) || n > Number(workers.max ?? 16)) errors.num_workers = `must be between ${workers.min ?? 0} and ${workers.max ?? 16}`
   }
   const split = bounds.split_mode
   if (split?.choices && !split.choices.includes(params.split_mode)) errors.split_mode = `must be one of ${split.choices.join(', ')}`
@@ -103,6 +112,8 @@ export function paramsFromRun(params: Record<string, string>): Partial<TrainPara
   }
   if (params.split_mode) out.split_mode = params.split_mode
   if (params.pretrained) out.pretrained = params.pretrained === 'true'
+  if (params.amp) out.amp = params.amp === 'true'
+  if (params.num_workers !== undefined && Number.isInteger(Number(params.num_workers))) out.num_workers = Number(params.num_workers)
   if (params.loss_terms) {
     out.loss_terms = params.loss_terms.split(',').filter(Boolean)
     out.loss_weights = Object.fromEntries(

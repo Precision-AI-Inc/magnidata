@@ -134,6 +134,10 @@ def test_experiment_prefix_is_configurable(client, mlflow_store, monkeypatch):
         ({"loss_weights": {"bce": 1}}, "params.loss_weights.bce"),
         ({"top_k_predictions": 201}, "params.top_k_predictions"),
         ({"pretrained": "yes"}, "params.pretrained"),
+        ({"amp": "yes"}, "params.amp"),
+        ({"num_workers": -1}, "params.num_workers"),
+        ({"num_workers": 17}, "params.num_workers"),
+        ({"num_workers": 2.5}, "params.num_workers"),
         ({"command": "rm -rf /"}, "params: unknown parameter"),
     ],
 )
@@ -219,6 +223,17 @@ def test_validate_launch_defaults_are_complete():
     assert spec.params["epochs"] == "20"
     assert spec.params["split_mode"] == "random"
     assert spec.loss_terms == ["dice", "cce"]
+
+
+def test_amp_and_loader_workers_are_launch_params():
+    spec = training_presets.validate_launch({"dataset_source": "a/b.csv", "preset": "tiny_unet"})
+    assert spec.params["amp"] == "true"
+    assert "num_workers" not in spec.params
+    tuned = training_presets.validate_launch(
+        {"dataset_source": "a/b.csv", "preset": "tiny_unet", "params": {"amp": False, "num_workers": 4}}
+    )
+    assert tuned.params["amp"] == "false"
+    assert tuned.params["num_workers"] == "4"
 
 
 def test_custom_backend_can_be_injected(client):

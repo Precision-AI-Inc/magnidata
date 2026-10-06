@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Faster training input: images and masks are decoded once, resized to the training size and cached under
+  `data_user/.train_cache/` (bounded by `TRAIN_CACHE_MAX_MB`, default 4096, least recently used evicted first); the
+  palette is built from that cache, loaders use parallel worker processes (`num_workers`, default one per spare core
+  up to 8, `shm_size: 1gb` for the trainer container), pinned memory and, on CUDA, mixed precision (`amp`, bfloat16
+  where supported; per-sample losses are still computed in float32). Both are launch parameters in the Train dialog.
+  On AgriStress-500 at 256 px on an RTX 5070 an epoch drops from ~31 min on CPU to ~2 s once the cache is warm.
 - GPU training: `docker-compose.gpu.yml` builds the trainer with CUDA torch and reserves the NVIDIA device; enable it
   with `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in the git-ignored `.env`. torch 2.14.0 is only
   published on the cu130 wheel index (cu128 stops at 2.11), so the override uses cu130 (driver CUDA 13+, RTX 50xx

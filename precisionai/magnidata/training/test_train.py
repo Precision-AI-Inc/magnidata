@@ -22,6 +22,7 @@ QUICK = {
     "lr": "0.01",
     "score_every": "1",
     "top_k_predictions": "3",
+    "num_workers": "0",
 }
 
 
@@ -101,6 +102,30 @@ def test_run_reports_device_and_progress(mlflow_tracking, synthetic_dataset, cap
     assert run.data.tags[contract.TAG_ETA_SECONDS] == "0"
     assert len(_history(client, run_id, contract.EPOCH_SECONDS_METRIC)) == 2
     assert all(v > 0 for v in _history(client, run_id, contract.SAMPLES_PER_SEC_METRIC))
+
+
+def test_run_with_loader_workers_matches_columns(mlflow_tracking, synthetic_dataset):
+    uri, client, run_id = _new_run(mlflow_tracking, {"num_workers": "2", "epochs": "1"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+    assert client.get_run(run_id).info.status == "FINISHED"
+    path = client.download_artifacts(run_id, contract.per_sample_path(1))
+    with open(path, newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert set(rows[0]) == {"image_name", "split", "loss_total", "loss_dice", "loss_cce", "confidence", "iou"}
+    assert (synthetic_dataset.root / "data_user" / ".train_cache").is_dir()
+
+
+def test_amp_is_off_on_cpu_and_params_logged(mlflow_tracking, synthetic_dataset):
+    assert train.make_amp(train.torch.device("cpu"), True) is None
+    uri, client, run_id = _new_run(mlflow_tracking, {"amp": "true"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+    assert client.get_run(run_id).data.params["amp"] == "true"
+
+
+@pytest.mark.skipif(not train.torch.cuda.is_available(), reason="needs CUDA")
+def test_amp_runs_on_cuda(mlflow_tracking, synthetic_dataset):
+    uri, _, run_id = _new_run(mlflow_tracking, {"amp": "true", "epochs": "1"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cuda") == 0
 
 
 @pytest.mark.skipif(train.torch.cuda.is_available(), reason="CUDA is available")

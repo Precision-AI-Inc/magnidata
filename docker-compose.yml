@@ -84,6 +84,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.trainer
+    shm_size: 1gb       # DataLoader workers pass batches through /dev/shm (Docker's default is 64 MB)
     hostname: trainer   # stable, so a restarted worker can recognise runs its predecessor left behind
     restart: unless-stopped
     depends_on:

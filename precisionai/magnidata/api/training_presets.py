@@ -31,6 +31,8 @@ BOUNDS: dict[str, dict[str, Any]] = {
     "loss_weights": {"type": "map", "min": 0.0, "max": 10.0},
     "top_k_predictions": {"type": "int", "min": 0, "max": 200},
     "pretrained": {"type": "bool"},
+    "amp": {"type": "bool"},
+    "num_workers": {"type": "int", "min": 0, "max": 16},
 }
 
 COMMON_DEFAULTS: dict[str, Any] = {
@@ -41,6 +43,7 @@ COMMON_DEFAULTS: dict[str, Any] = {
     "loss_terms": ["dice", "cce"],
     "loss_weights": {},
     "top_k_predictions": 50,
+    "amp": True,
 }
 
 PRESETS: dict[str, dict[str, Any]] = {
@@ -155,6 +158,11 @@ def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(p["pretrained"], bool):
         raise ValueError("params.pretrained: must be true or false")
     out["pretrained"] = p["pretrained"]
+    if not isinstance(p["amp"], bool):
+        raise ValueError("params.amp: must be true or false")
+    out["amp"] = p["amp"]
+    if "num_workers" in p:
+        out["num_workers"] = _integer("params.num_workers", p["num_workers"], 0, 16)
     return out
 
 

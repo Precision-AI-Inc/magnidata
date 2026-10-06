@@ -4,6 +4,7 @@
 """Tests for sample discovery, palette, splits and the segmentation dataset."""
 
 import csv
+import os
 import subprocess
 import sys
 
@@ -196,3 +197,86 @@ def test_collate_keeps_names(synthetic_dataset):
     assert batch["pixel_values"].shape == (2, 3, 16, 16)
     assert batch["labels"].shape == (2, 16, 16)
     assert batch["image_name"] == ds.names[:2]
+
+
+def _samples(ds):
+    return data.resolve_samples(ds.csv, ds.root)[0]
+
+
+def test_cache_hit_matches_uncached_decode(synthetic_dataset, tmp_path):
+    samples = _samples(synthetic_dataset)
+    cache = data.ResizedCache(tmp_path / "cache", (16, 16))
+    for sample in samples[:3]:
+        miss = cache.get(sample)
+        hit = cache.get(sample)
+        fresh_image, fresh_mask, _ = data._decode_pair(sample, (16, 16))
+        assert np.array_equal(miss[0], fresh_image)
+        assert np.array_equal(hit[1], fresh_mask)
+    assert len(list((tmp_path / "cache" / "16x16").glob("*.counts.npy"))) == 3
+
+
+def test_cached_dataset_equals_uncached(synthetic_dataset, tmp_path):
+    samples = _samples(synthetic_dataset)
+    palette = data.build_palette([s.mask_path for s in samples])
+    splits = {s.image_name: "train" for s in samples}
+    plain = data.SegmentationDataset(samples, palette, splits, None, 16)
+    cached = data.SegmentationDataset(samples, palette, splits, None, 16, cache=data.ResizedCache(tmp_path, (16, 16)))
+    for i in range(len(plain)):
+        assert torch.equal(plain[i]["pixel_values"], cached[i]["pixel_values"])
+        assert torch.equal(plain[i]["labels"], cached[i]["labels"])
+
+
+def test_changed_source_invalidates_entry(synthetic_dataset, tmp_path):
+    sample = _samples(synthetic_dataset)[0]
+    cache = data.ResizedCache(tmp_path, (16, 16))
+    before = cache.key(sample)
+    stat = sample.image_path.stat()
+    os.utime(sample.image_path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    assert cache.key(sample) != before
+
+
+def test_eviction_keeps_cache_under_bound_and_prefers_recent(synthetic_dataset, tmp_path):
+    samples = _samples(synthetic_dataset)
+    cache = data.ResizedCache(tmp_path, (16, 16), max_bytes=10**9)
+    data.warm_cache(cache, samples)
+    one_entry = cache.size_bytes() // len(samples)
+    for age, sample in enumerate(samples):
+        entry = cache.directory / f"{cache.key(sample)}.npy"
+        os.utime(entry, (1_000_000 + age, 1_000_000 + age))
+    cache.max_bytes = one_entry * 3
+    removed = cache.evict()
+    assert removed >= len(samples) - 4
+    assert cache.size_bytes() <= cache.max_bytes
+    newest = cache.directory / f"{cache.key(samples[-1])}.npy"
+    oldest = cache.directory / f"{cache.key(samples[0])}.npy"
+    assert newest.exists()
+    assert not oldest.exists()
+
+
+def test_cache_max_bytes_env(monkeypatch):
+    monkeypatch.setenv("TRAIN_CACHE_MAX_MB", "2")
+    assert data.cache_max_bytes() == 2 * 1024 * 1024
+    monkeypatch.setenv("TRAIN_CACHE_MAX_MB", "lots")
+    assert data.cache_max_bytes() == 4096 * 1024 * 1024
+
+
+def test_cached_mask_has_only_palette_colours(synthetic_dataset, tmp_path):
+    samples = _samples(synthetic_dataset)
+    palette = data.build_palette([s.mask_path for s in samples])
+    cache = data.ResizedCache(tmp_path, (12, 12))
+    allowed = {(0, 0, 0), *palette.colors}
+    for sample in samples:
+        _, mask = cache.get(sample)
+        assert {tuple(c) for c in mask.reshape(-1, 3).tolist()} <= allowed
+        labels = data.decode_mask(mask, palette)
+        assert set(np.unique(labels)) <= set(range(palette.num_classes))
+
+
+def test_warm_cache_parallel_reports_progress_and_palette_matches(synthetic_dataset, tmp_path):
+    samples = _samples(synthetic_dataset)
+    cache = data.ResizedCache(tmp_path, (16, 16))
+    lines: list[str] = []
+    data.warm_cache(cache, samples, workers=2, progress=lines.append)
+    assert lines[-1] == f"caching resized images {len(samples)}/{len(samples)}"
+    cached = data.build_palette_cached(cache, samples)
+    assert cached == data.build_palette([s.mask_path for s in samples])

@@ -18,7 +18,7 @@ const bounds: Record<string, Bound> = {
 
 const valid: TrainParams = {
   epochs: 10, score_every: 1, batch_size: 8, image_size: 128, lr: 0.001, val_fraction: 0.2, seed: 0,
-  split_mode: 'random', loss_terms: ['dice', 'cce'], loss_weights: {}, top_k_predictions: 50, pretrained: false,
+  split_mode: 'random', loss_terms: ['dice', 'cce'], loss_weights: {}, top_k_predictions: 50, pretrained: false, amp: true,
 }
 
 describe('validateParams', () => {
@@ -84,6 +84,19 @@ describe('progressLabel', () => {
   })
 })
 
+
+describe('loader and AMP parameters', () => {
+  const withWorkers = { ...bounds, num_workers: { type: 'int', min: 0, max: 16 } as Bound }
+  it('accepts an unset or in-range loader count and rejects others', () => {
+    expect(validateParams({ ...valid, num_workers: undefined }, withWorkers)).toEqual({})
+    expect(validateParams({ ...valid, num_workers: 4 }, withWorkers)).toEqual({})
+    expect(validateParams({ ...valid, num_workers: 17 }, withWorkers).num_workers).toMatch(/between 0 and 16/)
+    expect(validateParams({ ...valid, num_workers: 1.5 }, withWorkers).num_workers).toMatch(/whole/)
+  })
+  it('restores amp and num_workers from an earlier run', () => {
+    expect(paramsFromRun({ amp: 'false', num_workers: '3' })).toEqual({ amp: false, num_workers: 3 })
+  })
+})
 
 describe('paramsFromRun', () => {
   it('turns MLflow param strings back into typed settings', () => {

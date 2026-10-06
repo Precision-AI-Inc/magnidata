@@ -140,6 +140,19 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
             {(errors.loss_terms || errors.loss_weights) && <span role="alert" style={{ color: 'var(--color-danger)' }}>{errors.loss_terms ?? errors.loss_weights}</span>}
           </fieldset>
 
+          <div className="grid gap-x-3 gap-y-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Loader processes (blank = automatic)
+              <input type="number" min={presets.bounds.num_workers?.min} max={presets.bounds.num_workers?.max as number | undefined} step={1}
+                     value={params.num_workers ?? ''} aria-invalid={!!errors.num_workers}
+                     onChange={e => set('num_workers', e.target.value === '' ? undefined : Number(e.target.value))}
+                     className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={{ ...inputStyle, borderColor: errors.num_workers ? 'var(--color-danger)' : 'var(--c-border)' }} />
+              {errors.num_workers && <span role="alert" className="block mt-0.5" style={{ color: 'var(--color-danger)' }}>{errors.num_workers}</span>}
+            </label>
+            <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--c-t2)' }}>
+              <input type="checkbox" checked={params.amp ?? true} onChange={e => set('amp', e.target.checked)} /> Mixed precision (GPU only)
+            </label>
+          </div>
+
           <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--c-t2)' }}>
             <input type="checkbox" checked={params.pretrained} onChange={e => set('pretrained', e.target.checked)} /> Start from ImageNet-pretrained weights (where the preset has a backbone)
           </label>

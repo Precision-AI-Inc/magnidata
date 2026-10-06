@@ -17,6 +17,7 @@ losses seen while training are noisy (augmentation, dropout, weights changing mi
 """
 
 import argparse
+import contextlib
 import heapq
 import os
 import random
@@ -53,6 +54,11 @@ LR_LOG_EVERY = 10
 EXIT_FAILED = 1
 
 
+def default_num_workers() -> int:
+    """Return the data-loader process count: one per spare core, at most 8."""
+    return max(min(8, (os.cpu_count() or 2) - 1), 0)
+
+
 @dataclass
 class TrainConfig:
     """Hyper-parameters, resolved from run params with defaults."""
@@ -72,7 +78,8 @@ class TrainConfig:
     top_k_predictions: int = 50
     pretrained: bool = True
     checkpoint_every_score: bool = False
-    num_workers: int = 0
+    num_workers: int = field(default_factory=default_num_workers)
+    amp: bool = True
     split_mode: str = "random"
 
     def as_params(self) -> dict[str, str]:
@@ -90,6 +97,8 @@ class TrainConfig:
             "score_every": str(self.score_every),
             "top_k_predictions": str(self.top_k_predictions),
             "split_mode": self.split_mode,
+            "num_workers": str(self.num_workers),
+            "amp": str(self.amp).lower(),
             "pretrained": str(self.pretrained).lower(),
             "checkpoint_every_score": str(self.checkpoint_every_score).lower(),
             **{f"weight_{t}": str(w) for t, w in self.loss_weights.items()},
@@ -116,7 +125,7 @@ def config_from_run(params: Mapping[str, str], tags: Mapping[str, str]) -> Train
     for name in ("lr", "weight_decay", "val_fraction"):
         if name in params:
             setattr(cfg, name, float(params[name]))
-    for name in ("pretrained", "checkpoint_every_score"):
+    for name in ("pretrained", "checkpoint_every_score", "amp"):
         if name in params:
             setattr(cfg, name, _as_bool(params[name]))
     cfg.split_mode = params.get("split_mode", cfg.split_mode)
@@ -170,6 +179,32 @@ def _format_duration(seconds: float) -> str:
     return f"{minutes // 60}h{minutes % 60:02d}m"
 
 
+@dataclass
+class AmpMode:
+    """Mixed precision on CUDA: bfloat16 where the GPU supports it, otherwise float16 with loss scaling."""
+
+    device_type: str
+    dtype: torch.dtype
+    scaler: Any = None
+
+    def context(self) -> contextlib.AbstractContextManager:
+        """Return the autocast context for forward passes."""
+        return torch.autocast(self.device_type, dtype=self.dtype)
+
+
+def make_amp(device: torch.device, enabled: bool) -> AmpMode | None:
+    """Return the AMP settings for ``device``, or None when AMP is off or the device is not CUDA."""
+    if not enabled or device.type != "cuda":
+        return None
+    if torch.cuda.is_bf16_supported():
+        return AmpMode("cuda", torch.bfloat16)
+    return AmpMode("cuda", torch.float16, torch.amp.grad_scaler.GradScaler("cuda"))
+
+
+def _autocast(amp: AmpMode | None) -> contextlib.AbstractContextManager:
+    return amp.context() if amp else contextlib.nullcontext()
+
+
 class MetricBuffer:
     """Collects metrics and sends them to MLflow in one request."""
 
@@ -215,6 +250,7 @@ def train_epoch(
     cancel: Callable[[], bool],
     on_step: Callable[[float], None],
     label: str = "",
+    amp: AmpMode | None = None,
 ) -> EpochMeans:
     """Run one training epoch; stop early (``cancelled=True``) when ``cancel()`` is true.
 
@@ -229,11 +265,17 @@ def train_epoch(
     for index, batch in enumerate(loader, start=1):
         if cancel():
             return EpochMeans({}, cancelled=True)
-        logits = model(batch["pixel_values"].to(device))
-        out = criterion(logits, batch["labels"].to(device))
+        with _autocast(amp):
+            logits = model(batch["pixel_values"].to(device, non_blocking=True))
+        out = criterion(logits.float(), batch["labels"].to(device, non_blocking=True))
         optimizer.zero_grad(set_to_none=True)
-        out.total.backward()
-        optimizer.step()
+        if amp and amp.scaler:
+            amp.scaler.scale(out.total).backward()
+            amp.scaler.step(optimizer)
+            amp.scaler.update()
+        else:
+            out.total.backward()
+            optimizer.step()
         scheduler.step()
         seen += _accumulate(sums, out.per_sample)
         on_step(optimizer.param_groups[0]["lr"])
@@ -267,6 +309,7 @@ def evaluate(
     criterion: losses.SegmentationCriterion,
     device: torch.device,
     num_classes: int,
+    amp: AmpMode | None = None,
 ) -> tuple[dict[str, float], torch.Tensor]:
     """Return mean per-sample losses and the confusion matrix over a loader (eval mode)."""
     model.eval()
@@ -274,8 +317,10 @@ def evaluate(
     confusion = torch.zeros(num_classes, num_classes, dtype=torch.long)
     seen = 0
     for batch in loader:
-        labels = batch["labels"].to(device)
-        logits = model(batch["pixel_values"].to(device))
+        labels = batch["labels"].to(device, non_blocking=True)
+        with _autocast(amp):
+            logits = model(batch["pixel_values"].to(device, non_blocking=True))
+        logits = logits.float()
         seen += _accumulate(sums, criterion(logits, labels).per_sample)
         confusion += losses.confusion_counts(logits, labels, num_classes).cpu()
     return {k: v / max(seen, 1) for k, v in sums.items()}, confusion
@@ -298,6 +343,7 @@ def score_epoch(
     splits: Mapping[str, str],
     epoch: int,
     top_k: int,
+    amp: AmpMode | None = None,
 ) -> list[_Hard] | None:
     """Score every sample in eval mode, record per-sample losses, and return the hardest K.
 
@@ -312,8 +358,10 @@ def score_epoch(
     for batch in loader:
         if recorder.cancel_requested():
             return None
-        labels = batch["labels"].to(device)
-        logits = model(batch["pixel_values"].to(device))
+        labels = batch["labels"].to(device, non_blocking=True)
+        with _autocast(amp):
+            logits = model(batch["pixel_values"].to(device, non_blocking=True))
+        logits = logits.float()
         per_sample = criterion(logits, labels).per_sample
         names = batch["image_name"]
         n_samples += len(names)
@@ -382,8 +430,10 @@ class _Setup:
     n_val: int
 
 
-def prepare_data(cfg: TrainConfig, data_root: Path, recorder: LossRecorder) -> _Setup:
-    """Resolve samples, build palette and split, log them, and make the data loaders."""
+def prepare_data(
+    cfg: TrainConfig, data_root: Path, recorder: LossRecorder, device: torch.device | None = None
+) -> _Setup:
+    """Resolve samples, cache them resized, build palette and split, log them, and make the data loaders."""
     csv_path = data_root / cfg.dataset_source
     if not csv_path.is_file():
         raise FileNotFoundError(f"dataset CSV not found: {cfg.dataset_source}")
@@ -393,7 +443,13 @@ def prepare_data(cfg: TrainConfig, data_root: Path, recorder: LossRecorder) -> _
             f"no usable samples in {cfg.dataset_source}: {len(report.missing_mask)} without mask, "
             f"{len(report.missing_image)} without image"
         )
-    palette = data.build_palette([s.mask_path for s in samples])
+    size = cfg.image_size
+    cache = data.ResizedCache(data_root / "data_user" / data.CACHE_DIRNAME, (size, size))
+    log(f"caching {len(samples)} images at {size}x{size} with {max(cfg.num_workers, 1)} process(es)")
+    started = time.monotonic()
+    data.warm_cache(cache, samples, cfg.num_workers, log)
+    log(f"cache ready in {_format_duration(time.monotonic() - started)}")
+    palette = data.build_palette_cached(cache, samples)
     column = {s.image_name: s.csv_split for s in samples if s.csv_split} if cfg.split_mode == "column" else {}
     if cfg.split_mode == "column" and not column:
         raise ValueError("split_mode=column but the dataset CSV has no split column")
@@ -401,21 +457,24 @@ def prepare_data(cfg: TrainConfig, data_root: Path, recorder: LossRecorder) -> _
     recorder.write_split(splits)
     recorder.write_palette(palette.as_mapping())
 
-    size = cfg.image_size
-    train_ds = data.SegmentationDataset(samples, palette, splits, "train", size, augment=True)
-    val_ds = data.SegmentationDataset(samples, palette, splits, "val", size)
-    score_ds = data.SegmentationDataset(samples, palette, splits, None, size)
+    train_ds = data.SegmentationDataset(samples, palette, splits, "train", size, augment=True, cache=cache)
+    val_ds = data.SegmentationDataset(samples, palette, splits, "val", size, cache=cache)
+    score_ds = data.SegmentationDataset(samples, palette, splits, None, size, cache=cache)
+    pin = device is not None and device.type == "cuda"
     if len(train_ds) == 0:
         raise ValueError("the train split is empty")
 
     def loader(ds: data.SegmentationDataset, shuffle: bool) -> DataLoader:
         gen = torch.Generator().manual_seed(cfg.seed)
+        workers = cfg.num_workers if shuffle else (max(cfg.num_workers // 2, 1) if cfg.num_workers else 0)
         return DataLoader(
             ds,
             batch_size=cfg.batch_size,
             shuffle=shuffle,
             collate_fn=data.collate_fn,
-            num_workers=cfg.num_workers,
+            num_workers=workers,
+            pin_memory=pin,
+            persistent_workers=workers > 0,
             generator=gen if shuffle else None,
         )
 
@@ -464,6 +523,10 @@ def run_epochs(
 ) -> str:
     """Train, validate and score for every epoch; return the final status (FINISHED or KILLED)."""
     cfg = setup.cfg
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+    amp = make_amp(device, cfg.amp)
+    log(f"loader workers={cfg.num_workers} amp={amp.dtype if amp else 'off'}")
     model = build_model(cfg.preset, setup.palette.num_classes, cfg.pretrained).to(device)
     criterion = losses.SegmentationCriterion(cfg.loss_terms, cfg.loss_weights)
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -491,12 +554,13 @@ def run_epochs(
             sink.cancel_requested,
             on_step,
             label=f"epoch {epoch}/{cfg.epochs}",
+            amp=amp,
         )
         if train.cancelled:
             buffer.flush()
             return "KILLED"
         val, confusion = (
-            evaluate(model, setup.val_loader, criterion, device, setup.palette.num_classes)
+            evaluate(model, setup.val_loader, criterion, device, setup.palette.num_classes, amp)
             if setup.n_val
             else ({}, None)
         )
@@ -518,7 +582,7 @@ def run_epochs(
         )
         if epoch % cfg.score_every == 0 or epoch == cfg.epochs:
             hardest = score_epoch(
-                model, setup.score_loader, criterion, device, recorder, setup.splits, epoch, cfg.top_k_predictions
+                model, setup.score_loader, criterion, device, recorder, setup.splits, epoch, cfg.top_k_predictions, amp
             )
             if hardest is None:
                 return "KILLED"
@@ -560,7 +624,7 @@ def run(run_id: str, tracking_uri: str, data_root: Path, device_name: str = "aut
                 status = "KILLED"
             else:
                 recorder = LossRecorder(cfg.loss_terms, sink, scratch / "per_sample")
-                setup = prepare_data(cfg, data_root, recorder)
+                setup = prepare_data(cfg, data_root, recorder, device)
                 log_missing_params(
                     client, existing, cfg, {"num_classes": str(setup.palette.num_classes), "device": str(device)}
                 )

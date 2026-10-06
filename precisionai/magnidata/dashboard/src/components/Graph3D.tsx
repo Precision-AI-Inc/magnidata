@@ -12,6 +12,7 @@ import type { CSVData, CSVRow } from '../types'
 import type { Partitions } from '../hooks/usePartitions'
 import { imageNameOf } from '../hooks/usePartitions'
 import { BRAND_CATEGORICAL, BRAND_SEQ_STOPS, CLUSTER_PALETTE_100 } from '../data/vizColors'
+import { divergingRange, interpolateDiverging, isDivergingColumn } from '../lib/diverging'
 
 // ── Palette & colorscale ───────────────────────────────────────────────────────
 const PALETTE = BRAND_CATEGORICAL
@@ -414,7 +415,11 @@ function buildColors(
   // One distinct colour per category from the 100-colour palette (id mod 100).
   const catColors = (isCat && enc) ? CLUSTER_RGB : null
   let cmin = 0, cmax = 1
-  if (!isCat) {
+  // Signed change columns (cmp_hardness_change…) use a diverging scale centred on 0.
+  const diverging = !isCat && isDivergingColumn(colorBy)
+  if (diverging) {
+    ;[cmin, cmax] = divergingRange(rows.map(r => r[colorBy] as number))
+  } else if (!isCat) {
     // 2nd–98th percentile so outliers don't compress the scale — matches the PC legend exactly
     const vals: number[] = []
     for (const r of rows) {
@@ -439,8 +444,8 @@ function buildColors(
     if (isCat && enc && catColors && catColors.length) {
       rgb = catColors[(enc.encode[String(r[colorBy] ?? '')] ?? 0) % catColors.length]
     } else {
-      const t = cmax > cmin ? ((r[colorBy] as number ?? cmin) - cmin) / (cmax - cmin) : 0
-      rgb = interpolateWarm(t)
+      const t = cmax > cmin ? ((r[colorBy] as number ?? (diverging ? 0 : cmin)) - cmin) / (cmax - cmin) : 0
+      rgb = diverging ? interpolateDiverging(t) : interpolateWarm(t)
     }
     buf[i*3] = rgb[0]; buf[i*3+1] = rgb[1]; buf[i*3+2] = rgb[2]
   })

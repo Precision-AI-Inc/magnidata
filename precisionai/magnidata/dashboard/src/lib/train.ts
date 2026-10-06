@@ -88,3 +88,27 @@ export function progressLabel(status: string, epochsDone: number, totalEpochs: n
   if (status === 'SCHEDULED') return 'queued'
   return `epoch ${Math.min(epochsDone + 1, totalEpochs || epochsDone + 1)}/${totalEpochs || '?'}`
 }
+
+
+const SETTINGS: (keyof TrainParams)[] = [
+  'epochs', 'score_every', 'batch_size', 'image_size', 'lr', 'val_fraction', 'seed', 'top_k_predictions',
+]
+
+/** Training settings of an earlier run (MLflow param strings), to preload the Train dialog for a retrain. */
+export function paramsFromRun(params: Record<string, string>): Partial<TrainParams> {
+  const out: Partial<TrainParams> = {}
+  for (const key of SETTINGS) {
+    const value = Number(params[key])
+    if (params[key] !== undefined && Number.isFinite(value)) (out as Record<string, unknown>)[key] = value
+  }
+  if (params.split_mode) out.split_mode = params.split_mode
+  if (params.pretrained) out.pretrained = params.pretrained === 'true'
+  if (params.loss_terms) {
+    out.loss_terms = params.loss_terms.split(',').filter(Boolean)
+    out.loss_weights = Object.fromEntries(
+      out.loss_terms.filter(t => Number.isFinite(Number(params[`weight_${t}`])) && params[`weight_${t}`] !== undefined)
+        .map(t => [t, Number(params[`weight_${t}`])]),
+    )
+  }
+  return out
+}

@@ -7,7 +7,7 @@ import type { ColumnKind } from '../lib/experiments'
 const COLUMNS_KEY = 'magnidata.experiments.columns'
 
 export interface SortState { kind: ColumnKind; key: string; dir: 'asc' | 'desc' }
-export interface ChosenColumns { metrics: string[]; params: string[] }
+export interface ChosenColumns { metrics: string[]; params: string[]; parent?: boolean }
 
 function loadColumns(): ChosenColumns {
   try {

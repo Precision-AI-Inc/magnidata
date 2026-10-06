@@ -9,7 +9,9 @@ import { useBuildJob } from './hooks/useBuildJob'
 import { useRunOverlay } from './hooks/useRunOverlay'
 import { useActiveRun } from './hooks/useActiveRun'
 import { TrainDialog } from './components/experiments/TrainDialog'
-import { progressLabel, trainDisabledReason } from './lib/train'
+import { paramsFromRun, progressLabel, trainDisabledReason } from './lib/train'
+import type { TrainParams } from './lib/train'
+import { buildRelabelCsv } from './lib/relabel'
 import { RunOverlayPicker } from './components/RunOverlayPicker'
 import { EpochScrubber } from './components/EpochScrubber'
 import type { CSVRow, TabId } from './types'
@@ -49,7 +51,7 @@ export default function App() {
   const [landingView, setLandingView] = useState<LandingView>('landing')
   const [showByod, setShowByod] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
-  const [pendingOverlay, setPendingOverlay] = useState<{ runId: string; source: string } | null>(null)
+  const [pendingOverlay, setPendingOverlay] = useState<{ runId: string; compareWith?: string; source: string } | null>(null)
   // A reloaded `#compare=…` link goes straight to the experiments view.
   useEffect(() => { if (window.location.hash.startsWith('#compare=')) setLandingView('experiments') }, [])
 
@@ -246,6 +248,9 @@ export default function App() {
   const runOverlay = useRunOverlay(data, datasetSource, replaceData)
   const activeRun = useActiveRun()
   const [showTrain, setShowTrain] = useState(false)
+  // A child dataset was just saved: offer to train on it, carrying over the overlaid run's settings.
+  const [createdDataset, setCreatedDataset] = useState<DatasetMeta | null>(null)
+  const [trainOn, setTrainOn] = useState<{ dataset: DatasetMeta; params: Partial<TrainParams>; preset?: string; parent?: string } | null>(null)
   const trainBlocked = (hasDataset: boolean) => trainDisabledReason({
     hasDataset,
     mlflowReachable: activeRun.presets?.mlflow.reachable ?? false,
@@ -254,8 +259,41 @@ export default function App() {
     activeRunId: activeRun.active ? activeRun.run!.run_id : null,
   })
   const trainOnLoaded = trainBlocked(!!data && !!datasetSource)
+  const trainOnCreated = async () => {
+    if (!createdDataset) return
+    let params: Partial<TrainParams> = {}
+    let preset: string | undefined
+    const parent = runOverlay.overlay?.runId
+    if (parent) {
+      try {
+        const earlier = await api.getRun(parent)
+        params = paramsFromRun(earlier.params)
+        preset = earlier.tags['magnidata.preset'] ?? earlier.params.preset
+      } catch { /* start from the preset defaults */ }
+    }
+    await activeRun.loadPresets()
+    setTrainOn({ dataset: createdDataset, params, preset, parent })
+  }
+  const exportRelabelQueue = async () => {
+    if (!data) return
+    const notes: Record<string, string> = {}
+    try {
+      for (const n of await api.getNotes()) {
+        const name = n.image_path.split(/[/\\]/).pop() ?? ''
+        notes[name] = notes[name] ? `${notes[name]} | ${n.note}` : n.note
+      }
+    } catch { /* export without notes */ }
+    const blob = new Blob([buildRelabelCsv(liveFilteredRows, data, notes)], { type: 'text/csv' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${data.fileName.replace(/\.csv$/i, '')}_relabel_queue.csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
   const onLaunched = (runId: string) => {
     setShowTrain(false)
+    setTrainOn(null)
+    setCreatedDataset(null)
     activeRun.track(runId)
     setSelectedRunId(runId)
     setTab('experiments')
@@ -276,6 +314,16 @@ export default function App() {
   }, [scoredCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Overlay on dataset" from the runs table: load the run's dataset first if it is not the open one.
+  const compareOnDataset = (a: string, b: string, source: string) => {
+    if (data && datasetSource === source) {
+      void runOverlay.selectCompare(a, b)
+      setTab('visual-explorer')
+    } else {
+      setPendingOverlay({ runId: a, compareWith: b, source })
+      void loadDatasetBySource(source)
+    }
+  }
+
   const overlayRun = (runId: string, source: string) => {
     if (data && datasetSource === source) {
       void runOverlay.select(runId)
@@ -287,7 +335,8 @@ export default function App() {
   }
   useEffect(() => {
     if (pendingOverlay && data && datasetSource === pendingOverlay.source) {
-      void runOverlay.select(pendingOverlay.runId)
+      if (pendingOverlay.compareWith) void runOverlay.selectCompare(pendingOverlay.runId, pendingOverlay.compareWith)
+      else void runOverlay.select(pendingOverlay.runId)
       setPendingOverlay(null)
       setTab('visual-explorer')
     }
@@ -311,13 +360,14 @@ export default function App() {
         .map(r => String(r[data.imagePath!] ?? ''))
         .filter(Boolean)
         .map(p => p.split(/[/\\]/).pop() as string)
-      await api.createDataset({
+      const created = await api.createDataset({
         name: removalName.trim(),
         description: `${kept.length} rows — ${removed.size} removed from ${data.fileName.replace(/\.csv$/i, '')}`,
         parent_source: datasetSource,
         image_names,
       })
       reloadDatasets()
+      setCreatedDataset(created)
       setRemoved(new Set()); setShowRemovalSave(false); setRemovalName('')
     } catch (e) {
       setRemovalMsg(`error: ${e instanceof Error ? e.message : String(e)}`)
@@ -337,13 +387,14 @@ export default function App() {
         .map(r => String(r[data.imagePath!] ?? ''))
         .filter(Boolean)
         .map(p => p.split(/[/\\]/).pop() as string)
-      await api.createDataset({
+      const created = await api.createDataset({
         name: addName.trim(),
         description: `${picked.length} curated images from ${data.fileName.replace(/\.csv$/i, '')}`,
         parent_source: datasetSource,
         image_names,
       })
       reloadDatasets()
+      setCreatedDataset(created)
       setAdded(new Set()); setShowAddSave(false); setAddName('')
     } catch (e) {
       setAddMsg(`error: ${e instanceof Error ? e.message : String(e)}`)
@@ -392,7 +443,7 @@ export default function App() {
         {!data && !loading && !error && tab !== 'schema' && landingView === 'experiments' && (
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
             <ExperimentsTab datasetSource={null} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)}
-              onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun}
+              onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun} onCompareOnDataset={compareOnDataset} onSelectRunId={setSelectedRunId}
                 trainDisabled={trainBlocked(!!data && !!datasetSource)} workerReason={activeRun.presets && !activeRun.presets.backend.available ? (activeRun.presets.backend.reason ?? 'no trainer worker has reported in') : null}
                 onTrain={() => { void activeRun.loadPresets(); setShowTrain(true) }} onRunChanged={() => void activeRun.refresh()}
                 liveKey={`${activeRun.run?.run_id}:${activeRun.run?.status}:${activeRun.epochsDone}`} />
@@ -443,8 +494,13 @@ export default function App() {
                         onClick={() => { void activeRun.loadPresets(); setShowTrain(true) }}
                         style={{ fontSize: 11, padding: '3px 10px', marginRight: 10, opacity: trainOnLoaded ? 0.5 : 1 }}>Train</button>
               )}
+              {data && !!data.runColumns?.length && (
+                <button className="btn-ghost" onClick={() => void exportRelabelQueue()}
+                        title="Download the selected images with their training losses and notes, hardest first"
+                        style={{ fontSize: 11, padding: '3px 10px', marginRight: 10, whiteSpace: 'nowrap' }}>Export relabel queue</button>
+              )}
               {data && datasetSource && (
-                <RunOverlayPicker runs={runOverlay.runs} overlay={runOverlay.overlay} match={runOverlay.match}
+                <RunOverlayPicker runs={runOverlay.runs} overlay={runOverlay.overlay} compare={runOverlay.compare} match={runOverlay.match}
                                   loading={runOverlay.loading} error={runOverlay.error}
                                   onSelect={id => void runOverlay.select(id)} onClear={runOverlay.clear} />
               )}
@@ -586,6 +642,18 @@ export default function App() {
               </div>
             )}
 
+            {data && createdDataset && (
+              <div role="status" style={{ flexShrink: 0, borderBottom: '1px solid var(--c-border)', background: 'var(--c-surface)',
+                                          padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 11 }}>
+                <span style={{ color: 'var(--c-t2)', fontWeight: 600 }}>
+                  Dataset “{createdDataset.name}” created{createdDataset.row_count ? ` (${createdDataset.row_count.toLocaleString()} images)` : ''}.
+                </span>
+                <button className="btn-primary" disabled={!!trainBlocked(true)} title={trainBlocked(true) ?? 'Train on the new dataset, linked to the overlaid run'}
+                        onClick={() => void trainOnCreated()} style={{ fontSize: 11, padding: '3px 10px', opacity: trainBlocked(true) ? 0.5 : 1 }}>Train on it</button>
+                <button onClick={() => setCreatedDataset(null)} aria-label="Dismiss" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--c-t3)' }}><X size={14} /></button>
+              </div>
+            )}
+
             {/* Inline save form for the curation basket (hand-picked images → new dataset) */}
             {data && added.size > 0 && showAddSave && datasetSource && data.imagePath && (
               <div style={{ flexShrink: 0, borderBottom: '1px solid var(--c-border)', background: 'var(--c-surface)',
@@ -662,7 +730,7 @@ export default function App() {
                 {data && tab === 'experiments' && (
                   <ExperimentsTab datasetSource={datasetSource} selectedRunId={selectedRunId}
                                   onSelectRun={r => setSelectedRunId(r.run_id)} onCloseRun={() => setSelectedRunId(null)}
-                                  knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun}
+                                  knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun} onCompareOnDataset={compareOnDataset} onSelectRunId={setSelectedRunId}
                 trainDisabled={trainBlocked(!!data && !!datasetSource)} workerReason={activeRun.presets && !activeRun.presets.backend.available ? (activeRun.presets.backend.reason ?? 'no trainer worker has reported in') : null}
                 onTrain={() => { void activeRun.loadPresets(); setShowTrain(true) }} onRunChanged={() => void activeRun.refresh()}
                 liveKey={`${activeRun.run?.run_id}:${activeRun.run?.status}:${activeRun.epochsDone}`} />
@@ -675,6 +743,12 @@ export default function App() {
           </>
         )}
       </div>
+
+      {trainOn && activeRun.presets && (
+        <TrainDialog key={trainOn.dataset.source} presets={activeRun.presets} datasetSource={trainOn.dataset.source}
+                     datasetName={trainOn.dataset.name} parentRunId={trainOn.parent} initialParams={trainOn.params}
+                     initialPreset={trainOn.preset} onClose={() => setTrainOn(null)} onLaunched={onLaunched} />
+      )}
 
       {showTrain && activeRun.presets && data && datasetSource && (
         <TrainDialog presets={activeRun.presets} datasetSource={datasetSource} datasetName={data.fileName}

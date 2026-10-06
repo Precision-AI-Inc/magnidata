@@ -11,6 +11,10 @@ interface Props {
   datasetSource: string
   datasetName: string
   parentRunId?: string
+  /** Settings to start from instead of the preset's defaults (e.g. the run being retrained). */
+  initialParams?: Partial<TrainParams>
+  /** Preset to preselect (the retrained run's). */
+  initialPreset?: string
   onClose: () => void
   onLaunched: (runId: string) => void
 }
@@ -31,10 +35,11 @@ function initial(defaults: Record<string, unknown>): TrainParams {
 }
 
 /** Launch a training run on the loaded dataset. Server-side validation errors are shown beside the field. */
-export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, onClose, onLaunched }: Props) {
-  const [preset, setPreset] = useState(presets.presets[0].key)
+export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, initialParams, initialPreset, onClose, onLaunched }: Props) {
+  const startPreset = presets.presets.find(p => p.key === initialPreset) ?? presets.presets[0]
+  const [preset, setPreset] = useState(startPreset.key)
   const [name, setName] = useState('')
-  const [params, setParams] = useState<TrainParams>(() => initial(presets.presets[0].defaults))
+  const [params, setParams] = useState<TrainParams>(() => ({ ...initial(startPreset.defaults), ...initialParams }))
   const [serverErrors, setServerErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)

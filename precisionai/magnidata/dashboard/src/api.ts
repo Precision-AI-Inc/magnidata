@@ -366,6 +366,12 @@ export const api = {
     get<SampleHistory>(`${BASE}/runs/${runId}/samples/${encodeURIComponent(imageName)}`),
   runPredictionUrl: (runId: string, imageName: string, epoch: number | 'latest', alpha: number, maxSize = 1280) =>
     `${BASE}/runs/${runId}/prediction?image=${encodeURIComponent(imageName)}&epoch=${epoch}&alpha=${alpha}&max_size=${maxSize}`,
+  /** Per-image comparison of two runs (hardness and loss change from a to b), as CSV text. */
+  getCompareSamples: async (a: string, b: string, epoch: number | 'latest' = 'latest') => {
+    const r = await fetch(`${BASE}/runs/compare-samples?a=${a}&b=${b}&epoch=${epoch}`)
+    if (!r.ok) throw new ApiError(`${r.status}: ${await r.text()}`, r.status)
+    return r.text()
+  },
   getRunMatch: (runId: string, datasetSource: string) =>
     get<RunMatch>(`${BASE}/runs/${runId}/match?dataset=${encodeURIComponent(datasetSource)}`),
   linkRun: (runId: string, datasetSource: string) =>

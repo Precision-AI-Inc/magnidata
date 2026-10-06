@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isActive, progressLabel, trainDisabledReason, validateParams } from './train'
+import { isActive, paramsFromRun, progressLabel, trainDisabledReason, validateParams } from './train'
 import type { Bound, TrainParams } from './train'
 
 const bounds: Record<string, Bound> = {
@@ -81,5 +81,21 @@ describe('progressLabel', () => {
     expect(progressLabel('SCHEDULED', 0, 20)).toBe('queued')
     expect(progressLabel('RUNNING', 2, 20)).toBe('epoch 3/20')
     expect(progressLabel('RUNNING', 20, 20)).toBe('epoch 20/20')
+  })
+})
+
+
+describe('paramsFromRun', () => {
+  it('turns MLflow param strings back into typed settings', () => {
+    const out = paramsFromRun({
+      epochs: '12', lr: '0.002', split_mode: 'column', pretrained: 'true', loss_terms: 'dice,bce', weight_dice: '2.5', preset: 'tiny_unet',
+    })
+    expect(out).toEqual({
+      epochs: 12, lr: 0.002, split_mode: 'column', pretrained: true, loss_terms: ['dice', 'bce'], loss_weights: { dice: 2.5 },
+    })
+  })
+  it('skips missing and non-numeric values', () => {
+    expect(paramsFromRun({ epochs: 'many' })).toEqual({})
+    expect(paramsFromRun({})).toEqual({})
   })
 })

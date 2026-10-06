@@ -4,6 +4,7 @@ import { api } from '../../api'
 import type { ArtifactEntry, MetricHistory, RunDetailData, RunMatch } from '../../api'
 import { BRAND_CATEGORICAL } from '../../data/vizColors'
 import { formatDuration } from '../../lib/experiments'
+import { lineageLabel } from '../../lib/lineage'
 import { ema, groupMetricKeys, pairTrainVal, toRelativeTime } from '../../lib/metrics'
 import { LineChart } from './LineChart'
 import type { Series } from './LineChart'
@@ -19,6 +20,8 @@ interface Props {
   onOverlay: (runId: string, source: string) => void
   /** Called after the run changed here (e.g. cancelled) so App-level state refreshes. */
   onChanged: () => void
+  /** Open another run (a parent in the lineage). */
+  onOpenRun: (runId: string) => void
   onClose: () => void
 }
 
@@ -33,7 +36,7 @@ const VAL_COLOR = '#E08A1E'     // amber: stays distinguishable from the teal tr
 
 type XAxis = 'step' | 'time'
 
-export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset, onOverlay, onChanged, onClose }: Props) {
+export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset, onOverlay, onChanged, onOpenRun, onClose }: Props) {
   const [run, setRun] = useState<RunDetailData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [histories, setHistories] = useState<Record<string, MetricHistory[]>>({})
@@ -45,6 +48,7 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
   const [linkReport, setLinkReport] = useState<RunMatch | null>(null)
   const [linkError, setLinkError] = useState<string | null>(null)
   const [confirmCancel, setConfirmCancel] = useState(false)
+  const [parentName, setParentName] = useState<string | null>(null)
   const [cancelError, setCancelError] = useState<string | null>(null)
 
   const keys = run?.metric_keys ?? []
@@ -67,6 +71,14 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
 
   useEffect(() => { setRun(null); setHistories({}); setLinkReport(null); setLinkError(null); void loadRun() }, [loadRun])
   useEffect(() => { void loadMetrics() }, [loadMetrics])
+  const parentId = run?.tags['magnidata.parent_run_id']
+  useEffect(() => {
+    setParentName(null)
+    if (!parentId) return
+    let live = true
+    api.getRun(parentId).then(p => { if (live) setParentName(p.name) }).catch(() => { /* parent was deleted */ })
+    return () => { live = false }
+  }, [parentId])
   useEffect(() => {
     if (!status || !LIVE.has(status)) return
     const id = setInterval(() => { void loadRun(); void loadMetrics() }, POLL_MS)
@@ -133,6 +145,12 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
               </span>
             )}
           </div>
+          {parentId && (
+            <div className="mt-1 text-[11px]" style={{ color: 'var(--c-t2)' }}>
+              {lineageLabel({ datasetName: run.magnidata['magnidata.dataset_name'], parentRunId: parentId, parentRunName: parentName })}
+              <button className="ml-2 underline" style={{ color: 'var(--c-accent)' }} onClick={() => onOpenRun(parentId)}>Open parent run</button>
+            </div>
+          )}
           {!source && run.has_per_sample && currentDataset && (
             <div className="mt-2 text-xs" style={{ color: 'var(--c-t2)' }}>
               {!linkReport ? (

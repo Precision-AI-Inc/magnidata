@@ -6,6 +6,7 @@ import type { Partitions } from '../hooks/usePartitions'
 import { ColTooltip } from './ColTooltip'
 import { Graph3D } from './Graph3D'
 import { BRAND_CATEGORICAL, BRAND_SEQUENTIAL, TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../data/vizColors'
+import { DIVERGING_SCALE, divergingRange, isDivergingColumn } from '../lib/diverging'
 
 interface Props {
   data: CSVData
@@ -154,11 +155,23 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     onConstraintsChange({})
   }, [data.fileName]) // eslint-disable-line
 
-  // A newly overlaid run: show its headline columns without the user having to dig through the picker.
+  // The overlay's columns came or went: drop axes that no longer exist, show the new headline columns
+  // (so the user need not dig through the picker), and fall back to the defaults if nothing is left.
   const runColumnsKey = (data.runColumns ?? []).join(',')
   useEffect(() => {
-    const headline = ['loss_total', 'hardness'].filter(c => data.numericCols.includes(c) && (data.runColumns ?? []).includes(c))
-    if (headline.length) setSelectedCols(prev => new Set([...prev, ...headline]))
+    const numeric = new Set(data.numericCols)
+    const headline = ['loss_total', 'hardness', 'cmp_hardness_change', 'cmp_loss_total_change']
+      .filter(c => numeric.has(c) && (data.runColumns ?? []).includes(c))
+    setSelectedCols(prev => {
+      const next = new Set([...prev].filter(c => numeric.has(c)))
+      headline.forEach(c => next.add(c))
+      return next.size ? next : defaultNumericSelection(data.numericCols, rows)
+    })
+    const categorical = new Set(data.categoricalCols)
+    setSelectedCatCols(prev => {
+      const next = new Set([...prev].filter(c => categorical.has(c)))
+      return next.size || !prev.size ? next : defaultCategoricalSelection(data.categoricalCols)
+    })
   }, [runColumnsKey]) // eslint-disable-line
 
   // 3D cluster selection (null = no selection; Set = row indices selected from 3D view)
@@ -243,6 +256,16 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
       if (v != null && isFinite(v)) nonNullVals.push(v)
     }
     let cmin: number, cmax: number
+    if (isDivergingColumn(col)) {
+      // Signed change column: symmetric range so the colour bar is centred on 0.
+      ;[cmin, cmax] = divergingRange(nonNullVals)
+      return {
+        colorData: displayRows.map(r => { const v = r[col] as number; return v != null && isFinite(v) ? v : 0 }),
+        colorscale: DIVERGING_SCALE,
+        cmin, cmax,
+        tickvals: undefined, ticktext: undefined,
+      }
+    }
     if (nonNullVals.length === 0) {
       cmin = 0; cmax = 1
     } else {

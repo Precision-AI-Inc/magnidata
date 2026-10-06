@@ -6,6 +6,7 @@
 Run:  python -m pytest precisionai/magnidata/api/test_experiments.py -q
 """
 
+import csv
 import io
 
 import experiments
@@ -21,7 +22,10 @@ from precisionai.magnidata.training import contract
 
 
 @pytest.fixture
-def client(mlflow_store):
+def client(mlflow_store, tmp_path, monkeypatch):
+    monkeypatch.setenv(
+        "DATA_ROOT", str(tmp_path / "data-root")
+    )  # keeps the artifact cache out of the working directory
     experiments.clear_cache()
     store_module.set_store(mlflow_store)
     app = Flask(__name__)
@@ -409,3 +413,79 @@ def test_prediction_missing_and_invalid(client, predicted_run):
     assert client.get(f"/api/runs/{predicted_run}/prediction?image=a.png&epoch=x").status_code == 400
     assert client.get(f"/api/runs/{predicted_run}/prediction?image=a.png&alpha=big").status_code == 400
     assert client.get(f"/api/runs/{predicted_run}/prediction").status_code == 400
+
+
+def _scored(mlflow_store, rows_by_epoch):
+    """Seed a run whose per-sample files hold ``{epoch: [(image, split, loss_total), ...]}``."""
+    artifacts = {
+        contract.per_sample_path(epoch): "image_name,split,loss_total\n" + "".join(f"{n},{s},{v}\n" for n, s, v in rows)
+        for epoch, rows in rows_by_epoch.items()
+    }
+    tags = {
+        contract.TAG_PER_SAMPLE_SCHEMA: contract.SCHEMA_VERSION,
+        contract.TAG_SCORED_EPOCHS: ",".join(map(str, rows_by_epoch)),
+    }
+    return seed_run(mlflow_store, tags=tags, artifacts=artifacts)
+
+
+def _parse(resp):
+    return {r["image_name"]: r for r in csv.DictReader(io.StringIO(resp.get_data(as_text=True)))}
+
+
+def test_compare_samples_outer_join_and_changes(client, mlflow_store):
+    run_a = _scored(mlflow_store, {1: [("x.png", "train", 0.9), ("y.png", "train", 0.5), ("z.png", "val", 0.2)]})
+    run_b = _scored(mlflow_store, {1: [("x.png", "train", 0.3), ("y.png", "train", 0.8), ("w.png", "val", 0.4)]})
+    resp = client.get(f"/api/runs/compare-samples?a={run_a}&b={run_b}")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/csv"
+    header = resp.get_data(as_text=True).splitlines()[0].split(",")
+    assert header == ["image_name", "hardness_a", "hardness_b", "hardness_change", "loss_total_change", "in_a", "in_b"]
+    rows = _parse(resp)
+    assert set(rows) == {"x.png", "y.png", "z.png", "w.png"}
+    assert float(rows["x.png"]["loss_total_change"]) == pytest.approx(-0.6)
+    assert float(rows["y.png"]["loss_total_change"]) == pytest.approx(0.3)
+    assert (rows["x.png"]["in_a"], rows["x.png"]["in_b"]) == ("1", "1")
+    assert (rows["z.png"]["in_a"], rows["z.png"]["in_b"]) == ("1", "0")
+    assert (rows["w.png"]["in_a"], rows["w.png"]["in_b"]) == ("0", "1")
+    assert rows["z.png"]["hardness_change"] == ""
+    assert rows["w.png"]["loss_total_change"] == ""
+
+
+def test_compare_samples_hardness_change_sign(client, mlflow_store):
+    easy = [("a.png", "train", 0.1), ("b.png", "train", 0.9), ("c.png", "train", 0.5)]
+    swapped = [("a.png", "train", 0.9), ("b.png", "train", 0.1), ("c.png", "train", 0.5)]
+    rows = _parse(
+        client.get(
+            f"/api/runs/compare-samples?a={_scored(mlflow_store, {1: easy})}&b={_scored(mlflow_store, {1: swapped})}"
+        )
+    )
+    assert float(rows["a.png"]["hardness_change"]) > 0  # got harder
+    assert float(rows["b.png"]["hardness_change"]) < 0  # got easier
+
+
+def test_compare_samples_same_run_has_no_change(client, mlflow_store):
+    run = _scored(
+        mlflow_store,
+        {1: [("a.png", "train", 0.4), ("b.png", "val", 0.6)], 2: [("a.png", "train", 0.3), ("b.png", "val", 0.5)]},
+    )
+    rows = _parse(client.get(f"/api/runs/compare-samples?a={run}&b={run}"))
+    assert all(float(r["loss_total_change"]) == 0 for r in rows.values())
+    assert all(float(r["hardness_change"]) == 0 for r in rows.values())
+
+
+def test_compare_samples_epoch_and_errors(client, mlflow_store):
+    a = _scored(mlflow_store, {1: [("a.png", "train", 0.4)], 2: [("a.png", "train", 0.2)]})
+    b = _scored(mlflow_store, {1: [("a.png", "train", 0.9)], 2: [("a.png", "train", 0.1)]})
+    assert float(
+        _parse(client.get(f"/api/runs/compare-samples?a={a}&b={b}&epoch=1"))["a.png"]["loss_total_change"]
+    ) == pytest.approx(0.5)
+    assert client.get(f"/api/runs/compare-samples?a={a}&b={b}&epoch=9").status_code == 400
+    assert client.get(f"/api/runs/compare-samples?a={a}&b={b}&epoch=abc").status_code == 400
+    disjoint = _scored(mlflow_store, {1: [("zzz.png", "train", 0.1)]})
+    no_overlap = client.get(f"/api/runs/compare-samples?a={a}&b={disjoint}")
+    assert no_overlap.status_code == 400
+    assert "in common" in no_overlap.get_json()["error"]
+    plain = seed_run(mlflow_store)
+    assert client.get(f"/api/runs/compare-samples?a={a}&b={plain}").status_code == 409
+    assert client.get(f"/api/runs/compare-samples?a=nope&b={b}").status_code == 400
+    assert client.get(f"/api/runs/compare-samples?a={a}").status_code == 400

@@ -553,3 +553,28 @@ def run_prediction(run_id: str) -> ResponseReturnValue:
     base = image_overlay.img_from_bytes(_dataset_image_bytes(run, name), max_size)
     result = image_overlay.composite_mask(base, image_overlay.mask_as_rgba(mask_file.read_bytes()), alpha)
     return Response(image_overlay.to_jpeg(result), mimetype="image/jpeg", headers={"X-Magnidata-Epoch": str(epoch)})
+
+
+def _axes_for(run_id: str, epoch: int | str) -> run_axes.DerivedAxes:
+    run = _per_sample_run(run_id)
+    files = artifact_cache.sync_per_sample(mlflow_store.get_store(), run_id, with_split=False)
+    scored = contract.parse_scored_epochs(run["tags"])
+    wanted = scored[-1] if epoch == "latest" else int(epoch)
+    if wanted not in scored:
+        raise _bad(f"epoch {wanted} has no per-sample file in run {run_id[:8]} (scored: {', '.join(map(str, scored))})")
+    return run_axes.derive_axes(files, wanted)
+
+
+@bp.get("/api/runs/compare-samples")
+def compare_samples() -> ResponseReturnValue:
+    """Compare two runs image by image: hardness and loss change from run ``a`` to run ``b`` (CSV)."""
+    a, b = _run_id(request.args.get("a", "")), _run_id(request.args.get("b", ""))
+    epoch = request.args.get("epoch", "latest")
+    if epoch != "latest" and not epoch.isdigit():
+        raise _bad("epoch must be 'latest' or a number")
+    axes_a, axes_b = _axes_for(a, epoch), _axes_for(b, epoch)
+    try:
+        merged = run_axes.compare_samples(axes_a, axes_b)
+    except ValueError as err:
+        raise _bad(str(err)) from None
+    return Response(merged.to_csv(include_split=False), mimetype="text/csv", headers={"Cache-Control": "no-store"})

@@ -10,11 +10,17 @@ import { LineChart } from './LineChart'
 import type { Series } from './LineChart'
 import { StatusBadge } from './ExperimentsTab'
 
-interface Props { runIds: string[]; onClose: () => void }
+interface Props {
+  runIds: string[]
+  knownDatasets: string[]
+  /** Overlay the per-image change between the two runs on their dataset. */
+  onCompareOnDataset: (a: string, b: string, source: string) => void
+  onClose: () => void
+}
 
 const DEFAULT_KEYS = ['val_loss/loss', 'val_metric/miou']
 
-export function RunCompare({ runIds, onClose }: Props) {
+export function RunCompare({ runIds, knownDatasets, onCompareOnDataset, onClose }: Props) {
   const [runs, setRuns] = useState<RunDetailData[]>([])
   const [histories, setHistories] = useState<Record<string, Record<string, MetricHistory[]>>>({})
   const [chosen, setChosen] = useState<string[] | null>(null)
@@ -62,11 +68,23 @@ export function RunCompare({ runIds, onClose }: Props) {
 
   const paramRows = diffParams(runs, onlyDiff)
 
+  // Per-image comparison needs exactly two runs with per-sample data. It is drawn on the first run's
+  // dataset (the parent, when one run was trained on a curated child of the other's dataset); images
+  // only one run saw simply have no change value.
+  const known = runs.map(r => r.magnidata['magnidata.dataset_source']).filter(src => src && knownDatasets.includes(src))
+  const cmpSource = runs.length === 2 && runs.every(r => r.has_per_sample) ? known[0] : undefined
+  const cmpReason = runs.length !== 2 ? 'Select exactly two runs'
+    : !runs.every(r => r.has_per_sample) ? 'Both runs need per-sample loss data'
+    : !cmpSource ? 'Neither run is linked to a dataset available in this app' : null
+
   return (
     <section className="flex flex-col flex-1 overflow-auto" style={{ minWidth: 0 }}>
       <div className="flex items-center gap-3 px-4 py-2.5 shrink-0" style={{ borderBottom: '1px solid var(--c-border)' }}>
         <button className="btn-ghost flex items-center gap-1 text-xs px-2 py-1" onClick={onClose}><ArrowLeft size={13} /> Runs</button>
         <h2 className="text-sm font-semibold" style={{ color: 'var(--c-t1)' }}>Comparing {runIds.length} runs</h2>
+        <button className="btn-primary" disabled={!!cmpReason} title={cmpReason ?? `Colour ${cmpSource} by how each image changed from the first run to the second`}
+                onClick={() => cmpSource && onCompareOnDataset(runs[0].run_id, runs[1].run_id, cmpSource)}
+                style={{ fontSize: 11, padding: '4px 10px', opacity: cmpReason ? 0.5 : 1 }}>Compare on dataset</button>
         <div className="flex gap-3 ml-2 flex-wrap">
           {runs.map(r => (
             <span key={r.run_id} className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--c-t1)' }}>

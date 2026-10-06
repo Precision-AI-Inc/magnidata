@@ -165,13 +165,17 @@ class DerivedAxes:
     epoch: int
     scored_epochs: list[int]
 
-    def to_csv(self) -> str:
-        """Render ``image_name``, ``split`` and every derived column as CSV (NaN → empty)."""
-        header = ["image_name", "split", *self.columns]
+    def to_csv(self, include_split: bool = True) -> str:
+        """Render ``image_name``, ``split`` (optional) and every derived column as CSV (NaN → empty)."""
+        header = ["image_name", *(["split"] if include_split else []), *self.columns]
         lines = [",".join(header)]
         formatted = {c: [("" if np.isnan(v) else f"{v:.6g}") for v in col] for c, col in self.columns.items()}
         for i, (name, split) in enumerate(zip(self.names, self.splits, strict=True)):
-            cells = [_csv_cell(name), _csv_cell(split), *(formatted[c][i] for c in self.columns)]
+            cells = [
+                _csv_cell(name),
+                *([_csv_cell(split)] if include_split else []),
+                *(formatted[c][i] for c in self.columns),
+            ]
             lines.append(",".join(cells))
         return "\n".join(lines) + "\n"
 
@@ -227,6 +231,41 @@ def derive_axes(
         if extra in loaded.matrices:
             columns[extra] = loaded.matrices[extra][:, end]
     return DerivedAxes(loaded.names, loaded.splits, columns, selected, scored)
+
+
+def compare_samples(a: DerivedAxes, b: DerivedAxes) -> DerivedAxes:
+    """Per-image comparison of two runs: how hardness and total loss changed from ``a`` to ``b``.
+
+    An outer join on image name. ``*_change`` is ``b - a`` (positive means the image got harder)
+    and is NaN unless the image is in both runs.
+
+    Raises
+    ------
+    ValueError
+        If the runs share no image.
+    """
+    names = list(dict.fromkeys([*a.names, *b.names]))
+    index_a = {n: i for i, n in enumerate(a.names)}
+    index_b = {n: i for i, n in enumerate(b.names)}
+    shared = set(index_a) & set(index_b)
+    if not shared:
+        raise ValueError("the runs have no image in common")
+
+    def pick(axes: DerivedAxes, index: dict[str, int], column: str) -> np.ndarray:
+        source = axes.columns[column]
+        return np.array([source[index[n]] if n in index else np.nan for n in names], dtype=float)
+
+    hardness_a, hardness_b = pick(a, index_a, "hardness"), pick(b, index_b, "hardness")
+    loss_a, loss_b = pick(a, index_a, "loss_total"), pick(b, index_b, "loss_total")
+    columns = {
+        "hardness_a": hardness_a,
+        "hardness_b": hardness_b,
+        "hardness_change": hardness_b - hardness_a,
+        "loss_total_change": loss_b - loss_a,
+        "in_a": np.array([n in index_a for n in names], dtype=float),
+        "in_b": np.array([n in index_b for n in names], dtype=float),
+    }
+    return DerivedAxes(names, [""] * len(names), columns, b.epoch, b.scored_epochs)
 
 
 def sample_history(files: Sequence[tuple[int, Path]], image_name: str) -> dict | None:

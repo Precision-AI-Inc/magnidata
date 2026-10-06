@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Close the loop: after saving a curated dataset, **Train on it** opens the Train dialog with the overlaid run's
+  settings and records the run as its parent (shown as lineage in run detail and an optional "Parent run" column).
+  **Export relabel queue** downloads the selected images with their losses, hardness and notes, hardest first.
+  **Compare on dataset** (two runs in the compare view) overlays each image's hardness and loss change between
+  the runs, drawn on a diverging scale centred on zero. New API: `GET /api/runs/compare-samples`.
 - Epoch scrubber for an overlaid run (slider, "latest" toggle, play) that re-colours the dataset views as you move
   through the scored epochs. The image preview gains a Training section with the image's loss curves per term,
   its hardness and rank, and a Prediction view of the model's mask at the viewed epoch (only the hardest

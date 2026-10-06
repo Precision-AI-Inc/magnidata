@@ -8,6 +8,7 @@ import type { ColumnKind } from '../../lib/experiments'
 import { TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../../data/vizColors'
 import { RunDetail } from './RunDetail'
 import { RunCompare } from './RunCompare'
+import { parentColumnText } from '../../lib/lineage'
 import { compareHash, parseCompareHash } from '../../lib/compare'
 
 interface Props {
@@ -25,8 +26,10 @@ interface Props {
   workerReason: string | null
   onTrain: () => void
   onRunChanged: () => void
+  onCompareOnDataset: (a: string, b: string, source: string) => void
   /** Changes whenever the live training run advances, so the table re-queries. */
   liveKey: string
+  onSelectRunId: (runId: string) => void
 }
 
 const STATUSES: RunStatus[] = ['SCHEDULED', 'RUNNING', 'FINISHED', 'FAILED', 'KILLED']
@@ -49,7 +52,7 @@ export function StatusBadge({ status }: { status: string }) {
   )
 }
 
-export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset, onOverlayRun, trainDisabled, workerReason, onTrain, onRunChanged, liveKey }: Props) {
+export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset, onOverlayRun, trainDisabled, workerReason, onTrain, onRunChanged, liveKey, onSelectRunId, onCompareOnDataset }: Props) {
   const x = useExperiments(datasetSource)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [checked, setChecked] = useState<string[]>([])
@@ -66,6 +69,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
     refreshRuns()
   }, [liveKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const seen = useMemo(() => metricColumns(x.runs), [x.runs])
+  const runNames = useMemo(() => Object.fromEntries(x.runs.map(r => [r.run_id, r.name || r.run_id.slice(0, 8)])), [x.runs])
   const experimentNames = useMemo(() => new Map(x.experiments.map(e => [e.experiment_id, e.name])), [x.experiments])
   const down = x.mlflow != null && !x.mlflow.reachable
 
@@ -110,7 +114,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
         </div>
       </aside>
 
-      {comparing.length >= 2 ? <RunCompare runIds={comparing} onClose={stopCompare} /> : (
+      {comparing.length >= 2 ? <RunCompare runIds={comparing} knownDatasets={knownDatasets} onCompareOnDataset={onCompareOnDataset} onClose={stopCompare} /> : (
       <section className="flex flex-col flex-1" style={{ minWidth: 0 }}>
         {down && (
           <div role="alert" className="flex items-center gap-2 px-4 py-2 text-xs font-semibold"
@@ -168,6 +172,10 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
             {pickerOpen && (
               <div className="absolute right-0 top-full mt-1 p-3 rounded-lg overflow-auto z-20"
                    style={{ background: 'var(--c-surface)', border: '1px solid var(--c-border)', width: 280, maxHeight: 340 }}>
+                <label className="flex items-center gap-2 text-xs py-0.5 mb-2" style={{ color: 'var(--c-t1)' }}>
+                  <input type="checkbox" checked={!!x.columns.parent} onChange={() => x.setColumns({ ...x.columns, parent: !x.columns.parent })} />
+                  Parent run
+                </label>
                 {(['metrics', 'params'] as const).map(kind => (
                   <div key={kind} className="mb-2">
                     <div className="text-[10px] uppercase font-semibold mb-1" style={{ color: 'var(--c-t3)' }}>{kind}</div>
@@ -203,6 +211,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
                 <Th label="Dataset" />
                 <Th label="Preset" />
                 <Th label="Origin" />
+                {x.columns.parent && <Th label="Parent run" />}
                 <Th label="Started" sort={x.sort} kind="attribute" id="start" onSort={sortBy} />
                 <Th label="Duration" />
                 <Th label="User" />
@@ -228,6 +237,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
                   <Td>{run.magnidata['magnidata.dataset_name'] ?? '—'}</Td>
                   <Td>{run.magnidata['magnidata.preset'] ?? '—'}</Td>
                   <Td>{run.magnidata['magnidata.origin'] ?? '—'}</Td>
+                  {x.columns.parent && <Td>{parentColumnText(run.magnidata['magnidata.parent_run_id'], runNames)}</Td>}
                   <Td>{run.start_time ? new Date(run.start_time).toLocaleString() : '—'}</Td>
                   <Td>{formatDuration(run)}</Td>
                   <Td>{run.user ?? '—'}</Td>
@@ -272,7 +282,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
       )}
       {comparing.length < 2 && selectedRunId && (
         <RunDetail runId={selectedRunId} currentDataset={datasetSource} knownDatasets={knownDatasets} onLoadDataset={onLoadDataset}
-                   onOverlay={onOverlayRun} onChanged={onRunChanged} onClose={onCloseRun} />
+                   onOverlay={onOverlayRun} onChanged={onRunChanged} onOpenRun={onSelectRunId} onClose={onCloseRun} />
       )}
     </div>
   )

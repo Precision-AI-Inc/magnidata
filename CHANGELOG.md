@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The train/val partition shows across the dashboard: an overlay that brings a split adds `split` as the first
+  categorical axis (listed under **Training** in Fields) and, unless colouring was chosen by hand, colours by it with
+  fixed train/val/test colours in Parallel Coordinates, the 3D view and histograms. Histograms can **stack by split**,
+  the 3D view can group by any categorical column with 12 or fewer values (`split` first), the data table pins `split`
+  beside the image column with filter chips, and the toolbar shows `train 355 · val 96`.
 - The Run picker lists every run linked to the dataset, newest first, with status, device, scored epochs and a reason
   when a run cannot be picked yet ("queued", "training · first losses after epoch 1 scoring", "split only"); it refreshes
   every 10 s while a run is queued or training, when opened, and right after launching. A launched (or newest running)

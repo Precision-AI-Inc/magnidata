@@ -8,6 +8,7 @@ import { usePartitions } from './hooks/usePartitions'
 import { useBuildJob } from './hooks/useBuildJob'
 import { useRunOverlay } from './hooks/useRunOverlay'
 import { autoOverlayTarget, pickerEntries } from './lib/runAxes'
+import { splitSummary } from './lib/split'
 import { useActiveRun } from './hooks/useActiveRun'
 import { TrainDialog } from './components/experiments/TrainDialog'
 import { paramsFromRun, progressLabel, trainDisabledReason } from './lib/train'
@@ -66,7 +67,11 @@ export default function App() {
 
   // Hand-picked images (a curation "basket"). Saving turns the picked set into a brand-new dataset.
   // Visual-explorer plot controls — lifted up so they render in the tab bar (see below).
-  const [colorBy, setColorBy]       = useState('')
+  const [colorBy, setColorByState] = useState('')
+  // Once the user picks a colour themselves, an overlay no longer switches it to `split`.
+  const userPickedColor = useRef(false)
+  const setColorBy = useCallback((c: string | ((prev: string) => string)) => setColorByState(c), [])
+  const chooseColorBy = useCallback((c: string) => { userPickedColor.current = true; setColorByState(c) }, [])
   const [sortMode, setSortMode]     = useState<'default' | 'variance' | 'corr'>('default')
   const [showFields, setShowFields] = useState(false)
 
@@ -114,6 +119,13 @@ export default function App() {
       ? prev
       : (nums.includes('complexity_score') ? 'complexity_score' : (cats[0] ?? nums[0] ?? '')))
   }, [data, visibleData])
+
+  // A new dataset starts with the default colouring; the first overlay that brings a split colours by it.
+  useEffect(() => { userPickedColor.current = false }, [data?.fileName])
+  const hasSplitColumn = !!data?.runColumns?.includes('split')
+  useEffect(() => {
+    if (hasSplitColumn && !userPickedColor.current) setColorByState('split')
+  }, [hasSplitColumn])
 
   // Filtered rows with the staged removals excluded — what the tabs/preview show. The full row set
   // (data.rows) is kept for the explorer so the server-side embedding projection stays aligned.
@@ -520,6 +532,13 @@ export default function App() {
                                   onSelect={id => void runOverlay.select(id)} onClear={runOverlay.clear} onOpen={() => void runOverlay.refreshRuns()} />
               )}
 
+              {data && runOverlay.overlay && hasSplitColumn && (
+                <span role="status" title="Rows of the loaded dataset in each split of the overlaid run"
+                      style={{ fontSize: 11, marginRight: 10, whiteSpace: 'nowrap', color: 'var(--c-t2)' }}>
+                  {splitSummary(data.rows)}
+                </span>
+              )}
+
               {data && runOverlay.overlay && (
                 <EpochScrubber scoredEpochs={runOverlay.scoredEpochs} epoch={runOverlay.overlay.epoch} loading={runOverlay.loading}
                                onChange={e => void runOverlay.select(runOverlay.overlay!.runId, e)} />
@@ -531,7 +550,7 @@ export default function App() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginRight: 10 }}>
                   <div style={{ width: 1, height: 22, background: 'var(--c-border)', marginRight: 3 }} />
                   <span style={{ fontSize: 11, color: 'var(--c-t3)' }}>Color by</span>
-                  <select value={colorBy} onChange={e => setColorBy(e.target.value)}
+                  <select value={colorBy} onChange={e => chooseColorBy(e.target.value)}
                           style={{ fontSize: 11, borderRadius: 7, padding: '3px 8px', outline: 'none',
                                    background: 'var(--c-surface)', border: '1px solid var(--c-border)', color: 'var(--c-t1)' }}>
                     {[...visibleData.categoricalCols, ...visibleData.numericCols].filter(c => !visibleData.runColumns?.includes(c)).map(c => <option key={c} value={c}>{c}</option>)}
@@ -734,7 +753,7 @@ export default function App() {
                     partitions={partitions}
                     onCommitClusterColumn={setClusterColumn}
                     removed={removed}
-                    colorBy={colorBy} setColorBy={setColorBy}
+                    colorBy={colorBy} setColorBy={chooseColorBy}
                     sortMode={sortMode} setSortMode={setSortMode}
                     showFields={showFields} setShowFields={setShowFields}
                   />

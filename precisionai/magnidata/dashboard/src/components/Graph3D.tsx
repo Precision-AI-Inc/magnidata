@@ -13,6 +13,7 @@ import type { Partitions } from '../hooks/usePartitions'
 import { imageNameOf } from '../hooks/usePartitions'
 import { BRAND_CATEGORICAL, BRAND_SEQ_STOPS, CLUSTER_PALETTE_100 } from '../data/vizColors'
 import { divergingRange, interpolateDiverging, isDivergingColumn } from '../lib/diverging'
+import { partitionColumns, splitColor, SPLIT_COLUMN } from '../lib/split'
 
 // ── Palette & colorscale ───────────────────────────────────────────────────────
 const PALETTE = BRAND_CATEGORICAL
@@ -441,7 +442,9 @@ function buildColors(
       return
     }
     let rgb: [number, number, number]
-    if (isCat && enc && catColors && catColors.length) {
+    if (isCat && colorBy === SPLIT_COLUMN) {
+      rgb = hexToRgb01(splitColor(r[colorBy]))
+    } else if (isCat && enc && catColors && catColors.length) {
       rgb = catColors[(enc.encode[String(r[colorBy] ?? '')] ?? 0) % catColors.length]
     } else {
       const t = cmax > cmin ? ((r[colorBy] as number ?? (diverging ? 0 : cmin)) - cmin) / (cmax - cmin) : 0
@@ -823,8 +826,15 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
 
   // Labels read from a predetermined CSV cluster column: distinct values (string names) → 0-based ids.
   // `names` keeps the original cluster names so the UI shows the clustering exactly as labelled.
+  const [partitionCol, setPartitionCol] = useState<string | null>(null)
+  useEffect(() => setPartitionCol(null), [data.fileName])
+  const partitionCandidates = useMemo(
+    () => partitionColumns(data.categoricalCols, rows, data.clusterCol),
+    [data.categoricalCols, rows, data.clusterCol],
+  )
+  const groupCol = partitionCol && data.categoricalCols.includes(partitionCol) ? partitionCol : data.clusterCol
   const columnLabels = useMemo<{ labels: number[]; count: number; names: string[] } | null>(() => {
-    const col = data.clusterCol
+    const col = groupCol
     if (!col) return null
     const present = [...new Set(rows.map(r => r[col]).filter(v => v != null && v !== '').map(v => String(v)))]
       .sort((a, b) => {
@@ -839,7 +849,7 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
       return (v == null || v === '') ? -1 : (index.get(String(v)) ?? -1)
     })
     return { labels, count: present.length, names: present }
-  }, [data.clusterCol, rows])
+  }, [groupCol, rows])
 
   // Labels from committed partitions (SQLite), keyed by image filename.
   const savedLabels = useMemo<number[] | null>(() => {
@@ -900,8 +910,14 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
   // A random, distinct gist_ncar colour per cluster — regenerated whenever the cluster count changes
   // (or the color view is (re)entered) so the palette reshuffles as k grows/shrinks.
   const clusterColors = useMemo<[number, number, number][]>(
-    () => (clusterView === 'color' ? makeClusterColors(clusterCount) : []),
-    [clusterView, clusterCount],
+    () => {
+      if (clusterView !== 'color') return []
+      if (groupCol === SPLIT_COLUMN && clusterSource === 'preset' && preset?.fromColumn) {
+        return preset.names.map(n => hexToRgb01(splitColor(n)))
+      }
+      return makeClusterColors(clusterCount)
+    },
+    [clusterView, clusterCount, groupCol, clusterSource, preset],
   )
 
   // Names for the legend / cluster picker: the dataset's own cluster names when showing the preset.
@@ -1498,12 +1514,22 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
 
         {/* Cluster source — offered when the dataset has a predetermined clustering (CSV column or
             committed partitions). The button reflects where the preset comes from. */}
+        {mode === 'cluster' && partitionCandidates.some(c => c !== data.clusterCol) && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={lblS}>Group by</span>
+            <select aria-label="Partition column" value={groupCol ?? ''} style={{ ...selS, maxWidth: 130 }}
+                    onChange={e => { setPartitionCol(e.target.value || null); setClusterSource('preset') }}>
+              {partitionCandidates.map(c => <option key={c} value={c} style={optS}>{c}</option>)}
+            </select>
+          </span>
+        )}
+
         {mode === 'cluster' && hasPreset && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={lblS}>Clusters</span>
             <button onClick={() => setClusterSource('preset')} style={btnS(clusterSource === 'preset')}
                     title={preset?.fromColumn
-                      ? `Visualize the ground-truth clusters provided in the file's "${data.clusterCol}" column (${preset.count} clusters)`
+                      ? `Visualize the ground-truth clusters provided in the file's "${groupCol}" column (${preset.count} clusters)`
                       : `Visualize the saved (committed) partitions (${preset?.count} clusters)`}>
               {preset?.fromColumn ? 'Ground Truth' : 'Saved'}
             </button>

@@ -7,6 +7,7 @@ import { ColTooltip } from './ColTooltip'
 import { Graph3D } from './Graph3D'
 import { BRAND_CATEGORICAL, BRAND_SEQUENTIAL, TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../data/vizColors'
 import { defaultTrainingAxes, highLossBrush } from '../lib/runAxes'
+import { defaultTrainingCategorical, splitColor, SPLIT_COLUMN } from '../lib/split'
 import { DIVERGING_SCALE, divergingRange, isDivergingColumn } from '../lib/diverging'
 
 interface Props {
@@ -168,7 +169,8 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     })
     const categorical = new Set(data.categoricalCols)
     setSelectedCatCols(prev => {
-      const next = new Set([...prev].filter(c => categorical.has(c)))
+      const kept = new Set([...prev].filter(c => categorical.has(c)))
+      const next = new Set(defaultTrainingCategorical(categorical, kept, data.runColumns ?? []))
       return next.size || !prev.size ? next : defaultCategoricalSelection(data.categoricalCols)
     })
   }, [runColumnsKey]) // eslint-disable-line
@@ -207,7 +209,8 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
 
   // Active categorical axes (appended after numeric on the chart)
   const activeCatCols = useMemo(
-    () => data.categoricalCols.filter(c => selectedCatCols.has(c)),
+    () => data.categoricalCols.filter(c => selectedCatCols.has(c))
+      .sort((a, b) => Number(b === SPLIT_COLUMN) - Number(a === SPLIT_COLUMN)),
     [data.categoricalCols, selectedCatCols],
   )
 
@@ -246,8 +249,8 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
       const enc = data.catEncodings[col]
       if (enc) {
         const n         = enc.sorted.length
-        const colorscale: [number, string][] = enc.sorted.map((_, i) =>
-          [n > 1 ? i / (n - 1) : 0, PALETTE[i % PALETTE.length]]
+        const colorscale: [number, string][] = enc.sorted.map((value, i) =>
+          [n > 1 ? i / (n - 1) : 0, col === SPLIT_COLUMN ? splitColor(value) : PALETTE[i % PALETTE.length]]
         )
         return {
           colorData: displayRows.map(r => enc.encode[String(r[col] ?? '')] ?? 0),
@@ -524,9 +527,10 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
   const trainingSet = useMemo(() => new Set(data.runColumns ?? []), [data.runColumns])
   const orderedFieldCols = [...visibleFieldCols.filter(c => trainingSet.has(c)), ...visibleFieldCols.filter(c => !trainingSet.has(c))]
 
-  const visibleCatCols = fieldSearch
+  const matchingCatCols = fieldSearch
     ? data.categoricalCols.filter(c => c.toLowerCase().includes(fieldSearch.toLowerCase()))
     : data.categoricalCols
+  const visibleCatCols = [...matchingCatCols.filter(c => trainingSet.has(c)), ...matchingCatCols.filter(c => !trainingSet.has(c))]
 
   // ── CSV export ─────────────────────────────────────────────────────────────
   const exportCSV = useCallback(() => {
@@ -731,11 +735,18 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
                                letterSpacing: '.5px', color: 'var(--c-t3)' }}>Categorical</span>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 8px' }}>
-                {visibleCatCols.map(col => {
+                {visibleCatCols.map((col, i) => {
                   const checked = selectedCatCols.has(col)
                   const enc     = data.catEncodings[col]
+                  const heading = trainingSet.has(col) && (i === 0 || !trainingSet.has(visibleCatCols[i - 1])) ? 'Training'
+                    : (!trainingSet.has(col) && i > 0 && trainingSet.has(visibleCatCols[i - 1]) ? 'Features' : null)
                   return (
-                    <label key={col}
+                    <Fragment key={col}>
+                    {heading && (
+                      <div style={{ flexBasis: '100%', fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                                    letterSpacing: '.5px', color: 'var(--c-t3)' }}>{heading}</div>
+                    )}
+                    <label
                            style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
                                     padding: '3px 8px', borderRadius: 12,
                                     background: checked ? 'var(--c-accent)' : 'var(--c-raised)',
@@ -754,6 +765,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
                         </span>
                       )}
                     </label>
+                    </Fragment>
                   )
                 })}
               </div>

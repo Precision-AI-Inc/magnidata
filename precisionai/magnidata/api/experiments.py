@@ -53,6 +53,7 @@ ORDER_BY_RE = re.compile(
     re.IGNORECASE,
 )
 
+PER_SAMPLE_MODES = ("any", "split", "scored")
 RUNS_CACHE_TTL_S = 5.0
 RUNS_CACHE_MAX = 128
 _cache: dict[tuple, tuple[float, Any]] = {}
@@ -152,6 +153,13 @@ def _build_filter() -> str:
         if status not in {s.value for s in contract.RunStatus}:
             raise _bad("invalid status")
         clauses.append(f"attributes.status = '{status}'")
+    mode = request.args.get("per_sample", "any")
+    if mode not in PER_SAMPLE_MODES:
+        raise _bad(f"per_sample must be one of {', '.join(PER_SAMPLE_MODES)}")
+    if mode == "scored":
+        clauses.append(f"tags.`{contract.TAG_PER_SAMPLE_SCHEMA}` != ''")
+    elif mode == "split":
+        clauses.append(f"tags.`{contract.TAG_HAS_SPLIT}` = 'true'")
     if raw := request.args.get("filter", "").strip():
         if len(raw) > MAX_FILTER_LENGTH or not FILTER_RE.match(raw):
             raise _bad("invalid filter: expected clauses like metrics.x > 1 AND params.y = 'z'")
@@ -187,6 +195,7 @@ def run_summary(run: dict[str, Any]) -> dict[str, Any]:
         "params": run["params"],
         "magnidata": {k: v for k, v in tags.items() if k.startswith("magnidata.")},
         "has_per_sample": contract.TAG_PER_SAMPLE_SCHEMA in tags,
+        "has_split": tags.get(contract.TAG_HAS_SPLIT) == "true" or contract.TAG_PER_SAMPLE_SCHEMA in tags,
         "mlflow_ui_url": f"{ui.rstrip('/')}/#/experiments/{run['experiment_id']}/runs/{run['run_id']}" if ui else None,
     }
 
@@ -349,9 +358,34 @@ def _per_sample_run(run_id: str) -> dict[str, Any]:
     return run
 
 
+def _split_only_csv(run_id: str) -> Response | None:
+    """Serve ``image_name,split`` for a run that has logged its split but scored no epoch yet."""
+    store = mlflow_store.get_store()
+    run = store.get_run(run_id)
+    if contract.TAG_HAS_SPLIT not in run["tags"] and contract.TAG_PER_SAMPLE_SCHEMA not in run["tags"]:
+        return None
+    path = artifact_cache.fetch_artifact(store, run_id, contract.SPLIT_ARTIFACT)
+    if path is None:
+        return None
+    return Response(
+        path.read_text(),
+        mimetype="text/csv",
+        headers={"Cache-Control": "no-store", "X-Magnidata-Epoch": "0", "X-Magnidata-Scored-Epochs": "0"},
+    )
+
+
 @bp.get("/api/runs/<run_id>/columns")
 def run_columns(run_id: str) -> ResponseReturnValue:
-    """Return the derived per-sample axes at an epoch as CSV (``image_name`` first)."""
+    """Return the derived per-sample axes at an epoch as CSV (``split`` right after ``image_name``).
+
+    Before the first scored epoch the CSV is just ``image_name,split`` (when the run has logged its split).
+    """
+    run = mlflow_store.get_store().get_run(_run_id(run_id))
+    if not contract.parse_scored_epochs(run["tags"]):
+        early = _split_only_csv(run_id)
+        if early is None:
+            raise Conflict("run has no per-sample artifacts")
+        return early
     run = _per_sample_run(run_id)
     scored = contract.parse_scored_epochs(run["tags"])
     raw = request.args.get("epoch", "latest")

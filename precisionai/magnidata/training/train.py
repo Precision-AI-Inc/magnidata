@@ -580,7 +580,7 @@ def run_epochs(
             f"epoch {epoch}/{cfg.epochs} done train={train.values['total']:.3f} "
             f"val={val.get('total', float('nan')):.3f} {seconds:.1f}s ETA {_format_duration(eta)}"
         )
-        if epoch % cfg.score_every == 0 or epoch == cfg.epochs:
+        if epoch == 1 or epoch % cfg.score_every == 0 or epoch == cfg.epochs:
             hardest = score_epoch(
                 model, setup.score_loader, criterion, device, recorder, setup.splits, epoch, cfg.top_k_predictions, amp
             )

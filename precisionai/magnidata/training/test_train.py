@@ -149,6 +149,27 @@ def test_cuda_request_without_cuda_fails_run(mlflow_tracking, synthetic_dataset)
     assert run.data.tags["magnidata.error"].startswith("CUDA requested but not available")
 
 
+def test_epoch_one_and_last_are_always_scored(mlflow_tracking, synthetic_dataset):
+    uri, client, run_id = _new_run(mlflow_tracking, {"epochs": "4", "score_every": "3"})
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+    run = client.get_run(run_id)
+    assert run.data.tags[contract.TAG_SCORED_EPOCHS] == "1,3,4"
+    assert run.data.tags[contract.TAG_HAS_SPLIT] == "true"
+
+
+def test_split_is_tagged_before_the_first_epoch(mlflow_tracking, synthetic_dataset, tmp_path):
+    uri, client, run_id = _new_run(mlflow_tracking)
+    cfg = train.config_from_run(client.get_run(run_id).data.params, client.get_run(run_id).data.tags)
+    cfg.num_workers = 0
+    sink = train.MlflowSink(run_id, uri)
+    recorder = train.LossRecorder(cfg.loss_terms, sink, tmp_path / "scratch")
+    train.prepare_data(cfg, synthetic_dataset.root, recorder)
+    tags = client.get_run(run_id).data.tags
+    assert tags[contract.TAG_HAS_SPLIT] == "true"
+    assert contract.TAG_SCORED_EPOCHS not in tags
+    assert contract.SPLIT_ARTIFACT in _artifacts(client, run_id, "magnidata")
+
+
 def test_loss_decreases_on_learnable_data(mlflow_tracking, synthetic_dataset):
     _make_learnable(synthetic_dataset)
     uri, client, run_id = _new_run(mlflow_tracking, {"batch_size": "2", "epochs": "4", "lr": "0.02"})

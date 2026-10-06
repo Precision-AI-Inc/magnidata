@@ -118,7 +118,7 @@ class LossRecorder:
         self._extras: tuple[str, ...] | None = None
 
     def write_split(self, assignments: Mapping[str, str]) -> None:
-        """Log ``magnidata/split.csv`` mapping each image name to train, val or test."""
+        """Log ``magnidata/split.csv`` (image name to train, val or test) and tag the run ``magnidata.has_split``."""
         bad = sorted({s for s in assignments.values() if s not in contract.SPLITS})
         if bad:
             raise ValueError(f"invalid split label(s): {', '.join(map(str, bad))}")
@@ -128,6 +128,7 @@ class LossRecorder:
             writer.writerow(["image_name", "split"])
             writer.writerows(assignments.items())
         self.sink.log_file(path, contract.ARTIFACT_ROOT)
+        self.sink.set_tag(contract.TAG_HAS_SPLIT, "true")
 
     def write_palette(self, palette: Mapping[int, dict]) -> None:
         """Log ``magnidata/palette.json`` (class index → RGB and name)."""

@@ -186,6 +186,7 @@ export interface RunSummary {
   params: Record<string, string>
   magnidata: Record<string, string>
   has_per_sample: boolean
+  has_split: boolean
   mlflow_ui_url: string | null
 }
 

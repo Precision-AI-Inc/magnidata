@@ -7,7 +7,7 @@ import {
 function run(over: Partial<RunSummary>): RunSummary {
   return {
     run_id: 'r', name: 'n', experiment_id: '1', status: 'FINISHED', start_time: 0, end_time: 0, duration_ms: 0,
-    user: 'u', metrics: {}, params: {}, magnidata: {}, has_per_sample: false, mlflow_ui_url: null, ...over,
+    user: 'u', metrics: {}, params: {}, magnidata: {}, has_per_sample: false, has_split: false, mlflow_ui_url: null, ...over,
   }
 }
 

@@ -27,6 +27,7 @@ TAG_SCORED_EPOCHS = "magnidata.scored_epochs"
 TAG_CANCEL_REQUESTED = "magnidata.cancel_requested"
 TAG_PARENT_RUN_ID = "magnidata.parent_run_id"
 TAG_WORKER = "magnidata.worker"
+TAG_HAS_SPLIT = "magnidata.has_split"
 TAG_DEVICE = "magnidata.device"
 TAG_ETA_SECONDS = "magnidata.eta_seconds"
 

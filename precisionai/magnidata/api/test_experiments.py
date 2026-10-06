@@ -263,7 +263,7 @@ def test_mlflow_down_returns_503(client):
 @pytest.fixture
 def scored_run(mlflow_store, client, tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_ROOT", str(tmp_path / "root"))
-    (tmp_path / "root" / "data_user").mkdir(parents=True)
+    (tmp_path / "root" / "data_user").mkdir(parents=True, exist_ok=True)
     artifacts = {}
     for epoch, losses in ((1, (0.9, 0.2)), (2, (0.7, 0.3)), (3, (0.5, 0.4))):
         rows = "".join(f"{n},{s},{v}\n" for n, s, v in zip(("a.png", "b.png"), ("train", "val"), losses, strict=True))
@@ -289,6 +289,51 @@ def test_columns_returns_derived_csv(client, scored_run):
 
     early = client.get(f"/api/runs/{scored_run}/columns?epoch=1").get_data(as_text=True).splitlines()
     assert float(dict(zip(header, early[1].split(","), strict=True))["loss_total"]) == pytest.approx(0.9)
+
+
+@pytest.fixture
+def split_only_run(mlflow_store, client, tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "root"))
+    (tmp_path / "root" / "data_user").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(experiments, "RUNS_CACHE_TTL_S", 0)
+    return seed_run(
+        mlflow_store,
+        tags={contract.TAG_DATASET_SOURCE: "data_user/a.csv", contract.TAG_HAS_SPLIT: "true"},
+        artifacts={contract.SPLIT_ARTIFACT: "image_name,split\na.png,train\nb.png,val\n"},
+        status="RUNNING",
+    )
+
+
+def test_columns_before_first_scored_epoch_returns_split_only(client, split_only_run):
+    resp = client.get(f"/api/runs/{split_only_run}/columns")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/csv"
+    assert resp.headers["X-Magnidata-Scored-Epochs"] == "0"
+    assert resp.get_data(as_text=True).splitlines() == ["image_name,split", "a.png,train", "b.png,val"]
+
+
+def test_columns_with_neither_split_nor_scores_conflicts(client, mlflow_store):
+    plain = seed_run(mlflow_store, tags={contract.TAG_HAS_SPLIT: "true"})
+    assert client.get(f"/api/runs/{plain}/columns").status_code == 409
+
+
+def test_run_summary_has_split_and_per_sample_filter(client, mlflow_store, split_only_run, scored_run):
+    plain = seed_run(mlflow_store)
+    runs = {r["run_id"]: r for r in client.get("/api/runs").get_json()["runs"]}
+    assert runs[split_only_run]["has_split"] is True
+    assert runs[split_only_run]["has_per_sample"] is False
+    assert runs[scored_run]["has_split"] is True
+    assert runs[scored_run]["has_per_sample"] is True
+    assert runs[plain]["has_split"] is False
+
+    def ids(mode):
+        return {r["run_id"] for r in client.get(f"/api/runs?per_sample={mode}").get_json()["runs"]}
+
+    assert {split_only_run, scored_run, plain} <= ids("any")
+    assert split_only_run in ids("split")
+    assert plain not in ids("split")
+    assert ids("scored") == {scored_run}
+    assert client.get("/api/runs?per_sample=bogus").status_code == 400
 
 
 def test_columns_validation(client, scored_run, mlflow_store):

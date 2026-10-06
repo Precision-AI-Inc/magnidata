@@ -252,3 +252,14 @@ def test_custom_backend_can_be_injected(client):
         assert client.get("/api/training/presets").get_json()["backend"]["available"] is True
     finally:
         trainer_backend.set_backend(None)
+
+
+def test_launch_and_cancel_are_visible_immediately_despite_the_runs_cache(client, mlflow_store):
+    url = "/api/runs?dataset=data_user/syn.csv"
+    assert client.get(url).get_json()["runs"] == []
+    run_id = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
+    listed = client.get(url).get_json()["runs"]
+    assert [r["run_id"] for r in listed] == [run_id]
+    assert listed[0]["status"] == "SCHEDULED"
+    client.post(f"/api/runs/{run_id}/cancel")
+    assert client.get(url).get_json()["runs"][0]["status"] == "KILLED"

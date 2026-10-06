@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-sample data from the start of a run: the trainer tags `magnidata.has_split` as soon as `split.csv` is logged and
+  always scores epoch 1 and the last epoch, whatever `score_every` is. Run summaries gain `has_split`;
+  `GET /api/runs` takes `per_sample=any|split|scored`; `GET /api/runs/<id>/columns` answers `image_name,split`
+  (header `X-Magnidata-Scored-Epochs: 0`) before the first scored epoch instead of 409.
 - Faster training input: images and masks are decoded once, resized to the training size and cached under
   `data_user/.train_cache/` (bounded by `TRAIN_CACHE_MAX_MB`, default 4096, least recently used evicted first); the
   palette is built from that cache, loaders use parallel worker processes (`num_workers`, default one per spare core

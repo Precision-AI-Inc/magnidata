@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { BarChart2, Table2, Share2, Activity, LayoutGrid, Trash2, Save, X, Loader2, Plus, Download, Columns, FlaskConical } from 'lucide-react'
 import { api } from './api'
 import type { DatasetMeta } from './api'
@@ -7,6 +7,7 @@ import { useFilters } from './hooks/useFilters'
 import { usePartitions } from './hooks/usePartitions'
 import { useBuildJob } from './hooks/useBuildJob'
 import { useRunOverlay } from './hooks/useRunOverlay'
+import { autoOverlayTarget, pickerEntries } from './lib/runAxes'
 import { useActiveRun } from './hooks/useActiveRun'
 import { TrainDialog } from './components/experiments/TrainDialog'
 import { paramsFromRun, progressLabel, trainDisabledReason } from './lib/train'
@@ -290,7 +291,11 @@ export default function App() {
     a.click()
     URL.revokeObjectURL(a.href)
   }
+  const [launchedRunId, setLaunchedRunId] = useState<string | null>(null)
+  const autoOverlaid = useRef(new Set<string>())
   const onLaunched = (runId: string) => {
+    setLaunchedRunId(runId)
+    void runOverlay.refreshRuns()
     setShowTrain(false)
     setTrainOn(null)
     setCreatedDataset(null)
@@ -302,6 +307,16 @@ export default function App() {
   const trainingBadge = activeRun.active && activeRun.run
     ? `Training · ${progressLabel(activeRun.run.status, activeRun.epochsDone, Number(activeRun.run.params.epochs ?? 0))}`
     : null
+
+  // Overlay the launched (or newest running) run by itself as soon as it has a split or losses to show.
+  useEffect(() => {
+    if (!data || runOverlay.overlay || runOverlay.compare || runOverlay.loading) return
+    const target = autoOverlayTarget(pickerEntries(runOverlay.runs), launchedRunId, autoOverlaid.current)
+    if (!target) return
+    autoOverlaid.current.add(target.run.run_id)
+    activeRun.toast('neutral', `Overlaying run ${target.run.name || target.run.run_id.slice(0, 8)}`)
+    void runOverlay.select(target.run.run_id, 'latest')
+  }, [runOverlay.runs, runOverlay.overlay, runOverlay.compare, runOverlay.loading, launchedRunId, data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live axes: while the overlaid run trains, pull in its new epochs as they are scored.
   const scoredCount = activeRun.run?.scored_epochs.length ?? 0
@@ -502,7 +517,7 @@ export default function App() {
               {data && datasetSource && (
                 <RunOverlayPicker runs={runOverlay.runs} overlay={runOverlay.overlay} compare={runOverlay.compare} match={runOverlay.match}
                                   loading={runOverlay.loading} error={runOverlay.error}
-                                  onSelect={id => void runOverlay.select(id)} onClear={runOverlay.clear} />
+                                  onSelect={id => void runOverlay.select(id)} onClear={runOverlay.clear} onOpen={() => void runOverlay.refreshRuns()} />
               )}
 
               {data && runOverlay.overlay && (

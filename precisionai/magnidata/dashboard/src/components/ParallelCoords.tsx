@@ -6,6 +6,7 @@ import type { Partitions } from '../hooks/usePartitions'
 import { ColTooltip } from './ColTooltip'
 import { Graph3D } from './Graph3D'
 import { BRAND_CATEGORICAL, BRAND_SEQUENTIAL, TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../data/vizColors'
+import { defaultTrainingAxes, highLossBrush } from '../lib/runAxes'
 import { DIVERGING_SCALE, divergingRange, isDivergingColumn } from '../lib/diverging'
 
 interface Props {
@@ -160,11 +161,9 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
   const runColumnsKey = (data.runColumns ?? []).join(',')
   useEffect(() => {
     const numeric = new Set(data.numericCols)
-    const headline = ['loss_total', 'hardness', 'cmp_hardness_change', 'cmp_loss_total_change']
-      .filter(c => numeric.has(c) && (data.runColumns ?? []).includes(c))
     setSelectedCols(prev => {
-      const next = new Set([...prev].filter(c => numeric.has(c)))
-      headline.forEach(c => next.add(c))
+      const kept = [...prev].filter(c => numeric.has(c))
+      const next = new Set(defaultTrainingAxes(numeric, kept, data.runColumns ?? []))
       return next.size ? next : defaultNumericSelection(data.numericCols, rows)
     })
     const categorical = new Set(data.categoricalCols)
@@ -173,6 +172,16 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
       return next.size || !prev.size ? next : defaultCategoricalSelection(data.categoricalCols)
     })
   }, [runColumnsKey]) // eslint-disable-line
+
+  // "High-loss samples": brush the hardest samples so the table, histograms and 3D view show their features.
+  const highLoss = useMemo(() => highLossBrush(data.runColumns ?? [], rows), [data.runColumns, rows])
+  const brushHighLoss = useCallback(() => {
+    if (!highLoss) return
+    setSelectedCols(prev => new Set([...prev, highLoss.col]))
+    const next = { [highLoss.col]: [highLoss.range] as [number, number][] }
+    setConstraints(next)
+    onConstraintsChange(next)
+  }, [highLoss, onConstraintsChange])
 
   // 3D cluster selection (null = no selection; Set = row indices selected from 3D view)
   const [filter3D, setFilter3D] = useState<Set<number> | null>(null)
@@ -681,7 +690,17 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
                 <Fragment key={col}>
                 {heading && (
                   <div style={{ gridColumn: '1/-1', fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
-                                letterSpacing: '.5px', color: 'var(--c-t3)', marginTop: i === 0 ? 0 : 4 }}>{heading}</div>
+                                letterSpacing: '.5px', color: 'var(--c-t3)', marginTop: i === 0 ? 0 : 4,
+                                display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {heading}
+                    {heading === 'Training' && highLoss && (
+                      <button onClick={brushHighLoss} className="btn-ghost"
+                              title={highLoss.col === 'hardness' ? 'Brush samples that are among the hardest in most epochs (hardness ≥ 0.6)' : 'Brush the 20% of samples with the highest mean loss'}
+                              style={{ fontSize: 10, textTransform: 'none', letterSpacing: 0, padding: '1px 8px', borderRadius: 6, border: '1px solid var(--c-border)' }}>
+                        High-loss samples
+                      </button>
+                    )}
+                  </div>
                 )}
                 <label
                        style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',

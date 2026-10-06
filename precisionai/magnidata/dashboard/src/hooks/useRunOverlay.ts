@@ -6,6 +6,8 @@ import type { RunSummary } from '../api'
 import { buildFilter } from '../lib/experiments'
 import { mergeRunColumns, removeRunColumns } from '../lib/mergeRunColumns'
 
+const RUN_LIST_POLL_MS = 10_000
+
 export interface Overlay { runId: string; epoch: number | 'latest' }
 export interface Comparison { a: string; b: string }
 export interface MatchInfo { matched: number; total: number }
@@ -13,8 +15,8 @@ export interface MatchInfo { matched: number; total: number }
 /**
  * Merge a training run's per-sample columns into the loaded dataset.
  *
- * `data` is the dataset currently shown; `replaceData` swaps in the merged one. The runs
- * offered are those with per-sample artifacts linked to `datasetSource`.
+ * `data` is the dataset currently shown; `replaceData` swaps in the merged one. Every run linked
+ * to `datasetSource` is listed (newest first in the picker); only those with a split or per-sample files can be picked.
  */
 export function useRunOverlay(data: CSVData | null, datasetSource: string | null, replaceData: (d: CSVData) => void) {
   const [overlay, setOverlay] = useState<Overlay | null>(null)
@@ -30,11 +32,20 @@ export function useRunOverlay(data: CSVData | null, datasetSource: string | null
     if (!datasetSource) { setRuns([]); return }
     try {
       const page = await api.searchRuns({ experimentIds: [], filter: buildFilter({ dataset: datasetSource }), maxResults: 100 })
-      setRuns(page.runs.filter(r => r.has_per_sample))
+      setRuns(page.runs)
     } catch { setRuns([]) }
   }, [datasetSource])
 
   useEffect(() => { void refreshRuns() }, [refreshRuns])
+  // Keep the picker current while something is queued or training; idle (and hidden) tabs do not poll.
+  const live = runs.some(r => r.status === 'SCHEDULED' || r.status === 'RUNNING')
+  useEffect(() => {
+    if (!live) return
+    const tick = () => { if (!document.hidden) void refreshRuns() }
+    const id = setInterval(tick, RUN_LIST_POLL_MS)
+    document.addEventListener('visibilitychange', tick)
+    return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick) }
+  }, [live, refreshRuns])
   // A different dataset starts without an overlay.
   useEffect(() => { setOverlay(null); setCompare(null); setMatch(null); setError(null) }, [datasetSource, data?.fileName])
 

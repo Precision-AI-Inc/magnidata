@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Run picker lists every run linked to the dataset, newest first, with status, device, scored epochs and a reason
+  when a run cannot be picked yet ("queued", "training · first losses after epoch 1 scoring", "split only"); it refreshes
+  every 10 s while a run is queued or training, when opened, and right after launching. A launched (or newest running)
+  run is overlaid automatically once it has a split or losses, and Parallel Coordinates shows `loss_total`,
+  `loss_total_mean` and `hardness` next to the photometric axes. A **High-loss samples** button in the Fields panel's
+  Training group brushes `hardness ≥ 0.6` (or the top fifth of mean loss).
 - Per-sample data from the start of a run: the trainer tags `magnidata.has_split` as soon as `split.csv` is logged and
   always scores epoch 1 and the last epoch, whatever `score_every` is. Run summaries gain `has_split`;
   `GET /api/runs` takes `per_sample=any|split|scored`; `GET /api/runs/<id>/columns` answers `image_name,split`

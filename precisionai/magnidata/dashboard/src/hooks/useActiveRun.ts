@@ -91,5 +91,5 @@ export function useActiveRun() {
     return () => clearInterval(id)
   }, [active, refresh])
 
-  return { run, active, epochsDone, presets, loadPresets, track, toasts, dismissToast, refresh }
+  return { run, active, epochsDone, presets, loadPresets, track, toast, toasts, dismissToast, refresh }
 }

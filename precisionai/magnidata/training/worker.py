@@ -37,7 +37,7 @@ EXPERIMENT_PREFIX = os.environ.get("MAGNIDATA_MLFLOW_EXPERIMENT_PREFIX", "magnid
 HEARTBEAT_FILENAME = ".trainer_heartbeat"
 LOG_DIRNAME = ".trainer_logs"
 POLL_S = 5.0
-LOG_UPLOAD_S = 180.0
+LOG_UPLOAD_S = 30.0
 TERM_GRACE_S = 30.0
 ERROR_TAG = "magnidata.error"
 TERMINAL = {s.value for s in (contract.RunStatus.FINISHED, contract.RunStatus.FAILED, contract.RunStatus.KILLED)}
@@ -142,7 +142,7 @@ def _upload_log(client: Any, run_id: str, log: Path) -> None:
 
 
 def trainer_argv(run_id: str, data_root: Path, tracking_uri: str) -> list[str]:
-    """Return the command that trains one run."""
+    """Return the command that trains one run, on the device named by ``MAGNIDATA_TRAIN_DEVICE``."""
     return [
         sys.executable,
         "-m",
@@ -153,6 +153,8 @@ def trainer_argv(run_id: str, data_root: Path, tracking_uri: str) -> list[str]:
         str(data_root),
         "--tracking-uri",
         tracking_uri,
+        "--device",
+        os.environ.get("MAGNIDATA_TRAIN_DEVICE", "auto"),
     ]
 
 

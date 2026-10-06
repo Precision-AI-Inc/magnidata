@@ -136,9 +136,38 @@ def seed_everything(seed: int) -> None:
 
 def resolve_device(name: str) -> torch.device:
     """Return the torch device for ``auto``, ``cpu`` or ``cuda``."""
+    if name == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError(f"CUDA requested but not available (torch {torch.__version__})")
     if name == "auto":
-        name = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            name = "cuda"
+        else:
+            name = "cpu"
+            log(f"warning: CUDA not available (torch {torch.__version__}), training on CPU")
     return torch.device(name)
+
+
+def log(message: str) -> None:
+    """Print one progress line right away, so the worker's log file is always current."""
+    print(message, flush=True)
+
+
+def describe_device(device: torch.device) -> str:
+    """Return ``cuda:0 (GPU name)`` or ``cpu``."""
+    if device.type == "cuda":
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        return f"cuda:{index} ({torch.cuda.get_device_name(index)})"
+    return str(device)
+
+
+def _format_duration(seconds: float) -> str:
+    seconds = round(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    return f"{minutes // 60}h{minutes % 60:02d}m"
 
 
 class MetricBuffer:
@@ -185,12 +214,19 @@ def train_epoch(
     device: torch.device,
     cancel: Callable[[], bool],
     on_step: Callable[[float], None],
+    label: str = "",
 ) -> EpochMeans:
-    """Run one training epoch; stop early (``cancelled=True``) when ``cancel()`` is true."""
+    """Run one training epoch; stop early (``cancelled=True``) when ``cancel()`` is true.
+
+    A progress line is printed about ten times per epoch, prefixed with ``label``.
+    """
     model.train()
     sums: dict[str, float] = {}
     seen = 0
-    for batch in loader:
+    n_batches = len(loader)
+    every = max(n_batches // 10, 1)
+    started = time.monotonic()
+    for index, batch in enumerate(loader, start=1):
         if cancel():
             return EpochMeans({}, cancelled=True)
         logits = model(batch["pixel_values"].to(device))
@@ -201,6 +237,12 @@ def train_epoch(
         scheduler.step()
         seen += _accumulate(sums, out.per_sample)
         on_step(optimizer.param_groups[0]["lr"])
+        if index % every == 0 or index == n_batches:
+            rate = index / max(time.monotonic() - started, 1e-9)
+            log(
+                f"{label} train batch {index}/{n_batches} "
+                f"loss={sums.get('total', 0.0) / max(seen, 1):.3f} {rate:.1f} it/s"
+            )
     return EpochMeans({k: v / max(seen, 1) for k, v in sums.items()})
 
 
@@ -264,6 +306,9 @@ def score_epoch(
     model.eval()
     recorder.begin_epoch(epoch)
     heap: list[_Hard] = []
+    started = time.monotonic()
+    n_samples = 0
+    log(f"epoch {epoch} scoring {len(loader)} batches")
     for batch in loader:
         if recorder.cancel_requested():
             return None
@@ -271,6 +316,7 @@ def score_epoch(
         logits = model(batch["pixel_values"].to(device))
         per_sample = criterion(logits, labels).per_sample
         names = batch["image_name"]
+        n_samples += len(names)
         recorder.add_batch(
             names,
             [splits[n] for n in names],
@@ -288,6 +334,7 @@ def score_epoch(
             elif item > heap[0]:
                 heapq.heapreplace(heap, item)
     recorder.end_epoch()
+    log(f"epoch {epoch} scored {n_samples} samples in {_format_duration(time.monotonic() - started)}")
     return sorted(heap, reverse=True)
 
 
@@ -431,9 +478,19 @@ def run_epochs(
             buffer.add(contract.LEARNING_RATE_METRIC, lr, step[0])
 
     best = float("inf")
+    run_started = time.monotonic()
     for epoch in range(1, cfg.epochs + 1):
+        epoch_started = time.monotonic()
         train = train_epoch(
-            model, setup.train_loader, criterion, optimizer, scheduler, device, sink.cancel_requested, on_step
+            model,
+            setup.train_loader,
+            criterion,
+            optimizer,
+            scheduler,
+            device,
+            sink.cancel_requested,
+            on_step,
+            label=f"epoch {epoch}/{cfg.epochs}",
         )
         if train.cancelled:
             buffer.flush()
@@ -449,7 +506,16 @@ def run_epochs(
             best = monitored
             buffer.add("best_val_loss", best, epoch)
             buffer.add("best_epoch", epoch, epoch)
+        seconds = time.monotonic() - epoch_started
+        buffer.add(contract.EPOCH_SECONDS_METRIC, seconds, epoch)
+        buffer.add(contract.SAMPLES_PER_SEC_METRIC, setup.n_train / max(seconds, 1e-9), epoch)
         buffer.flush()
+        eta = (time.monotonic() - run_started) / epoch * (cfg.epochs - epoch)
+        sink.set_tag(contract.TAG_ETA_SECONDS, str(int(eta)))
+        log(
+            f"epoch {epoch}/{cfg.epochs} done train={train.values['total']:.3f} "
+            f"val={val.get('total', float('nan')):.3f} {seconds:.1f}s ETA {_format_duration(eta)}"
+        )
         if epoch % cfg.score_every == 0 or epoch == cfg.epochs:
             hardest = score_epoch(
                 model, setup.score_loader, criterion, device, recorder, setup.splits, epoch, cfg.top_k_predictions
@@ -485,6 +551,9 @@ def run(run_id: str, tracking_uri: str, data_root: Path, device_name: str = "aut
         cfg = config_from_run(existing.data.params, existing.data.tags)
         seed_everything(int(cfg.seed))
         device = resolve_device(device_name)
+        description = describe_device(device)
+        log(f"device={description} torch={torch.__version__}")
+        sink.set_tag(contract.TAG_DEVICE, description)
         with tempfile.TemporaryDirectory() as tmp:
             scratch = Path(tmp)
             if sink.cancel_requested():

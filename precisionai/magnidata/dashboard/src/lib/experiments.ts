@@ -27,6 +27,30 @@ export function formatDuration(run: Pick<RunSummary, 'start_time' | 'end_time' |
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`
 }
 
+/** "GPU" for a cuda device tag, "CPU" for cpu, null when the run never reported a device. */
+export function deviceBadge(device: string | undefined): 'GPU' | 'CPU' | null {
+  if (!device) return null
+  return device.startsWith('cuda') ? 'GPU' : 'CPU'
+}
+
+/** "ETA 11 min" from the `magnidata.eta_seconds` tag; only meaningful while the run is RUNNING. */
+export function formatEta(status: string, etaSeconds: string | undefined): string | null {
+  if (status !== 'RUNNING' || etaSeconds == null || etaSeconds === '') return null
+  const total = Number(etaSeconds)
+  if (!Number.isFinite(total) || total < 0) return null
+  if (total < 60) return `ETA ${Math.round(total)} s`
+  const minutes = Math.round(total / 60)
+  if (minutes < 60) return `ETA ${minutes} min`
+  return `ETA ${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`
+}
+
+/** Device badge and ETA of a run as one short label, e.g. "GPU · ETA 11 min". */
+export function deviceLabel(run: Pick<RunSummary, 'status' | 'magnidata'>): string {
+  const badge = deviceBadge(run.magnidata['magnidata.device'])
+  const eta = formatEta(run.status, run.magnidata['magnidata.eta_seconds'])
+  return [badge, eta].filter(Boolean).join(' · ') || '—'
+}
+
 export type StatusTone = 'neutral' | 'info' | 'success' | 'danger' | 'warning'
 
 export function statusTone(status: RunStatus | string): StatusTone {

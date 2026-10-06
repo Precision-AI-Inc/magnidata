@@ -82,6 +82,19 @@ def test_recover_stale(env):
         assert client.get_run(run_id).info.status == "RUNNING"
 
 
+def test_trainer_argv_passes_device_from_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cuda")
+    argv = worker.trainer_argv("abc", tmp_path, "http://mlflow:5000")
+    assert argv[argv.index("--device") + 1] == "cuda"
+    monkeypatch.delenv("MAGNIDATA_TRAIN_DEVICE")
+    argv = worker.trainer_argv("abc", tmp_path, "http://mlflow:5000")
+    assert argv[argv.index("--device") + 1] == "auto"
+
+
+def test_log_upload_interval_is_near_live():
+    assert worker.LOG_UPLOAD_S <= 60
+
+
 def test_run_one_fails_run_when_trainer_exits_badly(env, tmp_path):
     _, client, exp = env
     run_id = _run(client, exp)

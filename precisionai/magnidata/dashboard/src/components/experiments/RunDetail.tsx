@@ -3,7 +3,7 @@ import { AlertTriangle, ChevronDown, ChevronRight, Copy, ExternalLink, File as F
 import { api } from '../../api'
 import type { ArtifactEntry, MetricHistory, RunDetailData, RunMatch } from '../../api'
 import { BRAND_CATEGORICAL } from '../../data/vizColors'
-import { formatDuration } from '../../lib/experiments'
+import { deviceLabel, formatDuration } from '../../lib/experiments'
 import { lineageLabel } from '../../lib/lineage'
 import { ema, groupMetricKeys, pairTrainVal, toRelativeTime } from '../../lib/metrics'
 import { LineChart } from './LineChart'
@@ -133,6 +133,7 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
           </div>
           <div className="text-[11px] mt-1 flex gap-3 flex-wrap" style={{ color: 'var(--c-t3)' }}>
             <span>Duration {formatDuration(run)}</span>
+            {deviceLabel(run) !== '—' && <span>Device {deviceLabel(run)}</span>}
             <span>User {run.user ?? '—'}</span>
             <span className="flex items-center gap-1 font-mono">{run.run_id}
               <button onClick={copy} aria-label="Copy run id" title="Copy run id" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', display: 'flex' }}>

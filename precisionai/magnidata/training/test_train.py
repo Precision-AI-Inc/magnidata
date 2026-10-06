@@ -86,6 +86,44 @@ def test_two_epoch_run_logs_everything(mlflow_tracking, synthetic_dataset):
     contract.validate_header(list(rows[0]), ["dice", "cce"])
 
 
+def test_run_reports_device_and_progress(mlflow_tracking, synthetic_dataset, capsys):
+    uri, client, run_id = _new_run(mlflow_tracking)
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+
+    out = capsys.readouterr().out
+    assert "device=cpu" in out
+    assert "epoch 1/2 train batch" in out
+    assert "epoch 1/2 done" in out
+    assert "epoch 2/2 done" in out
+    assert "scored" in out
+    run = client.get_run(run_id)
+    assert run.data.tags[contract.TAG_DEVICE] == "cpu"
+    assert run.data.tags[contract.TAG_ETA_SECONDS] == "0"
+    assert len(_history(client, run_id, contract.EPOCH_SECONDS_METRIC)) == 2
+    assert all(v > 0 for v in _history(client, run_id, contract.SAMPLES_PER_SEC_METRIC))
+
+
+@pytest.mark.skipif(train.torch.cuda.is_available(), reason="CUDA is available")
+def test_resolve_device_cuda_unavailable_raises():
+    with pytest.raises(RuntimeError, match="CUDA requested"):
+        train.resolve_device("cuda")
+
+
+@pytest.mark.skipif(train.torch.cuda.is_available(), reason="CUDA is available")
+def test_resolve_device_auto_falls_back_to_cpu_with_warning(capsys):
+    assert train.resolve_device("auto").type == "cpu"
+    assert "CUDA not available" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(train.torch.cuda.is_available(), reason="CUDA is available")
+def test_cuda_request_without_cuda_fails_run(mlflow_tracking, synthetic_dataset):
+    uri, client, run_id = _new_run(mlflow_tracking)
+    assert train.run(run_id, uri, synthetic_dataset.root, "cuda") == 1
+    run = client.get_run(run_id)
+    assert run.info.status == "FAILED"
+    assert run.data.tags["magnidata.error"].startswith("CUDA requested but not available")
+
+
 def test_loss_decreases_on_learnable_data(mlflow_tracking, synthetic_dataset):
     _make_learnable(synthetic_dataset)
     uri, client, run_id = _new_run(mlflow_tracking, {"batch_size": "2", "epochs": "4", "lr": "0.02"})

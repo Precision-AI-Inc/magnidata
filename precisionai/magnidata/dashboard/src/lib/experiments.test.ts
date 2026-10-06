@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { RunSummary } from '../api'
 import {
-  buildFilter, buildOrderBy, defaultSelection, formatDuration, formatMetric, metricColumns, statusTone,
+  buildFilter, buildOrderBy, defaultSelection, deviceBadge, deviceLabel, formatDuration, formatEta, formatMetric, metricColumns, statusTone,
 } from './experiments'
 
 function run(over: Partial<RunSummary>): RunSummary {
@@ -91,5 +91,27 @@ describe('formatMetric', () => {
     expect(formatMetric(12)).toBe('12')
     expect(formatMetric(0.123456)).toBe('0.1235')
     expect(formatMetric(0.00001234)).toBe('1.23e-5')
+  })
+})
+
+describe('device and ETA', () => {
+  it('maps the device tag to a badge', () => {
+    expect(deviceBadge('cuda:0 (NVIDIA GeForce RTX 5070 Laptop GPU)')).toBe('GPU')
+    expect(deviceBadge('cpu')).toBe('CPU')
+    expect(deviceBadge(undefined)).toBeNull()
+  })
+  it('formats the ETA only for running runs', () => {
+    expect(formatEta('RUNNING', '42')).toBe('ETA 42 s')
+    expect(formatEta('RUNNING', '660')).toBe('ETA 11 min')
+    expect(formatEta('RUNNING', '7500')).toBe('ETA 2 h 05 min')
+    expect(formatEta('FINISHED', '660')).toBeNull()
+    expect(formatEta('RUNNING', undefined)).toBeNull()
+    expect(formatEta('RUNNING', 'abc')).toBeNull()
+  })
+  it('combines badge and ETA', () => {
+    const magnidata = { 'magnidata.device': 'cuda:0 (x)', 'magnidata.eta_seconds': '660' }
+    expect(deviceLabel({ status: 'RUNNING', magnidata })).toBe('GPU · ETA 11 min')
+    expect(deviceLabel({ status: 'FINISHED', magnidata })).toBe('GPU')
+    expect(deviceLabel({ status: 'FINISHED', magnidata: {} })).toBe('—')
   })
 })

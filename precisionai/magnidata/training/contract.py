@@ -27,6 +27,8 @@ TAG_SCORED_EPOCHS = "magnidata.scored_epochs"
 TAG_CANCEL_REQUESTED = "magnidata.cancel_requested"
 TAG_PARENT_RUN_ID = "magnidata.parent_run_id"
 TAG_WORKER = "magnidata.worker"
+TAG_DEVICE = "magnidata.device"
+TAG_ETA_SECONDS = "magnidata.eta_seconds"
 
 ORIGIN_UI = "ui"
 ORIGIN_EXTERNAL = "external"
@@ -38,6 +40,8 @@ CHECKPOINT_ARTIFACT = "checkpoints/last.pt"
 
 LEARNING_RATE_METRIC = "Learning_rate/lr"
 MIOU_METRIC = "val_metric/miou"
+EPOCH_SECONDS_METRIC = "perf/epoch_seconds"
+SAMPLES_PER_SEC_METRIC = "perf/samples_per_sec"
 
 SEGMENTATION_LOSS_TERMS = ("dice", "cce", "bce")
 MODEL_PRESETS = ("tiny_unet", "lraspp_mobilenet")

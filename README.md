@@ -57,7 +57,13 @@ services:
 | `web` | 5175 | the dashboard (React, served by nginx) |
 | `api` | 5051 | Flask API; proxies MLflow, never runs training |
 | `mlflow` | 5052 | MLflow tracking server and UI; data in the `magnidata-mlflow` volume |
-| `trainer` | — | worker that trains runs scheduled from the dashboard (CPU by default; GPU via a build arg, see `Dockerfile.trainer`) |
+| `trainer` | — | worker that trains runs scheduled from the dashboard (CPU by default; on a GPU host add `docker-compose.gpu.yml` — see below) |
+
+To train on an NVIDIA GPU (needs the NVIDIA container toolkit), put
+`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in the git-ignored `.env`, then run
+`docker compose up --build` as usual. Check it with
+`docker compose exec trainer python -c "import torch; print(torch.cuda.is_available())"`. The trainer's
+log (first line `device=…`) is uploaded to the run's `logs/` artifacts while it trains.
 
 To run the trainer outside Docker: `pip install -e ".[training]"`, then
 `python -m precisionai.magnidata.training.train --dataset data_user/<name>.csv --data-root precisionai/magnidata`.

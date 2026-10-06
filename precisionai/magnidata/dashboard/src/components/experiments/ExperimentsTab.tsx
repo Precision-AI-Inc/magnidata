@@ -3,7 +3,7 @@ import { AlertTriangle, ChevronDown, ChevronUp, ChevronsUpDown, ExternalLink, Lo
 import type { RunStatus, RunSummary } from '../../api'
 import { useExperiments } from '../../hooks/useExperiments'
 import type { SortState } from '../../hooks/useExperiments'
-import { formatDuration, formatMetric, metricColumns, statusTone } from '../../lib/experiments'
+import { deviceLabel, formatDuration, formatMetric, metricColumns, statusTone } from '../../lib/experiments'
 import type { ColumnKind } from '../../lib/experiments'
 import { TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../../data/vizColors'
 import { RunDetail } from './RunDetail'
@@ -214,6 +214,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
                 {x.columns.parent && <Th label="Parent run" />}
                 <Th label="Started" sort={x.sort} kind="attribute" id="start" onSort={sortBy} />
                 <Th label="Duration" />
+                <Th label="Device" />
                 <Th label="User" />
                 {x.columns.metrics.map(k => <Th key={`m${k}`} label={k} sort={x.sort} kind="metric" id={k} onSort={sortBy} />)}
                 {x.columns.params.map(k => <Th key={`p${k}`} label={k} sort={x.sort} kind="param" id={k} onSort={sortBy} />)}
@@ -240,6 +241,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
                   {x.columns.parent && <Td>{parentColumnText(run.magnidata['magnidata.parent_run_id'], runNames)}</Td>}
                   <Td>{run.start_time ? new Date(run.start_time).toLocaleString() : '—'}</Td>
                   <Td>{formatDuration(run)}</Td>
+                  <Td>{deviceLabel(run)}</Td>
                   <Td>{run.user ?? '—'}</Td>
                   {x.columns.metrics.map(k => <Td key={`m${k}`} mono right>{formatMetric(run.metrics[k])}</Td>)}
                   {x.columns.params.map(k => <Td key={`p${k}`} mono right>{run.params[k] ?? '—'}</Td>)}

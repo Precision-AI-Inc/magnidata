@@ -77,8 +77,9 @@ services:
       retries: 20
 
   # Runs the training jobs the dashboard schedules in MLflow. One worker only: MLflow has no
-  # compare-and-set, so two workers could claim the same run. CPU by default; to use a GPU,
-  # build with a CUDA wheel index (see Dockerfile.trainer) and uncomment the deploy block.
+  # compare-and-set, so two workers could claim the same run. CPU by default; on a GPU host
+  # add docker-compose.gpu.yml (CUDA torch + nvidia device), e.g. by setting
+  # COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml in the git-ignored .env.
   trainer:
     build:
       context: .
@@ -95,13 +96,6 @@ services:
       - ./data:/app/data:ro
       - ./image_sets:/app/image_sets:ro
       - ./precisionai/magnidata/data_user:/app/data_user
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
 
   web:
     build:

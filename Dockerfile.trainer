@@ -1,6 +1,8 @@
 # Trainer worker: claims SCHEDULED MagniData runs from MLflow and trains them.
-# CPU torch by default. For a CUDA build, pass a wheel index, e.g.
-#   docker compose build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128 trainer
+# CPU torch by default. For a CUDA build, pass a wheel index; RTX 50xx (Blackwell, sm_120)
+# needs cu128 or newer, and torch 2.14.0 is published on cu130 (not cu128), so
+# docker-compose.gpu.yml uses:
+#   docker compose build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 trainer
 FROM python:3.12-slim
 
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu

@@ -210,6 +210,22 @@ export interface RunDetailData extends RunSummary {
   artifacts: ArtifactEntry[]
 }
 
+export interface TrainingPresets {
+  presets: { key: string; label: string; description: string; defaults: Record<string, unknown> }[]
+  bounds: Record<string, import('./lib/train').Bound>
+  loss_terms: string[]
+  backend: { available: boolean; reason: string | null; worker_heartbeat: number | null }
+  mlflow: MlflowStatus
+}
+
+export interface LaunchBody {
+  name?: string
+  dataset_source: string
+  preset: string
+  params: Record<string, unknown>
+  parent_run_id?: string
+}
+
 export interface RunMatch {
   matched: number
   run_only: number
@@ -320,6 +336,10 @@ export const api = {
     return get<RunsPage>(`${BASE}/runs?${q}`)
   },
 
+  getTrainingPresets: () => get<TrainingPresets>(`${BASE}/training/presets`),
+  launchTraining: (body: LaunchBody) => mutate<RunSummary>('POST', `${BASE}/training/runs`, body),
+  cancelRun: (runId: string) =>
+    mutate<{ run_id: string; status: string; cancel_requested: boolean }>('POST', `${BASE}/runs/${runId}/cancel`),
   getRun: (runId: string) => get<RunDetailData>(`${BASE}/runs/${runId}`),
   getRunMetrics: (runId: string, keys: string[]) =>
     get<{ metrics: Record<string, MetricHistory[]> }>(

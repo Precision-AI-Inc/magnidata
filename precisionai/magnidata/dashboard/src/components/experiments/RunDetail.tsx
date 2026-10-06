@@ -17,6 +17,8 @@ interface Props {
   knownDatasets: string[]
   onLoadDataset: (source: string) => void
   onOverlay: (runId: string, source: string) => void
+  /** Called after the run changed here (e.g. cancelled) so App-level state refreshes. */
+  onChanged: () => void
   onClose: () => void
 }
 
@@ -31,7 +33,7 @@ const VAL_COLOR = '#E08A1E'     // amber: stays distinguishable from the teal tr
 
 type XAxis = 'step' | 'time'
 
-export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset, onOverlay, onClose }: Props) {
+export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset, onOverlay, onChanged, onClose }: Props) {
   const [run, setRun] = useState<RunDetailData | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [histories, setHistories] = useState<Record<string, MetricHistory[]>>({})
@@ -42,6 +44,8 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
   const [paramFilter, setParamFilter] = useState('')
   const [linkReport, setLinkReport] = useState<RunMatch | null>(null)
   const [linkError, setLinkError] = useState<string | null>(null)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
 
   const keys = run?.metric_keys ?? []
   const groups = useMemo(() => groupMetricKeys(keys), [keys])
@@ -87,6 +91,9 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
     if (!currentDataset) return
     setLinkError(null)
     try { setLinkReport(await api.getRunMatch(runId, currentDataset)) } catch (e) { setLinkError(e instanceof Error ? e.message : String(e)) }
+  }
+  const cancel = async () => {
+    try { await api.cancelRun(runId); setConfirmCancel(false); await loadRun(); onChanged() } catch (e) { setCancelError(e instanceof Error ? e.message : String(e)) }
   }
   const confirmLink = async () => {
     if (!currentDataset) return
@@ -143,6 +150,20 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
           )}
           {source && run.has_per_sample && knownDatasets.includes(source) && (
             <button className="mt-2 btn-primary" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => onOverlay(runId, source)}>Overlay on dataset</button>
+          )}
+          {LIVE.has(run.status) && run.magnidata['magnidata.origin'] === 'ui' && (
+            <div className="mt-2 text-xs flex items-center gap-2" style={{ color: 'var(--c-t2)' }}>
+              {!confirmCancel ? (
+                <button className="btn-ghost px-2.5 py-1 text-xs" onClick={() => setConfirmCancel(true)}>Cancel run</button>
+              ) : (
+                <>
+                  Stop this training run?
+                  <button className="btn-primary px-2.5 py-1 text-xs" onClick={() => void cancel()}>Yes, cancel it</button>
+                  <button className="underline" onClick={() => setConfirmCancel(false)}>Keep running</button>
+                </>
+              )}
+              {cancelError && <span role="alert" style={{ color: 'var(--color-danger)' }}>{cancelError}</span>}
+            </div>
           )}
           {run.tags['magnidata.error'] && (
             <div role="alert" className="mt-2 flex items-start gap-2 p-2 rounded-lg text-xs font-semibold"

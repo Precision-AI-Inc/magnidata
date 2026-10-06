@@ -1,0 +1,85 @@
+import { describe, expect, it } from 'vitest'
+import { isActive, progressLabel, trainDisabledReason, validateParams } from './train'
+import type { Bound, TrainParams } from './train'
+
+const bounds: Record<string, Bound> = {
+  epochs: { type: 'int', min: 1, max: 200 },
+  score_every: { type: 'int', min: 1, max: 'epochs' },
+  batch_size: { type: 'int', min: 1, max: 64 },
+  image_size: { type: 'int', min: 128, max: 1024, multiple_of: 32 },
+  lr: { type: 'float', min: 1e-6, max: 0.1 },
+  val_fraction: { type: 'float', min: 0.05, max: 0.5 },
+  seed: { type: 'int', min: 0, max: 2 ** 31 - 1 },
+  split_mode: { type: 'choice', choices: ['random', 'column'] },
+  loss_terms: { type: 'list', choices: ['dice', 'cce', 'bce'], min_items: 1 },
+  loss_weights: { type: 'map', min: 0, max: 10 },
+  top_k_predictions: { type: 'int', min: 0, max: 200 },
+}
+
+const valid: TrainParams = {
+  epochs: 10, score_every: 1, batch_size: 8, image_size: 128, lr: 0.001, val_fraction: 0.2, seed: 0,
+  split_mode: 'random', loss_terms: ['dice', 'cce'], loss_weights: {}, top_k_predictions: 50, pretrained: false,
+}
+
+describe('validateParams', () => {
+  it('accepts valid params', () => {
+    expect(validateParams(valid, bounds)).toEqual({})
+  })
+  it('enforces min and max', () => {
+    expect(validateParams({ ...valid, epochs: 0 }, bounds).epochs).toMatch(/between 1 and 200/)
+    expect(validateParams({ ...valid, batch_size: 65 }, bounds).batch_size).toMatch(/between 1 and 64/)
+    expect(validateParams({ ...valid, lr: 0.5 }, bounds).lr).toBeDefined()
+  })
+  it('requires image size to be a multiple of 32', () => {
+    expect(validateParams({ ...valid, image_size: 130 }, bounds).image_size).toMatch(/multiple of 32/)
+    expect(validateParams({ ...valid, image_size: 100 }, bounds).image_size).toBeDefined()
+  })
+  it('keeps score_every within epochs', () => {
+    expect(validateParams({ ...valid, epochs: 5, score_every: 6 }, bounds).score_every).toMatch(/between 1 and 5/)
+    expect(validateParams({ ...valid, epochs: 5, score_every: 5 }, bounds).score_every).toBeUndefined()
+  })
+  it('rejects non-integers and NaN', () => {
+    expect(validateParams({ ...valid, epochs: 2.5 }, bounds).epochs).toMatch(/whole number/)
+    expect(validateParams({ ...valid, lr: NaN }, bounds).lr).toMatch(/number/)
+  })
+  it('needs at least one known loss term and sane weights', () => {
+    expect(validateParams({ ...valid, loss_terms: [] }, bounds).loss_terms).toMatch(/at least one/)
+    expect(validateParams({ ...valid, loss_terms: ['focal'] }, bounds).loss_terms).toMatch(/unknown/)
+    expect(validateParams({ ...valid, loss_weights: { dice: 11 } }, bounds).loss_weights).toBeDefined()
+    expect(validateParams({ ...valid, loss_weights: { bce: 99 } }, bounds).loss_weights).toBeUndefined()
+  })
+  it('rejects an unknown split mode', () => {
+    expect(validateParams({ ...valid, split_mode: 'x' }, bounds).split_mode).toBeDefined()
+  })
+})
+
+describe('isActive', () => {
+  it('is true for scheduled and running only', () => {
+    expect(isActive('SCHEDULED')).toBe(true)
+    expect(isActive('RUNNING')).toBe(true)
+    expect(isActive('FINISHED')).toBe(false)
+    expect(isActive(null)).toBe(false)
+  })
+})
+
+describe('trainDisabledReason', () => {
+  const ok = { hasDataset: true, mlflowReachable: true, workerAvailable: true, activeRunId: null }
+  it('is null when everything is ready', () => {
+    expect(trainDisabledReason(ok)).toBeNull()
+  })
+  it('reports the first cause in precedence order', () => {
+    const none = { hasDataset: false, mlflowReachable: false, workerAvailable: false, activeRunId: 'x' }
+    expect(trainDisabledReason(none)).toMatch(/dataset/)
+    expect(trainDisabledReason({ ...none, hasDataset: true })).toMatch(/MLflow/)
+    expect(trainDisabledReason({ ...none, hasDataset: true, mlflowReachable: true, workerReason: 'last seen 90 s ago' })).toMatch(/last seen 90 s ago/)
+    expect(trainDisabledReason({ ...none, hasDataset: true, mlflowReachable: true, workerAvailable: true })).toMatch(/Another training run/)
+  })
+})
+
+describe('progressLabel', () => {
+  it('shows queued, then the epoch being trained', () => {
+    expect(progressLabel('SCHEDULED', 0, 20)).toBe('queued')
+    expect(progressLabel('RUNNING', 2, 20)).toBe('epoch 3/20')
+    expect(progressLabel('RUNNING', 20, 20)).toBe('epoch 20/20')
+  })
+})

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Train from the dashboard: a **Train** button (tab bar and Experiments tab) opens a dialog to launch a run on the
+  loaded dataset, with the preset's tunable parameters validated against the server's bounds. The Header shows
+  "Training · epoch 3/20" while it runs, a toast reports the outcome, run detail can cancel it, and an overlaid
+  run's columns refresh as each epoch is scored. Train is disabled, with the reason, when MLflow or the trainer
+  worker is unavailable or another run is active.
 - Overlay a training run on a dataset: pick a run in the new **Run** dropdown (or "Overlay on dataset" in the
   Experiments tab) and its per-sample losses, ranks, trends and `hardness` become regular columns in the
   parallel coordinates, 3D colour-by, charts, table and Schema tab, grouped under "Training". A run that was

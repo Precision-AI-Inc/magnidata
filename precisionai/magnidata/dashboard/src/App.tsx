@@ -7,6 +7,9 @@ import { useFilters } from './hooks/useFilters'
 import { usePartitions } from './hooks/usePartitions'
 import { useBuildJob } from './hooks/useBuildJob'
 import { useRunOverlay } from './hooks/useRunOverlay'
+import { useActiveRun } from './hooks/useActiveRun'
+import { TrainDialog } from './components/experiments/TrainDialog'
+import { progressLabel, trainDisabledReason } from './lib/train'
 import { RunOverlayPicker } from './components/RunOverlayPicker'
 import type { CSVRow, TabId } from './types'
 
@@ -240,6 +243,36 @@ export default function App() {
   }
 
   const runOverlay = useRunOverlay(data, datasetSource, replaceData)
+  const activeRun = useActiveRun()
+  const [showTrain, setShowTrain] = useState(false)
+  const trainBlocked = (hasDataset: boolean) => trainDisabledReason({
+    hasDataset,
+    mlflowReachable: activeRun.presets?.mlflow.reachable ?? false,
+    workerAvailable: activeRun.presets?.backend.available ?? false,
+    workerReason: activeRun.presets?.backend.reason,
+    activeRunId: activeRun.active ? activeRun.run!.run_id : null,
+  })
+  const trainOnLoaded = trainBlocked(!!data && !!datasetSource)
+  const onLaunched = (runId: string) => {
+    setShowTrain(false)
+    activeRun.track(runId)
+    setSelectedRunId(runId)
+    setTab('experiments')
+    void activeRun.loadPresets()
+  }
+  const trainingBadge = activeRun.active && activeRun.run
+    ? `Training · ${progressLabel(activeRun.run.status, activeRun.epochsDone, Number(activeRun.run.params.epochs ?? 0))}`
+    : null
+
+  // Live axes: while the overlaid run trains, pull in its new epochs as they are scored.
+  const scoredCount = activeRun.run?.scored_epochs.length ?? 0
+  useEffect(() => {
+    if (scoredCount > 0) void runOverlay.refreshRuns()
+    const ov = runOverlay.overlay
+    if (activeRun.run && ov && ov.runId === activeRun.run.run_id && ov.epoch === 'latest' && scoredCount > 0) {
+      void runOverlay.select(ov.runId, 'latest')
+    }
+  }, [scoredCount]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // "Overlay on dataset" from the runs table: load the run's dataset first if it is not the open one.
   const overlayRun = (runId: string, source: string) => {
@@ -333,6 +366,7 @@ export default function App() {
         onOpenByod={() => setShowByod(true)}
         onOpenHelp={goToHelp}
         onOpenExperiments={goToExperiments}
+        trainingBadge={trainingBadge}
       />
 
       {/* Main content */}
@@ -357,7 +391,10 @@ export default function App() {
         {!data && !loading && !error && tab !== 'schema' && landingView === 'experiments' && (
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
             <ExperimentsTab datasetSource={null} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)}
-              onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun} />
+              onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun}
+                trainDisabled={trainBlocked(!!data && !!datasetSource)} workerReason={activeRun.presets && !activeRun.presets.backend.available ? (activeRun.presets.backend.reason ?? 'no trainer worker has reported in') : null}
+                onTrain={() => { void activeRun.loadPresets(); setShowTrain(true) }} onRunChanged={() => void activeRun.refresh()}
+                liveKey={`${activeRun.run?.run_id}:${activeRun.run?.status}:${activeRun.epochsDone}`} />
           </div>
         )}
 
@@ -400,6 +437,11 @@ export default function App() {
               ))}
               <div style={{ flex: 1 }} />
 
+              {data && (
+                <button className="btn-primary" disabled={!!trainOnLoaded} title={trainOnLoaded ?? 'Train a model on this dataset'}
+                        onClick={() => { void activeRun.loadPresets(); setShowTrain(true) }}
+                        style={{ fontSize: 11, padding: '3px 10px', marginRight: 10, opacity: trainOnLoaded ? 0.5 : 1 }}>Train</button>
+              )}
               {data && datasetSource && (
                 <RunOverlayPicker runs={runOverlay.runs} overlay={runOverlay.overlay} match={runOverlay.match}
                                   loading={runOverlay.loading} error={runOverlay.error}
@@ -614,7 +656,10 @@ export default function App() {
                 {data && tab === 'experiments' && (
                   <ExperimentsTab datasetSource={datasetSource} selectedRunId={selectedRunId}
                                   onSelectRun={r => setSelectedRunId(r.run_id)} onCloseRun={() => setSelectedRunId(null)}
-                                  knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun} />
+                                  knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun}
+                trainDisabled={trainBlocked(!!data && !!datasetSource)} workerReason={activeRun.presets && !activeRun.presets.backend.available ? (activeRun.presets.backend.reason ?? 'no trainer worker has reported in') : null}
+                onTrain={() => { void activeRun.loadPresets(); setShowTrain(true) }} onRunChanged={() => void activeRun.refresh()}
+                liveKey={`${activeRun.run?.run_id}:${activeRun.run?.status}:${activeRun.epochsDone}`} />
                 )}
                 {data && tab === 'schema' && (
                   <Schema data={data} hiddenCols={hiddenCols} onToggleCol={toggleCol} />
@@ -623,6 +668,23 @@ export default function App() {
             </div>
           </>
         )}
+      </div>
+
+      {showTrain && activeRun.presets && data && datasetSource && (
+        <TrainDialog presets={activeRun.presets} datasetSource={datasetSource} datasetName={data.fileName}
+                     onClose={() => setShowTrain(false)} onLaunched={onLaunched} />
+      )}
+
+      <div aria-live="polite" style={{ position: 'fixed', right: 16, bottom: 16, zIndex: 60, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {activeRun.toasts.map(t => (
+          <div key={t.id} role="status" className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-semibold"
+               style={{ background: t.tone === 'success' ? 'var(--color-success-bg)' : t.tone === 'danger' ? 'var(--color-danger-bg)' : 'var(--c-raised)',
+                        color: t.tone === 'success' ? 'var(--color-success-text)' : t.tone === 'danger' ? 'var(--color-danger)' : 'var(--c-t2)',
+                        border: '1px solid var(--c-border)', maxWidth: 380 }}>
+            {t.message}
+            <button onClick={() => activeRun.dismissToast(t.id)} aria-label="Dismiss" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}>×</button>
+          </div>
+        ))}
       </div>
 
       {showByod && (

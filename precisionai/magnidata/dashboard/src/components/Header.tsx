@@ -18,6 +18,8 @@ interface Props {
   onOpenByod: () => void
   onOpenHelp: () => void
   onOpenExperiments: () => void
+  /** Live training run, shown like the build badge */
+  trainingBadge?: string | null
 }
 
 // The backend's step messages ("Extracting features…") don't always name the dataset.
@@ -37,7 +39,7 @@ function downloadBlob(content: string, filename: string, type: string) {
 // (https://embeddings.precision.ai/ui/tokens.css, `.pai-shell*` classes) so this
 // header renders pixel-identical to the reference site's — same brand mark, product
 // nav, and theme toggle (including its CSS-driven sun/moon icon swap).
-export function Header({ data, rows, filteredCount, embeddingsAvailable, datasetSource, buildJob, onDismissBuildJob, onGoHome, onOpenMagniData, onOpenByod, onOpenHelp, onOpenExperiments }: Props) {
+export function Header({ data, rows, filteredCount, embeddingsAvailable, datasetSource, buildJob, onDismissBuildJob, onGoHome, onOpenMagniData, onOpenByod, onOpenHelp, onOpenExperiments, trainingBadge }: Props) {
   const { toggle } = useTheme()
 
   // Export the current selection (rows passing active filters/3D selection) as CSV, plus
@@ -126,6 +128,16 @@ export function Header({ data, rows, filteredCount, embeddingsAvailable, dataset
               <X size={12} />
             </button>
           )}
+        </div>
+      )}
+
+      {trainingBadge && (
+        <div className="flex items-center gap-2" role="status" style={{
+          padding: '4px 10px', borderRadius: 'var(--radius-sm)', fontSize: 11.5, fontWeight: 600,
+          background: 'var(--color-success-bg)', border: '1px solid var(--color-success)', color: 'var(--color-success-text)',
+        }}>
+          <Loader2 size={13} style={{ animation: 'spin 0.7s linear infinite' }} />
+          <span>{trainingBadge}</span>
         </div>
       )}
 

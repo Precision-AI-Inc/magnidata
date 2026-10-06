@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ChevronDown, ChevronUp, ChevronsUpDown, ExternalLink, Loader2, RefreshCw, Search } from 'lucide-react'
 import type { RunStatus, RunSummary } from '../../api'
 import { useExperiments } from '../../hooks/useExperiments'
@@ -19,6 +19,14 @@ interface Props {
   knownDatasets: string[]
   onLoadDataset: (source: string) => void
   onOverlayRun: (runId: string, source: string) => void
+  /** Why Train is unavailable (null = available). */
+  trainDisabled: string | null
+  /** Set when no trainer worker is running; shown as a banner. */
+  workerReason: string | null
+  onTrain: () => void
+  onRunChanged: () => void
+  /** Changes whenever the live training run advances, so the table re-queries. */
+  liveKey: string
 }
 
 const STATUSES: RunStatus[] = ['SCHEDULED', 'RUNNING', 'FINISHED', 'FAILED', 'KILLED']
@@ -41,7 +49,7 @@ export function StatusBadge({ status }: { status: string }) {
   )
 }
 
-export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset, onOverlayRun }: Props) {
+export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset, onOverlayRun, trainDisabled, workerReason, onTrain, onRunChanged, liveKey }: Props) {
   const x = useExperiments(datasetSource)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [checked, setChecked] = useState<string[]>([])
@@ -51,6 +59,12 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
   const stopCompare = () => { history.replaceState(null, '', window.location.pathname + window.location.search); setComparing([]) }
   const toggleChecked = (id: string) =>
     setChecked(prev => (prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 10 ? [...prev, id] : prev))
+  const refreshRuns = x.refresh
+  const firstLive = useRef(true)
+  useEffect(() => {
+    if (firstLive.current) { firstLive.current = false; return }
+    refreshRuns()
+  }, [liveKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const seen = useMemo(() => metricColumns(x.runs), [x.runs])
   const experimentNames = useMemo(() => new Map(x.experiments.map(e => [e.experiment_id, e.name])), [x.experiments])
   const down = x.mlflow != null && !x.mlflow.reachable
@@ -106,6 +120,14 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
           </div>
         )}
 
+        {workerReason && !down && (
+          <div role="status" className="flex items-center gap-2 px-4 py-2 text-xs"
+               style={{ background: 'var(--c-raised)', color: 'var(--c-t2)', borderBottom: '1px solid var(--c-border)' }}>
+            <AlertTriangle size={14} />
+            The trainer worker is not running ({workerReason}). Check <code>docker compose ps</code> and <code>docker compose logs trainer</code>.
+          </div>
+        )}
+
         {/* Toolbar */}
         <div className="flex items-center gap-2 px-4 py-2.5 shrink-0 flex-wrap" style={{ borderBottom: '1px solid var(--c-border)' }}>
           <div className="flex items-center gap-1" role="group" aria-label="Status filter">
@@ -133,6 +155,8 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
                  className="px-3 py-1 rounded-lg text-xs outline-none"
                  style={{ background: 'var(--c-raised)', border: '1px solid var(--c-border)', color: 'var(--c-t1)', width: 300 }} />
           <div className="ml-auto flex items-center gap-2 relative">
+            <button className="btn-primary" disabled={!!trainDisabled} onClick={onTrain} title={trainDisabled ?? 'Train a model on the loaded dataset'}
+                    style={{ opacity: trainDisabled ? 0.5 : 1, fontSize: 11, padding: '4px 10px' }}>Train</button>
             <button className="btn-primary" disabled={checked.length < 2} onClick={startCompare}
                     title="Select 2 to 10 runs with the checkboxes"
                     style={{ opacity: checked.length < 2 ? 0.5 : 1, fontSize: 11, padding: '4px 10px' }}>
@@ -248,7 +272,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
       )}
       {comparing.length < 2 && selectedRunId && (
         <RunDetail runId={selectedRunId} currentDataset={datasetSource} knownDatasets={knownDatasets} onLoadDataset={onLoadDataset}
-                   onOverlay={onOverlayRun} onClose={onCloseRun} />
+                   onOverlay={onOverlayRun} onChanged={onRunChanged} onClose={onCloseRun} />
       )}
     </div>
   )

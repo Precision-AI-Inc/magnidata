@@ -316,6 +316,8 @@ export const api = {
   getRunMetrics: (runId: string, keys: string[]) =>
     get<{ metrics: Record<string, MetricHistory[]> }>(
       `${BASE}/runs/${runId}/metrics?keys=${encodeURIComponent(keys.join(','))}`),
+  getRunsMetrics: (runIds: string[], keys: string[]) =>
+    mutate<{ runs: Record<string, Record<string, MetricHistory[]>> }>('POST', `${BASE}/runs/metrics`, { run_ids: runIds, keys }),
   listRunArtifacts: (runId: string, path = '') =>
     get<{ artifacts: ArtifactEntry[] }>(`${BASE}/runs/${runId}/artifacts${path ? `?path=${encodeURIComponent(path)}` : ''}`),
   runArtifactUrl: (runId: string, path: string) =>

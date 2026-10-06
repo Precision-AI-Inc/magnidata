@@ -7,6 +7,8 @@ import { formatDuration, formatMetric, metricColumns, statusTone } from '../../l
 import type { ColumnKind } from '../../lib/experiments'
 import { TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../../data/vizColors'
 import { RunDetail } from './RunDetail'
+import { RunCompare } from './RunCompare'
+import { compareHash, parseCompareHash } from '../../lib/compare'
 
 interface Props {
   /** Dataset CSV path relative to the data root, when one is loaded. */
@@ -41,6 +43,13 @@ export function StatusBadge({ status }: { status: string }) {
 export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset }: Props) {
   const x = useExperiments(datasetSource)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [checked, setChecked] = useState<string[]>([])
+  // The comparison lives in the URL hash so a reload (or a shared link) restores it.
+  const [comparing, setComparing] = useState<string[]>(() => parseCompareHash(window.location.hash))
+  const startCompare = () => { window.location.hash = compareHash(checked); setComparing(checked) }
+  const stopCompare = () => { history.replaceState(null, '', window.location.pathname + window.location.search); setComparing([]) }
+  const toggleChecked = (id: string) =>
+    setChecked(prev => (prev.includes(id) ? prev.filter(x => x !== id) : prev.length < 10 ? [...prev, id] : prev))
   const seen = useMemo(() => metricColumns(x.runs), [x.runs])
   const experimentNames = useMemo(() => new Map(x.experiments.map(e => [e.experiment_id, e.name])), [x.experiments])
   const down = x.mlflow != null && !x.mlflow.reachable
@@ -86,6 +95,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
         </div>
       </aside>
 
+      {comparing.length >= 2 ? <RunCompare runIds={comparing} onClose={stopCompare} /> : (
       <section className="flex flex-col flex-1" style={{ minWidth: 0 }}>
         {down && (
           <div role="alert" className="flex items-center gap-2 px-4 py-2 text-xs font-semibold"
@@ -122,6 +132,11 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
                  className="px-3 py-1 rounded-lg text-xs outline-none"
                  style={{ background: 'var(--c-raised)', border: '1px solid var(--c-border)', color: 'var(--c-t1)', width: 300 }} />
           <div className="ml-auto flex items-center gap-2 relative">
+            <button className="btn-primary" disabled={checked.length < 2} onClick={startCompare}
+                    title="Select 2 to 10 runs with the checkboxes"
+                    style={{ opacity: checked.length < 2 ? 0.5 : 1, fontSize: 11, padding: '4px 10px' }}>
+              Compare ({checked.length})
+            </button>
             <button className="btn-icon" onClick={() => setPickerOpen(o => !o)} aria-expanded={pickerOpen}
                     style={{ width: 'auto', padding: '0 10px', fontSize: 11 }}>Columns</button>
             <button className="btn-icon" onClick={x.refresh} title="Refresh" aria-label="Refresh"><RefreshCw size={13} /></button>
@@ -156,6 +171,7 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
           <table style={{ borderCollapse: 'collapse', width: 'max-content', minWidth: '100%' }}>
             <thead>
               <tr style={{ position: 'sticky', top: 0, zIndex: 5 }}>
+                <Th label="" />
                 <Th label="Name" sort={x.sort} kind="attribute" id="name" onSort={sortBy} />
                 <Th label="Status" sort={x.sort} kind="attribute" id="status" onSort={sortBy} />
                 <Th label="Experiment" />
@@ -177,6 +193,10 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
                       borderBottom: '1px solid var(--c-border)',
                       background: run.run_id === selectedRunId ? 'var(--c-accent-light)' : undefined,
                     }}>
+                  <td style={{ padding: '6px 10px' }} onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" aria-label={`Select ${run.name || run.run_id} for comparison`}
+                           checked={checked.includes(run.run_id)} onChange={() => toggleChecked(run.run_id)} />
+                  </td>
                   <Td strong>{run.name || run.run_id.slice(0, 8)}</Td>
                   <Td><StatusBadge status={run.status} /></Td>
                   <Td>{experimentNames.get(run.experiment_id) ?? run.experiment_id}</Td>
@@ -218,7 +238,8 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
           )}
         </div>
       </section>
-      {selectedRunId && (
+      )}
+      {comparing.length < 2 && selectedRunId && (
         <RunDetail runId={selectedRunId} knownDatasets={knownDatasets} onLoadDataset={onLoadDataset} onClose={onCloseRun} />
       )}
     </div>

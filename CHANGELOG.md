@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Compare 2–10 runs in the Experiments tab: overlaid metric curves, a final/best summary with the better
+  run highlighted, and a params table that shows only the settings that differ. The comparison is kept in
+  the URL, so a reload restores it.
 - Run detail panel in the Experiments tab: loss curves with train and val overlaid per term, mIoU/IoU and
   learning-rate charts (step or relative time, smoothing, log scale, per-group toggles), searchable params
   and tags, an artifact tree with image previews, and live updates while a run is scheduled or running.

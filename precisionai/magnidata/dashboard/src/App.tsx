@@ -43,6 +43,8 @@ export default function App() {
   const [landingView, setLandingView] = useState<LandingView>('landing')
   const [showByod, setShowByod] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  // A reloaded `#compare=…` link goes straight to the experiments view.
+  useEffect(() => { if (window.location.hash.startsWith('#compare=')) setLandingView('experiments') }, [])
 
   // Staged image removals (by row _idx). They only shape the live views in memory; the original
   // dataset is never touched. They "apply" only when saved as a new dataset (or discarded otherwise).

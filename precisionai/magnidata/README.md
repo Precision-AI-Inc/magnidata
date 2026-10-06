@@ -28,7 +28,12 @@ cd <repo root>
 docker compose up --build
 #   portal -> http://localhost:5175
 #   api    -> http://localhost:5051/api/health
+#   mlflow -> http://localhost:5052
 ```
+
+Besides the portal and API this starts an `mlflow` service (experiment tracking) and a `trainer`
+worker that runs the training jobs you launch from the dashboard — see
+[`docs/recipes/training-feedback-loop.md`](docs/recipes/training-feedback-loop.md).
 
 `confi.yaml` ships with an empty dataset list — this is a clean install, not preloaded with
 any sample data. From the portal's "Bring Your Own Data" dialog, either:
@@ -91,6 +96,13 @@ maps to the dashboard's "Compare" overlay.
 [`docs/data-contract.md`](docs/data-contract.md) documents both file formats the
 dashboard consumes — the multiparametric CSV and the embeddings JSON — including how
 to generate each with the tools above, and how to bring your own that conforms.
+
+## Recipe: train, find hard images, retrain
+
+[`docs/recipes/training-feedback-loop.md`](docs/recipes/training-feedback-loop.md) walks through
+training from the dashboard, reading the per-image loss columns, curating a new dataset and comparing
+runs. The file contract (MLflow tags, metric keys, artifacts) is in
+[`docs/training-contract.md`](docs/training-contract.md).
 
 ## Recipe: start from raw images
 

@@ -10,6 +10,7 @@ const SECTIONS = [
   { id: 'using-it', label: 'How to use it' },
   { id: 'data-format', label: 'Data format' },
   { id: 'custom-dataset', label: 'Creating a custom dataset' },
+  { id: 'training', label: 'Experiments & training' },
 ] as const
 
 export function HelpPage({ onOpenByod }: Props) {
@@ -248,6 +249,27 @@ export function HelpPage({ onOpenByod }: Props) {
           {onOpenByod && (
             <button className="help-cta" onClick={onOpenByod}>Open BYOD</button>
           )}
+        </section>
+
+        <section id="training">
+          <h2>Experiments &amp; training</h2>
+          <p>
+            Datasets that have segmentation masks can be used to train a model right from the app, and what the
+            model finds hard feeds back into the dataset. Everything is stored in a local MLflow (port 5052).
+          </p>
+          <ul>
+            <li><strong>Train</strong> (tab bar): pick a preset and settings, then follow the run in the header.</li>
+            <li><strong>Experiments</strong>: browse runs, open one for its curves, params and artifacts, or select
+              several and <strong>Compare</strong> them.</li>
+            <li><strong>Run</strong> dropdown: overlay a run&apos;s per-image losses as columns (loss, mean, trend, rank,
+              <code>hardness</code>) and scrub through its epochs.</li>
+            <li><strong>Curate and retrain</strong>: save the hard images as a new dataset, press <em>Train on it</em>,
+              then <em>Compare on dataset</em> to see which images got easier.</li>
+          </ul>
+          <p>
+            The full walkthrough, including how to read the derived columns, is in the recipe
+            <code>precisionai/magnidata/docs/recipes/training-feedback-loop.md</code>.
+          </p>
         </section>
       </div>
     </div>

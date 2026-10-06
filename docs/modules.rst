@@ -86,3 +86,66 @@ Standalone dataset-preparation scripts.
    :members:
    :undoc-members:
    :show-inheritance:
+
+precisionai.magnidata.training
+------------------------------
+
+The training feedback loop: the MLflow contract shared by every participant, the per-sample
+loss recorder, and the reference trainer and worker. ``contract``, ``recorder`` and
+``attach`` need only numpy; the others need torch.
+
+.. automodule:: precisionai.magnidata.training.contract
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.training.recorder
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.training.mlflow_sink
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.training.attach
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.training.losses
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.training.data
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.training.train
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.training.worker
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+precisionai.magnidata.api
+-------------------------
+
+Two API modules are importable as part of the package (the rest of the API uses flat imports,
+see above).
+
+.. automodule:: precisionai.magnidata.api.mlflow_store
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.api.run_axes
+   :members:
+   :undoc-members:
+   :show-inheritance:

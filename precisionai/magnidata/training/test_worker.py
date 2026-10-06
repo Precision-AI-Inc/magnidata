@@ -101,6 +101,7 @@ def test_run_one_skips_unclaimable_run(env, tmp_path):
 
 
 def test_run_one_trains_for_real(env, synthetic_dataset, monkeypatch):
+    pytest.importorskip("torch", reason="the trainer subprocess needs torch (pip install -e '.[training]')")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     _, client, exp = env
     run_id = _run(

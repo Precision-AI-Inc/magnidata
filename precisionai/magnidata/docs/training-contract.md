@@ -77,3 +77,78 @@ file validates:
 ```bash
 python -m precisionai.magnidata.training.attach --run-id <id> --epoch 12 --file losses.csv --split split.csv
 ```
+
+## Logging host-side runs to the local MLflow
+
+The compose stack publishes MLflow on port 5052. A trainer running on the host (for example
+pai-seed through `PAIExperiment`, which uses MLflow by default) logs to it with:
+
+```bash
+export MLFLOW_TRACKING_URI=http://localhost:5052
+```
+
+Those runs show up in the **Experiments** tab with their params, metric curves and
+artifacts. Only runs that carry the tags above are tied to a dataset; for others use
+**Link to current dataset** in the run detail.
+
+Where the data lives: the `mlflow` service keeps its database and artifacts in the named
+volume `magnidata_magnidata-mlflow` (mounted at `/mlflow`). It survives
+`docker compose down` and `up`.
+
+```bash
+# back up
+docker run --rm -v magnidata_magnidata-mlflow:/mlflow -v "$PWD":/backup alpine \
+    tar czf /backup/mlflow-backup.tgz -C /mlflow .
+
+# reset (deletes every run; keep the compose project stopped first)
+docker compose down
+docker volume rm magnidata_magnidata-mlflow
+```
+
+Downloaded per-sample files are cached in `data_user/.mlflow_cache` (bounded by
+`MLFLOW_CACHE_MAX_MB`, default 2048) and can be deleted at any time.
+
+## Emitting per-sample losses from your own trainer
+
+Give each loss term per image (`reduction="none"`, then average over pixels), run a
+separate scoring pass in eval mode without augmentation, and hand the numbers to the
+recorder. It needs only numpy and works with torch tensors.
+
+```python
+import torch
+import torch.nn.functional as F
+
+from precisionai.magnidata.training.mlflow_sink import MlflowSink
+from precisionai.magnidata.training.recorder import LossRecorder
+
+sink = MlflowSink(run_id)                       # uses MLFLOW_TRACKING_URI
+recorder = LossRecorder(["cce", "dice"], sink, scratch_dir)
+recorder.write_split({"a.png": "train", "b.png": "val"})
+
+for epoch in range(1, epochs + 1):
+    train_one_epoch(model)
+    model.eval()
+    recorder.begin_epoch(epoch)
+    with torch.no_grad():
+        for names, images, masks in score_loader:        # no augmentation
+            logits = model(images)
+            cce = F.cross_entropy(logits, masks, reduction="none").mean((1, 2))
+            dice = per_image_dice_loss(logits, masks)    # shape [B]
+            recorder.add_batch(
+                names, "train",                           # one split label, or one per image
+                {"total": cce + dice, "cce": cce, "dice": dice},
+            )
+    recorder.end_epoch()                                   # logs magnidata/per_sample/epoch_NNNN.csv
+    model.train()
+```
+
+Image names are the basenames of the dataset's image paths. For runs that already
+finished, attach a file of per-sample losses afterwards (wide format with `--epoch`, or long
+format with an `epoch` column):
+
+```bash
+python -m precisionai.magnidata.training.attach --run-id <id> --file losses.csv --split split.csv
+```
+
+Finally, open the run in the **Experiments** tab and press **Link to current dataset** (with
+the dataset open). The report shows how many images match before anything is written.

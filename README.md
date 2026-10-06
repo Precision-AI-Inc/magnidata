@@ -23,7 +23,12 @@ PCA/t-SNE/cluster view over a dataset's embedding space.
   one-click "demo" builds of COCO128 / AgriStress-500).
 - **`precisionai/magnidata/dashboard/`** — the React + Vite + Three.js portal: parallel
   coordinates, histograms, a data table, an image/mask/overlay preview, and the 3D
-  embeddings view.
+  embeddings view, plus an Experiments tab for training runs.
+- **Training feedback loop** — train segmentation models from the dashboard, store every run in
+  a local MLflow, and turn per-image losses into dataset axes so persistently hard images can
+  be found, curated into a new dataset and trained on again. See the
+  [recipe](precisionai/magnidata/docs/recipes/training-feedback-loop.md) and the
+  [training contract](precisionai/magnidata/docs/training-contract.md).
 
 Coding standards, naming conventions, and tooling configuration for the Python side are
 governed by [CLAUDE.md](CLAUDE.md). This repository was migrated from an existing,
@@ -41,9 +46,21 @@ cd magnidata
 docker compose up --build
 #   portal -> http://localhost:5175
 #   api    -> http://localhost:5051/api/health
+#   mlflow -> http://localhost:5052   (experiment tracking UI)
 ```
 
-The API container also prints those local access URLs during startup.
+The API container also prints those local access URLs during startup. The stack has four
+services:
+
+| Service | Port | Role |
+|---|---|---|
+| `web` | 5175 | the dashboard (React, served by nginx) |
+| `api` | 5051 | Flask API; proxies MLflow, never runs training |
+| `mlflow` | 5052 | MLflow tracking server and UI; data in the `magnidata-mlflow` volume |
+| `trainer` | — | worker that trains runs scheduled from the dashboard (CPU by default; GPU via a build arg, see `Dockerfile.trainer`) |
+
+To run the trainer outside Docker: `pip install -e ".[training]"`, then
+`python -m precisionai.magnidata.training.train --dataset data_user/<name>.csv --data-root precisionai/magnidata`.
 
 The dataset catalog (`precisionai/magnidata/confi.yaml`) ships empty. From the portal's
 "Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or
@@ -162,9 +179,11 @@ precisionai/magnidata/
                 embeddings generator (images -> JSON) — see tools/README.md
   scripts/      Standalone dataset-preparation scripts (e.g. the COCO128 demo)
   dashboard/    React + Vite + Three.js portal, served by nginx in Docker
-  docs/         data-contract.md and recipes/ — file formats and end-to-end guides
+  training/     Training feedback loop: MLflow contract, per-sample loss recorder, reference
+                trainer and worker (torch only where noted)
+  docs/         data-contract.md, training-contract.md and recipes/ — file formats and guides
   confi.yaml    Dataset registry (which CSVs the portal lists)
-Dockerfile.api, Dockerfile.dashboard, docker-compose.yml   at the repo root
+Dockerfile.api, Dockerfile.dashboard, Dockerfile.trainer, docker-compose.yml   at the repo root
 docs/           Sphinx (HTML + LaTeX/PDF) for the Python package
 ```
 

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Experiments tab (also reachable from the header without a dataset): browse MLflow experiments and runs
+  with status, dataset and name/filter controls, sortable metric and param columns you can choose, "Load more"
+  paging, links into the MLflow UI, and a banner when MLflow is unreachable.
 - `trainer` service in `docker-compose.yml` (`Dockerfile.trainer`, CPU torch by default, optional CUDA build
   arg): a worker that claims `SCHEDULED` runs launched from the dashboard, trains them in a subprocess and
   fails runs a crashed worker left behind. `docker compose up --build` now starts the portal, API, MLflow

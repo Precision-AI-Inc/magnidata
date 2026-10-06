@@ -17,6 +17,7 @@ interface Props {
   onOpenMagniData: () => void
   onOpenByod: () => void
   onOpenHelp: () => void
+  onOpenExperiments: () => void
 }
 
 // The backend's step messages ("Extracting features…") don't always name the dataset.
@@ -36,7 +37,7 @@ function downloadBlob(content: string, filename: string, type: string) {
 // (https://embeddings.precision.ai/ui/tokens.css, `.pai-shell*` classes) so this
 // header renders pixel-identical to the reference site's — same brand mark, product
 // nav, and theme toggle (including its CSS-driven sun/moon icon swap).
-export function Header({ data, rows, filteredCount, embeddingsAvailable, datasetSource, buildJob, onDismissBuildJob, onGoHome, onOpenMagniData, onOpenByod, onOpenHelp }: Props) {
+export function Header({ data, rows, filteredCount, embeddingsAvailable, datasetSource, buildJob, onDismissBuildJob, onGoHome, onOpenMagniData, onOpenByod, onOpenHelp, onOpenExperiments }: Props) {
   const { toggle } = useTheme()
 
   // Export the current selection (rows passing active filters/3D selection) as CSV, plus
@@ -85,6 +86,7 @@ export function Header({ data, rows, filteredCount, embeddingsAvailable, dataset
         {nav('Home', onGoHome)}
         {nav('MagniData', onOpenMagniData)}
         {nav('BYOD', onOpenByod)}
+        {nav('Experiments', onOpenExperiments)}
         {nav('Help', onOpenHelp)}
       </nav>
 

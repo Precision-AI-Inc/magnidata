@@ -6,7 +6,7 @@ async function get<T>(url: string): Promise<T> {
   const r = await fetch(url)
   if (!r.ok) {
     const body = await r.text()
-    throw new Error(`${r.status}: ${body}`)
+    throw new ApiError(`${r.status}: ${body}`, r.status)
   }
   return r.json()
 }
@@ -151,6 +151,62 @@ export interface EmbeddingAnalysisStatus {
   projections?: Record<string, number[][]>
 }
 
+
+// ── MLflow experiments ────────────────────────────────────────────────────────
+export type RunStatus = 'SCHEDULED' | 'RUNNING' | 'FINISHED' | 'FAILED' | 'KILLED'
+
+export interface MlflowStatus {
+  reachable: boolean
+  tracking_uri: string | null
+  ui_url: string | null
+  version: string | null
+  error: string | null
+}
+
+export interface Experiment {
+  experiment_id: string
+  name: string
+  artifact_location: string
+  lifecycle_stage: string
+  creation_time: number
+  last_update_time: number
+  tags: Record<string, string>
+}
+
+export interface RunSummary {
+  run_id: string
+  name: string | null
+  experiment_id: string
+  status: RunStatus
+  start_time: number
+  end_time: number | null
+  duration_ms: number | null
+  user: string | null
+  metrics: Record<string, number>
+  params: Record<string, string>
+  magnidata: Record<string, string>
+  has_per_sample: boolean
+  mlflow_ui_url: string | null
+}
+
+export interface RunsPage {
+  runs: RunSummary[]
+  next_page_token: string | null
+}
+
+export interface RunSearch {
+  experimentIds: string[]
+  filter?: string
+  orderBy?: string
+  maxResults?: number
+  pageToken?: string | null
+}
+
+/** Thrown for API errors so callers can tell "MLflow is down" (503) from the rest. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+}
+
 export const api = {
   health: () => get<{ status: string; local: { datalake_accessible: boolean; root: string } }>(`${BASE}/health`),
 
@@ -227,6 +283,22 @@ export const api = {
     get<{ partitions: Partition[] }>(`${BASE}/partitions?source=${encodeURIComponent(source)}`),
   commitPartitions: (source: string, entries: { image_name: string; cluster_id: number }[]) =>
     mutate<{ committed: number }>('POST', `${BASE}/partitions/commit`, { source, entries }),
+
+
+  // ── MLflow experiments ──────────────────────────────────────────────────────
+  getMlflowStatus: () => get<MlflowStatus>(`${BASE}/mlflow/status`),
+  listExperiments: (query = '') =>
+    get<{ experiments: Experiment[]; next_page_token: string | null }>(
+      `${BASE}/experiments?max_results=200${query ? `&query=${encodeURIComponent(query)}` : ''}`),
+  searchRuns: (p: RunSearch) => {
+    const q = new URLSearchParams()
+    if (p.experimentIds.length) q.set('experiment_ids', p.experimentIds.join(','))
+    if (p.filter) q.set('filter', p.filter)
+    if (p.orderBy) q.set('order_by', p.orderBy)
+    q.set('max_results', String(p.maxResults ?? 50))
+    if (p.pageToken) q.set('page_token', p.pageToken)
+    return get<RunsPage>(`${BASE}/runs?${q}`)
+  },
 
   // Notes
   getNotes:    (stem?: string) =>

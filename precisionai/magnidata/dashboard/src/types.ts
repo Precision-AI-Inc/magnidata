@@ -65,4 +65,4 @@ export interface Note {
 }
 
 // ── Tabs ───────────────────────────────────────────────────────────────────────
-export type TabId = 'overview' | 'table' | 'visual-explorer' | 'charts' | 'schema'
+export type TabId = 'overview' | 'table' | 'visual-explorer' | 'charts' | 'schema' | 'experiments'

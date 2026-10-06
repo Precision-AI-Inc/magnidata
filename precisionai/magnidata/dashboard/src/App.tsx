@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { BarChart2, Table2, Share2, Activity, LayoutGrid, Trash2, Save, X, Loader2, Plus, Download, Columns } from 'lucide-react'
+import { BarChart2, Table2, Share2, Activity, LayoutGrid, Trash2, Save, X, Loader2, Plus, Download, Columns, FlaskConical } from 'lucide-react'
 import { api } from './api'
 import type { DatasetMeta } from './api'
 import { useCSV } from './hooks/useCSV'
@@ -20,8 +20,9 @@ import { ParallelCoords } from './components/ParallelCoords'
 import { Histograms }     from './components/Histograms'
 import { ImageModal }     from './components/ImageModal'
 import { Schema }         from './components/Dictionary'
+import { ExperimentsTab } from './components/experiments/ExperimentsTab'
 
-type LandingView = 'landing' | 'datasets' | 'help'
+type LandingView = 'landing' | 'datasets' | 'help' | 'experiments'
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'visual-explorer', label: 'Visual Explorer', icon: <Share2 size={13} /> },
@@ -29,6 +30,7 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'schema',          label: 'Schema',          icon: <LayoutGrid size={13} /> },
   { id: 'table',           label: 'Table',           icon: <Table2 size={13} /> },
   { id: 'overview',        label: 'Overview',        icon: <Activity size={13} /> },
+  { id: 'experiments',     label: 'Experiments',     icon: <FlaskConical size={13} /> },
 ]
 
 export default function App() {
@@ -40,6 +42,7 @@ export default function App() {
   const [datasetMeta, setDatasetMeta] = useState<DatasetMeta[]>([])
   const [landingView, setLandingView] = useState<LandingView>('landing')
   const [showByod, setShowByod] = useState(false)
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
 
   // Staged image removals (by row _idx). They only shape the live views in memory; the original
   // dataset is never touched. They "apply" only when saved as a new dataset (or discarded otherwise).
@@ -218,6 +221,13 @@ export default function App() {
     setLandingView('help')
   }
 
+  // Experiments are global (MLflow), so they open without a dataset too.
+  const goToExperiments = () => {
+    clear()
+    setDatasetSource(null)
+    setLandingView('experiments')
+  }
+
   // Persist the curated set (everything except the removed images) as a new child dataset.
   // The original dataset is untouched; on success the removals are cleared (they've been applied).
   const saveCurated = useCallback(async () => {
@@ -284,6 +294,7 @@ export default function App() {
         onOpenMagniData={goToMagniData}
         onOpenByod={() => setShowByod(true)}
         onOpenHelp={goToHelp}
+        onOpenExperiments={goToExperiments}
       />
 
       {/* Main content */}
@@ -303,6 +314,12 @@ export default function App() {
 
         {!data && !loading && !error && tab !== 'schema' && landingView === 'help' && (
           <HelpPage onOpenByod={() => setShowByod(true)} />
+        )}
+
+        {!data && !loading && !error && tab !== 'schema' && landingView === 'experiments' && (
+          <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <ExperimentsTab datasetSource={null} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)} />
+          </div>
         )}
 
         {loading && (
@@ -501,7 +518,7 @@ export default function App() {
             {/* Row below the tab bar: sidebar (left) + tab content (right) */}
             <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
               {/* Sidebar — hidden on visual-explorer and schema tabs */}
-              {data && tab !== 'visual-explorer' && tab !== 'schema' && (
+              {data && tab !== 'visual-explorer' && tab !== 'schema' && tab !== 'experiments' && (
                 <Sidebar
                   data={data}
                   filters={filters}
@@ -543,6 +560,10 @@ export default function App() {
                 )}
                 {data && tab === 'charts' && (
                   <Histograms data={visibleData!} rows={liveFilteredRows} />
+                )}
+                {data && tab === 'experiments' && (
+                  <ExperimentsTab datasetSource={datasetSource} selectedRunId={selectedRunId}
+                                  onSelectRun={r => setSelectedRunId(r.run_id)} />
                 )}
                 {data && tab === 'schema' && (
                   <Schema data={data} hiddenCols={hiddenCols} onToggleCol={toggleCol} />

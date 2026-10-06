@@ -221,6 +221,19 @@ export default function App() {
     setLandingView('help')
   }
 
+  // "Load dataset" from a run: fetch the CSV of a known dataset and open it like the picker does.
+  const loadDatasetBySource = async (source: string) => {
+    const ds = datasetMeta.find(d => d.source === source)
+    if (!ds) return
+    try {
+      const res = await fetch(api.datasetCsvUrl(ds.source))
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      handleLoad(new File([await res.blob()], ds.name + '.csv', { type: 'text/csv' }), ds.source)
+    } catch (e) {
+      console.error('Failed to load dataset:', e)
+    }
+  }
+
   // Experiments are global (MLflow), so they open without a dataset too.
   const goToExperiments = () => {
     clear()
@@ -318,7 +331,8 @@ export default function App() {
 
         {!data && !loading && !error && tab !== 'schema' && landingView === 'experiments' && (
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <ExperimentsTab datasetSource={null} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)} />
+            <ExperimentsTab datasetSource={null} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)}
+              onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} />
           </div>
         )}
 
@@ -563,7 +577,8 @@ export default function App() {
                 )}
                 {data && tab === 'experiments' && (
                   <ExperimentsTab datasetSource={datasetSource} selectedRunId={selectedRunId}
-                                  onSelectRun={r => setSelectedRunId(r.run_id)} />
+                                  onSelectRun={r => setSelectedRunId(r.run_id)} onCloseRun={() => setSelectedRunId(null)}
+                                  knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} />
                 )}
                 {data && tab === 'schema' && (
                   <Schema data={data} hiddenCols={hiddenCols} onToggleCol={toggleCol} />

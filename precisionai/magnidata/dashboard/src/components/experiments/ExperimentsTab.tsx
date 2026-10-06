@@ -6,12 +6,16 @@ import type { SortState } from '../../hooks/useExperiments'
 import { formatDuration, formatMetric, metricColumns, statusTone } from '../../lib/experiments'
 import type { ColumnKind } from '../../lib/experiments'
 import { TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../../data/vizColors'
+import { RunDetail } from './RunDetail'
 
 interface Props {
   /** Dataset CSV path relative to the data root, when one is loaded. */
   datasetSource: string | null
   selectedRunId: string | null
   onSelectRun: (run: RunSummary) => void
+  onCloseRun: () => void
+  knownDatasets: string[]
+  onLoadDataset: (source: string) => void
 }
 
 const STATUSES: RunStatus[] = ['SCHEDULED', 'RUNNING', 'FINISHED', 'FAILED', 'KILLED']
@@ -34,7 +38,7 @@ export function StatusBadge({ status }: { status: string }) {
   )
 }
 
-export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun }: Props) {
+export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset }: Props) {
   const x = useExperiments(datasetSource)
   const [pickerOpen, setPickerOpen] = useState(false)
   const seen = useMemo(() => metricColumns(x.runs), [x.runs])
@@ -214,6 +218,9 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun }: Pr
           )}
         </div>
       </section>
+      {selectedRunId && (
+        <RunDetail runId={selectedRunId} knownDatasets={knownDatasets} onLoadDataset={onLoadDataset} onClose={onCloseRun} />
+      )}
     </div>
   )
 }

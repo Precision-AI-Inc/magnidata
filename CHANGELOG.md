@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Run detail panel in the Experiments tab: loss curves with train and val overlaid per term, mIoU/IoU and
+  learning-rate charts (step or relative time, smoothing, log scale, per-group toggles), searchable params
+  and tags, an artifact tree with image previews, and live updates while a run is scheduled or running.
 - Experiments tab (also reachable from the header without a dataset): browse MLflow experiments and runs
   with status, dataset and name/filter controls, sortable metric and param columns you can choose, "Load more"
   paging, links into the MLflow UI, and a banner when MLflow is unreachable.

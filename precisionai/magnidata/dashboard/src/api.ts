@@ -202,6 +202,18 @@ export interface RunSearch {
   pageToken?: string | null
 }
 
+export interface RunDetailData extends RunSummary {
+  tags: Record<string, string>
+  metric_keys: string[]
+  scored_epochs: number[]
+  artifact_uri: string
+  artifacts: ArtifactEntry[]
+}
+
+export interface MetricHistory { step: number; value: number; timestamp: number }
+
+export interface ArtifactEntry { path: string; is_dir: boolean; file_size: number | null }
+
 /** Thrown for API errors so callers can tell "MLflow is down" (503) from the rest. */
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message) }
@@ -299,6 +311,15 @@ export const api = {
     if (p.pageToken) q.set('page_token', p.pageToken)
     return get<RunsPage>(`${BASE}/runs?${q}`)
   },
+
+  getRun: (runId: string) => get<RunDetailData>(`${BASE}/runs/${runId}`),
+  getRunMetrics: (runId: string, keys: string[]) =>
+    get<{ metrics: Record<string, MetricHistory[]> }>(
+      `${BASE}/runs/${runId}/metrics?keys=${encodeURIComponent(keys.join(','))}`),
+  listRunArtifacts: (runId: string, path = '') =>
+    get<{ artifacts: ArtifactEntry[] }>(`${BASE}/runs/${runId}/artifacts${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  runArtifactUrl: (runId: string, path: string) =>
+    `${BASE}/runs/${runId}/artifact?path=${encodeURIComponent(path)}`,
 
   // Notes
   getNotes:    (stem?: string) =>

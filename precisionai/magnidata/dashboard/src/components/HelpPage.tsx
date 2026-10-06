@@ -261,8 +261,13 @@ export function HelpPage({ onOpenByod }: Props) {
             <li><strong>Train</strong> (tab bar): pick a preset and settings, then follow the run in the header.</li>
             <li><strong>Experiments</strong>: browse runs, open one for its curves, params and artifacts, or select
               several and <strong>Compare</strong> them.</li>
-            <li><strong>Run</strong> dropdown: overlay a run&apos;s per-image losses as columns (loss, mean, trend, rank,
-              <code>hardness</code>) and scrub through its epochs.</li>
+            <li><strong>Run</strong> dropdown: lists every run on the dataset (greyed out with the reason until it has
+              data), overlays the run you launch by itself, and adds its per-image losses as columns (loss, mean,
+              trend, rank, <code>hardness</code>) you can scrub through epoch by epoch. <strong>High-loss
+              samples</strong> in the Fields panel brushes the persistently hard ones; <code>split</code> shows
+              train/val in every view.</li>
+            <li><strong>GPU</strong>: put <code>COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml</code> in
+              the repo&apos;s <code>.env</code> to train on an NVIDIA GPU; run detail shows a GPU/CPU badge and the ETA.</li>
             <li><strong>Curate and retrain</strong>: save the hard images as a new dataset, press <em>Train on it</em>,
               then <em>Compare on dataset</em> to see which images got easier.</li>
           </ul>

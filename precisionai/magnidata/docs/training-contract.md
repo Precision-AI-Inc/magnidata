@@ -21,6 +21,9 @@ Schema version: `magnidata-training/1.0.0`.
 | `magnidata.cancel_requested` | `true` when the UI asks to cancel |
 | `magnidata.parent_run_id` | Lineage for retraining |
 | `magnidata.worker` | Id of the worker that claimed the run |
+| `magnidata.has_split` | `true` once `magnidata/split.csv` is logged (before any epoch is scored) |
+| `magnidata.device` | Device the trainer used, e.g. `cuda:0 (NVIDIA GeForce RTX 5070 Laptop GPU)` or `cpu` |
+| `magnidata.eta_seconds` | Trainer's estimate of the remaining time, updated each epoch |
 
 Run statuses: `SCHEDULED`, `RUNNING`, `FINISHED`, `FAILED`, `KILLED`.
 
@@ -33,6 +36,7 @@ the global step.
 - `val_loss/loss`, `val_loss/<term>`
 - `Learning_rate/lr`
 - `val_metric/miou`, `val_metric/iou_<class>`
+- `perf/epoch_seconds`, `perf/samples_per_sec` (reference trainer only)
 
 ## Artifact layout
 

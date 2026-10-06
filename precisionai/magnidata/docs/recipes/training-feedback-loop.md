@@ -23,14 +23,49 @@ docker compose up --build
 | portal | http://localhost:5175 | the dashboard |
 | api | http://localhost:5051 | Flask API; proxies MLflow, never imports torch |
 | mlflow | http://localhost:5052 | the MLflow UI and tracking server |
-| trainer | (no port) | claims scheduled runs and trains them; CPU by default |
+| trainer | (no port) | claims scheduled runs and trains them; CPU by default, GPU with the override below |
 
 Training needs a dataset **with masks** (`<dataset>/images/<stem>.png` next to
 `<dataset>/masks/<stem>.png`, colour-coded per class, black = background). The
 AgriStress-500 demo has them: open **BYOD → Load Demo → AgriStress-500**, then load it from
 **MagniData**. Training on the CPU is slow for 500 high-resolution images; use a small
-`image_size` (128) and few epochs for a first try, or switch to the GPU (see
-[the trainer image](../../../../Dockerfile.trainer)).
+`image_size` (128) and few epochs for a first try, or switch to the GPU as described next.
+
+### Training on an NVIDIA GPU
+
+The base `docker-compose.yml` is CPU-only so it runs anywhere. On a GPU host (with the
+NVIDIA container toolkit) add the override once, in the git-ignored `.env` at the repo root,
+and keep using plain `docker compose up --build`:
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+```
+
+The override builds the trainer with CUDA torch (torch 2.14.0 is published on the **cu130**
+wheel index; cu128 stops at 2.11 — RTX 50xx / Blackwell needs cu128 or newer, and the host
+driver must support CUDA 13) and reserves the GPU. It also sets `MAGNIDATA_TRAIN_DEVICE=cuda`, so a
+trainer that cannot see the GPU fails the run (`CUDA requested but not available`) instead
+of silently training on the CPU. Verify it:
+
+```
+docker compose exec trainer python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+The first line of a run's `logs/trainer.log` (uploaded every 30 s, so it is near-live in run
+detail) reads `device=cuda:0 (…)`. Run detail and the Experiments table show a **GPU/CPU**
+badge, and `ETA` while the run is training.
+
+### What makes training fast
+
+- **Resized-image cache.** Every image and mask is decoded once, resized to `image_size` and
+  stored under `data_user/.train_cache/<size>/`; later epochs, validation and scoring read the
+  cache. The cache is bounded by `TRAIN_CACHE_MAX_MB` (default 4096, least recently used
+  entries go first) and keyed by file path, mtime and size, so edited images are decoded again.
+- **Loader processes** (`num_workers`, default one per spare core up to 8) and **mixed
+  precision** (`amp`, on by default, GPU only; bfloat16 where supported). Per-sample losses are
+  always computed in float32. Both are in the Train dialog.
+- Progress goes to the log (`epoch 3/20 train batch 40/45 …`, `done … ETA …`) and to the
+  metrics `perf/epoch_seconds` and `perf/samples_per_sec`.
 
 ## 2. Train
 
@@ -59,9 +94,20 @@ URL, so reloading keeps it.
 
 ## 4. Overlay the losses on the dataset
 
-Back in a dataset view, pick the run in the **Run** dropdown. Its per-sample columns now
-behave like any other: parallel-coordinates axes, 3D colour-by, histograms, table columns
-and filters, grouped under **Training**. The **epoch scrubber** next to it moves through
+Back in a dataset view, the **Run** dropdown lists every run linked to the dataset, newest
+first, and refreshes by itself every 10 s while one is queued or training. A run that cannot
+be picked yet is greyed out with the reason: `queued`, `training · first losses after epoch 1
+scoring`, `failed — no per-sample data`. As soon as the trainer has logged its train/val
+split the run is pickable (`split only`), and the run you just launched is **overlaid
+automatically** (a toast says so); the loss columns join as soon as epoch 1 is scored, whatever
+`score_every` is. Pick another run, or **None**, at any time.
+
+Its per-sample columns behave like any other: parallel-coordinates axes, 3D colour-by,
+histograms, table columns and filters, grouped under **Training**. Parallel coordinates adds
+`loss_total`, `loss_total_mean` and `hardness` next to your photometric axes, and **High-loss
+samples** in the Fields panel's Training group brushes the persistently hard samples
+(`hardness ≥ 0.6`, or the top fifth of `loss_total_mean`), so the table, histograms and 3D
+view show what those images look like. The **epoch scrubber** next to it moves through
 the scored epochs (or follows `latest` while the run trains); **play** steps through them.
 
 | Column | Reading |
@@ -74,6 +120,14 @@ the scored epochs (or follows `latest` while the run trains); **play** steps thr
 | `hardness` | share of scored epochs in which the image was in the worst 20% of its split by total loss |
 | `iou`, `confidence` | mean IoU of the predicted mask; mean top-class probability |
 | `split` | train / val / test of the run (ranks are computed within a split) |
+
+### The train/val partition
+
+The overlay brings `split` along: it becomes the first categorical axis, colours the points
+train/val (fixed colours in every view, unless you chose a colour yourself), and the toolbar
+shows the counts (`train 355 · val 96`). Histograms can **stack by split** to compare the
+photometric distributions of the two sets, the 3D view can group by `split` (or any column
+with at most 12 values), and the table pins `split` next to the image with filter chips.
 
 Combinations worth looking for:
 

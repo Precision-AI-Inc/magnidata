@@ -45,6 +45,7 @@ def test_launch_train_and_read_back(client, mlflow_store, synthetic_dataset):
     assert launch.status_code == 201
     run_id = launch.get_json()["run_id"]
     assert mlflow_store.get_run(run_id)["status"] == "SCHEDULED"
+    assert client.get(f"/api/runs/{run_id}/columns").status_code == 409
 
     # One pass of the worker claims the scheduled run and trains it to completion.
     mlflow_client = mlflow.MlflowClient(tracking_uri=mlflow_store.tracking_uri)
@@ -54,6 +55,8 @@ def test_launch_train_and_read_back(client, mlflow_store, synthetic_dataset):
     assert detail["status"] == "FINISHED", detail["tags"].get("magnidata.error")
     assert detail["scored_epochs"] == [1, 2]
     assert detail["has_per_sample"] is True
+    assert detail["has_split"] is True
+    assert detail["tags"]["magnidata.device"] == "cpu"
 
     metrics = client.get(f"/api/runs/{run_id}/metrics?keys=train_loss/loss,val_loss/loss").get_json()["metrics"]
     assert len(metrics["train_loss/loss"]) == 2
@@ -74,3 +77,33 @@ def test_launch_train_and_read_back(client, mlflow_store, synthetic_dataset):
         a["path"] for a in client.get(f"/api/runs/{run_id}/artifacts?path=magnidata/per_sample").get_json()["artifacts"]
     }
     assert artifacts == {contract.per_sample_path(1), contract.per_sample_path(2)}
+
+
+def test_split_and_first_scored_epoch_are_available_early(client, mlflow_store, synthetic_dataset):
+    pytest.importorskip("torch", reason="the worker's trainer subprocess needs torch (pip install -e '.[training]')")
+    launch = client.post(
+        "/api/training/runs",
+        json={
+            "dataset_source": "data_user/syn.csv",
+            "preset": "tiny_unet",
+            "params": {"epochs": 4, "score_every": 3, "image_size": 128, "batch_size": 4, "top_k_predictions": 2},
+        },
+    )
+    run_id = launch.get_json()["run_id"]
+    mlflow_client = mlflow.MlflowClient(tracking_uri=mlflow_store.tracking_uri)
+    worker.loop(mlflow_client, synthetic_dataset.root, max_iterations=1)
+
+    detail = client.get(f"/api/runs/{run_id}").get_json()
+    assert detail["status"] == "FINISHED", detail["tags"].get("magnidata.error")
+    # score_every=3 would score epoch 3 only (and the last); epoch 1 is always scored.
+    assert detail["scored_epochs"] == [1, 3, 4]
+    assert detail["tags"][contract.TAG_HAS_SPLIT] == "true"
+
+    # A run that has logged only its split serves `image_name,split` before any epoch is scored.
+    mlflow_store.set_tag(run_id, contract.TAG_SCORED_EPOCHS, "")
+    early = client.get(f"/api/runs/{run_id}/columns")
+    assert early.status_code == 200
+    assert early.headers["X-Magnidata-Scored-Epochs"] == "0"
+    lines = early.get_data(as_text=True).splitlines()
+    assert lines[0] == "image_name,split"
+    assert sorted(line.split(",")[0] for line in lines[1:]) == synthetic_dataset.names

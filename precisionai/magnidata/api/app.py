@@ -54,6 +54,7 @@ import dataset_builder
 import db
 import embeddings_io
 import experiments
+import image_overlay
 import local_files
 import mlflow_store
 import projections
@@ -69,7 +70,7 @@ app.register_blueprint(experiments.bp)
 
 # Background threshold: pixels whose R+G+B sum is below this are treated as
 # background and rendered transparent in the mask/overlay views.
-BG_THRESHOLD = 30
+BG_THRESHOLD = image_overlay.BG_THRESHOLD
 LFS_POINTER_VERSION = "version https://git-lfs.github.com/spec/v1"
 
 
@@ -123,53 +124,6 @@ def _data_path(relative_path: str) -> str:
     return path
 
 
-def _img_from_bytes(data: bytes, max_size: int = 1600) -> Image.Image:
-    img = Image.open(io.BytesIO(data))
-    if max(img.size) > max_size:
-        img = img.copy()
-        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-    return img
-
-
-def _mask_as_rgba(mask_data: bytes, max_size: int = 0) -> Image.Image:
-    """Load an RGB(A) mask PNG and return an RGBA image where black/near-black background pixels are fully transparent and coloured foreground pixels keep their original colour at full (255) alpha.
-
-    The masks in this dataset are pre-coloured: each segmentation class already
-    has its own RGB colour; black (0,0,0) means background.
-    """
-    mask = Image.open(io.BytesIO(mask_data))
-
-    # Normalise to RGBA
-    if mask.mode != "RGBA":
-        mask = mask.convert("RGBA")
-
-    arr = np.array(mask, dtype=np.uint8)  # (H, W, 4)
-    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-
-    # Background = near-black in the original RGB
-    is_bg = (r.astype(np.uint16) + g + b) < BG_THRESHOLD
-    arr[:, :, 3] = np.where(is_bg, 0, 255)  # transparent bg, opaque fg
-
-    result = Image.fromarray(arr, "RGBA")
-
-    if max_size and max(result.size) > max_size:
-        result.thumbnail((max_size, max_size), Image.Resampling.NEAREST)
-
-    return result
-
-
-def _to_jpeg(img: Image.Image, quality: int = 88) -> bytes:
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=quality)
-    return buf.getvalue()
-
-
-def _to_png(img: Image.Image) -> bytes:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-
 # ── Health ─────────────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health() -> ResponseReturnValue:
@@ -194,8 +148,8 @@ def get_image() -> ResponseReturnValue:
         return jsonify({"error": "path required"}), 400
     try:
         data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
-        img = _img_from_bytes(data, max_size)
-        buf = io.BytesIO(_to_jpeg(img))
+        img = image_overlay.img_from_bytes(data, max_size)
+        buf = io.BytesIO(image_overlay.to_jpeg(img))
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:
@@ -215,8 +169,8 @@ def get_mask() -> ResponseReturnValue:
         return jsonify({"error": "path required"}), 400
     try:
         data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
-        colored = _mask_as_rgba(data, max_size)
-        buf = io.BytesIO(_to_png(colored))
+        colored = image_overlay.mask_as_rgba(data, max_size)
+        buf = io.BytesIO(image_overlay.to_png(colored))
         buf.seek(0)
         return send_file(buf, mimetype="image/png")
     except Exception as exc:
@@ -240,15 +194,9 @@ def get_overlay() -> ResponseReturnValue:
         img_data = local_files.read_thumbnail(img_path, max_size) or local_files.read_file(img_path)
         mask_data = local_files.read_thumbnail(mask_path, max_size) or local_files.read_file(mask_path)
 
-        base = _img_from_bytes(img_data, max_size).convert("RGBA")
-        overlay = _mask_as_rgba(mask_data)
-
-        # Resize mask to match image if they differ (preserves colour regions)
-        if overlay.size != base.size:
-            overlay = overlay.resize(base.size, Image.Resampling.NEAREST)
-
-        result = Image.alpha_composite(base, overlay)
-        buf = io.BytesIO(_to_jpeg(result))
+        base = image_overlay.img_from_bytes(img_data, max_size)
+        result = image_overlay.composite_mask(base, image_overlay.mask_as_rgba(mask_data))
+        buf = io.BytesIO(image_overlay.to_jpeg(result))
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:
@@ -265,7 +213,7 @@ def debug_mask() -> ResponseReturnValue:
         data = local_files.read_file(path)
         mask = Image.open(io.BytesIO(data))
         raw = np.array(mask)
-        rgba = _mask_as_rgba(data)
+        rgba = image_overlay.mask_as_rgba(data)
         fg = np.array(rgba)[:, :, 3] > 0
         return jsonify(
             {
@@ -372,7 +320,7 @@ def _load_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> Image.
     raster_bytes = _sibling_raster_mask_bytes(image_path)
     if raster_bytes is None:
         return None
-    colored = _mask_as_rgba(raster_bytes)
+    colored = image_overlay.mask_as_rgba(raster_bytes)
     if colored.size != target_wh:
         colored = colored.resize(target_wh, Image.Resampling.NEAREST)
     return colored
@@ -389,11 +337,11 @@ def get_annotation_mask() -> ResponseReturnValue:
         return jsonify({"error": "invalid path"}), 400
     try:
         image_data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
-        img = _img_from_bytes(image_data, max_size)
+        img = image_overlay.img_from_bytes(image_data, max_size)
         mask = _load_annotation_mask(path, target_wh=img.size)
         if mask is None:
             return jsonify({"error": "no annotations for this image"}), 404
-        buf = io.BytesIO(_to_png(mask))
+        buf = io.BytesIO(image_overlay.to_png(mask))
         buf.seek(0)
         return send_file(buf, mimetype="image/png")
     except Exception as exc:
@@ -418,14 +366,12 @@ def get_annotation_overlay() -> ResponseReturnValue:
         return jsonify({"error": "invalid path"}), 400
     try:
         image_data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
-        base = _img_from_bytes(image_data, max_size).convert("RGBA")
+        base = image_overlay.img_from_bytes(image_data, max_size).convert("RGBA")
         mask = _load_annotation_mask(path, target_wh=base.size)
         if mask is None:
             return jsonify({"error": "no annotations for this image"}), 404
-        arr = np.array(mask)
-        arr[:, :, 3] = (arr[:, :, 3].astype(np.float32) * alpha).astype(np.uint8)
-        result = Image.alpha_composite(base, Image.fromarray(arr, "RGBA"))
-        buf = io.BytesIO(_to_jpeg(result))
+        result = image_overlay.composite_mask(base, mask, alpha)
+        buf = io.BytesIO(image_overlay.to_jpeg(result))
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:

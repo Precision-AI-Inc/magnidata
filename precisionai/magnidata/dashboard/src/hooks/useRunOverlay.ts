@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Papa from 'papaparse'
 import { api } from '../api'
 import type { CSVData } from '../types'
@@ -21,6 +21,8 @@ export function useRunOverlay(data: CSVData | null, datasetSource: string | null
   const [match, setMatch] = useState<MatchInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [scoredEpochs, setScoredEpochs] = useState<number[]>([])
+  const latestRequest = useRef(0)
 
   const refreshRuns = useCallback(async () => {
     if (!datasetSource) { setRuns([]); return }
@@ -36,28 +38,35 @@ export function useRunOverlay(data: CSVData | null, datasetSource: string | null
 
   const select = useCallback(async (runId: string, epoch: number | 'latest' = 'latest') => {
     if (!data) return
+    const request = ++latestRequest.current
     setLoading(true)
     setError(null)
     try {
-      const text = await api.getRunColumns(runId, epoch)
+      const [text, detail] = await Promise.all([api.getRunColumns(runId, epoch), api.getRun(runId)])
+      // A newer selection (the scrubber moved on) supersedes this one; keep showing what is on screen.
+      if (request !== latestRequest.current) return
       const parsed = Papa.parse<Record<string, unknown>>(text, { header: true, dynamicTyping: true, skipEmptyLines: true })
       const result = mergeRunColumns(data, parsed.data, data.imagePath)
       replaceData(result.data)
       setOverlay({ runId, epoch })
+      setScoredEpochs(detail.scored_epochs)
       setMatch({ matched: result.matched, total: result.matched + result.unmatched })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (request === latestRequest.current) setLoading(false)
     }
   }, [data, replaceData])
 
   const clear = useCallback(() => {
+    latestRequest.current++
     if (data) replaceData(removeRunColumns(data))
     setOverlay(null)
     setMatch(null)
     setError(null)
+    setScoredEpochs([])
+    setLoading(false)
   }, [data, replaceData])
 
-  return { overlay, runs, match, loading, error, select, clear, refreshRuns }
+  return { overlay, runs, match, loading, error, scoredEpochs, select, clear, refreshRuns }
 }

@@ -8,6 +8,8 @@ interface Props {
   logY?: boolean
   xLabel: string
   height?: number
+  /** x value to mark with a vertical line (e.g. the epoch being viewed) */
+  marker?: number
 }
 
 const W = 360
@@ -25,7 +27,7 @@ function fmt(v: number): string {
 }
 
 /** Small SVG line chart: shared axes, one polyline per series, hover readout of the nearest x. */
-export function LineChart({ title, series, logY, xLabel, height = 190 }: Props) {
+export function LineChart({ title, series, logY, xLabel, height = 190, marker }: Props) {
   const [hover, setHover] = useState<number | null>(null)
   const plotted = useMemo(
     () => series.map(s => ({ ...s, y: logY ? s.y.map(v => (v > 0 ? Math.log10(v) : NaN)) : s.y })),
@@ -70,6 +72,9 @@ export function LineChart({ title, series, logY, xLabel, height = 190 }: Props) 
         {plotted.map(s => s.x.length === 1 && Number.isFinite(s.y[0]) && (
           <circle key={`dot-${s.label}`} cx={sx(s.x[0])} cy={sy(s.y[0])} r={3} fill={s.color} />
         ))}
+        {marker != null && marker >= x0 && marker <= x1 && (
+          <line x1={sx(marker)} x2={sx(marker)} y1={M.t} y2={height - M.b} stroke="var(--c-accent)" strokeWidth={1.5} />
+        )}
         {nearest != null && <line x1={sx(nearest)} x2={sx(nearest)} y1={M.t} y2={height - M.b} stroke="var(--c-t3)" strokeDasharray="3 3" />}
       </svg>
       {nearest != null && (

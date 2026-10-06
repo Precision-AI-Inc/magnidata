@@ -229,6 +229,44 @@ def derive_axes(
     return DerivedAxes(loaded.names, loaded.splits, columns, selected, scored)
 
 
+def sample_history(files: Sequence[tuple[int, Path]], image_name: str) -> dict | None:
+    """Return one image's loss trajectory across the scored epochs, or None if it never appears.
+
+    Values are aligned with ``epochs``; an epoch the image is missing from has None.
+    """
+    epochs: list[int] = []
+    rows: list[dict[str, str] | None] = []
+    split = None
+    for epoch, path in sorted(files):
+        found = None
+        with open(path, newline="") as fh:
+            for row in csv.DictReader(fh):
+                if row["image_name"] == image_name:
+                    found = row
+                    break
+        epochs.append(epoch)
+        rows.append(found)
+        if found:
+            split = found["split"]
+    if split is None:
+        return None
+
+    def series(column: str) -> list[float | None]:
+        out = []
+        for row in rows:
+            value = _to_float(row[column]) if row and column in row else float("nan")
+            out.append(None if np.isnan(value) else value)
+        return out
+
+    columns = {c for row in rows if row for c in row}
+    terms = {
+        "total": series("loss_total"),
+        **{t: series(contract.loss_column(t)) for t in contract.parse_loss_columns(sorted(columns))},
+    }
+    extras = {c: series(c) for c in OPTIONAL_COLUMNS if c in columns}
+    return {"image_name": image_name, "split": split, "epochs": epochs, "terms": terms, **extras}
+
+
 class RunAxesCache:
     """Small LRU of derived axes, keyed by ``(run_id, epoch, latest scored epoch)``.
 

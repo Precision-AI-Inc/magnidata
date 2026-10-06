@@ -226,6 +226,16 @@ export interface LaunchBody {
   parent_run_id?: string
 }
 
+export interface SampleHistory {
+  image_name: string
+  split: string
+  epochs: number[]
+  terms: Record<string, (number | null)[]>
+  iou?: (number | null)[]
+  confidence?: (number | null)[]
+  prediction_epochs: number[]
+}
+
 export interface RunMatch {
   matched: number
   run_only: number
@@ -352,6 +362,10 @@ export const api = {
     if (!r.ok) throw new ApiError(`${r.status}: ${await r.text()}`, r.status)
     return r.text()
   },
+  getRunSample: (runId: string, imageName: string) =>
+    get<SampleHistory>(`${BASE}/runs/${runId}/samples/${encodeURIComponent(imageName)}`),
+  runPredictionUrl: (runId: string, imageName: string, epoch: number | 'latest', alpha: number, maxSize = 1280) =>
+    `${BASE}/runs/${runId}/prediction?image=${encodeURIComponent(imageName)}&epoch=${epoch}&alpha=${alpha}&max_size=${maxSize}`,
   getRunMatch: (runId: string, datasetSource: string) =>
     get<RunMatch>(`${BASE}/runs/${runId}/match?dataset=${encodeURIComponent(datasetSource)}`),
   linkRun: (runId: string, datasetSource: string) =>

@@ -105,3 +105,14 @@ def cached_split(run_id: str) -> Path | None:
     """Return the cached ``split.csv`` of a run, if present."""
     path = cache_root() / run_id / contract.SPLIT_ARTIFACT
     return path if path.is_file() else None
+
+
+def fetch_artifact(store: MlflowStore, run_id: str, artifact: str) -> Path | None:
+    """Return a local copy of one run artifact (downloaded on first use), or None if the run lacks it."""
+    run_dir = cache_root() / run_id
+    with _lock:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        path = _fetch(store, run_id, artifact, run_dir)
+        os.utime(run_dir)
+        evict(cache_root(), run_id, max_bytes())
+    return path

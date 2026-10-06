@@ -7,6 +7,9 @@ import { api } from '../api'
 import type { CSVData, CSVRow, ColMeta } from '../types'
 import type { PartitionEntry } from '../hooks/usePartitions'
 import { imageNameOf } from '../hooks/usePartitions'
+import type { SampleHistory } from '../api'
+import { LineChart } from './experiments/LineChart'
+import { nearestEarlierPrediction, resolveEpoch } from '../lib/epochs'
 
 function navBtnStyle(side: 'left' | 'right', enabled: boolean): CSSProperties {
   return {
@@ -35,6 +38,8 @@ interface Props {
   onToggleRemove?: (row: CSVRow) => void
   added?: Set<number>
   onToggleAdd?: (row: CSVRow) => void
+  /** The training run overlaid on the dataset, if any: enables the loss history and Prediction view. */
+  run?: { runId: string; epoch: number | 'latest'; scoredEpochs: number[] }
 }
 
 // Columns worth surfacing as big "highlight" tiles, in priority order.
@@ -45,9 +50,9 @@ const HERO_PRIORITY = [
 
 const prettify = (s: string) => s.replace(/_/g, ' ')
 
-type PreviewTab = 'image' | 'mask' | 'overlay'
+type PreviewTab = 'image' | 'mask' | 'overlay' | 'prediction'
 
-export function ImageModal({ data, row: initialRow, allRows, onClose, partitionMap, added, onToggleAdd }: Props) {
+export function ImageModal({ data, row: initialRow, allRows, onClose, partitionMap, added, onToggleAdd, run }: Props) {
   const [row, setRow]           = useState(initialRow)
   const [imgError, setImgError] = useState<string | null>(null)
   const [noAnnotations, setNoAnnotations] = useState(false)
@@ -63,6 +68,8 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
     const t = setTimeout(() => setOverlayAlpha(sliderAlpha), 150)
     return () => clearTimeout(t)
   }, [sliderAlpha])
+
+  const [history, setHistory] = useState<SampleHistory | null>(null)
 
   const idx     = allRows.findIndex(r => r._idx === row._idx)
   const hasPrev = idx > 0
@@ -124,7 +131,25 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
+  const baseName = imgPath.split(/[\\/]/).pop() ?? ''
+  useEffect(() => {
+    setHistory(null)
+    if (!run || !baseName) return
+    let live = true
+    api.getRunSample(run.runId, baseName).then(h => { if (live) setHistory(h) }).catch(() => { /* sample not in the run */ })
+    return () => { live = false }
+  }, [run?.runId, baseName]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The prediction for the epoch being viewed; only the hardest samples get one logged, so fall
+  // back to the closest earlier epoch that has one, and say so.
+  const selectedEpoch = run ? resolveEpoch(run.scoredEpochs, run.epoch) : null
+  const predictionEpoch = history && selectedEpoch != null ? nearestEarlierPrediction(history.prediction_epochs, selectedEpoch) : null
+  const predictionNote = predictionEpoch == null
+    ? (history ? 'No prediction was saved for this image: only the hardest samples of each scored epoch get one.' : 'Loading…')
+    : predictionEpoch !== selectedEpoch ? `Prediction from epoch ${predictionEpoch} (none saved for epoch ${selectedEpoch})` : null
+
   const imgSrc = !imgPath ? '' :
+    tab === 'prediction' && run && predictionEpoch != null ? api.runPredictionUrl(run.runId, baseName, predictionEpoch, overlayAlpha) :
     tab === 'image'   ? api.imageUrl(thumbPath || imgPath, 1280) :
     tab === 'mask'    ? api.annotationMaskUrl(imgPath, 1280) :
                         api.annotationOverlayUrl(imgPath, overlayAlpha, 1280)
@@ -181,16 +206,18 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
             {/* Image / Mask / Overlay tabs */}
             <div className="flex items-center gap-1 px-4 shrink-0"
                  style={{ height: 40, background: 'var(--pai-navy)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-              {(['image', 'mask', 'overlay'] as const).map(t => (
-                <button key={t} onClick={() => setTab(t)}
+              {(['image', 'mask', 'overlay', ...(run ? ['prediction' as const] : [])] as PreviewTab[]).map(t => (
+                <button key={t} onClick={() => setTab(t)} disabled={t === 'prediction' && predictionEpoch == null}
+                        title={t === 'prediction' ? (predictionNote ?? `Model prediction at epoch ${predictionEpoch}`) : undefined}
                         style={{ padding: '5px 12px', borderRadius: 7, fontSize: 11.5, fontWeight: 600,
-                                 cursor: 'pointer', textTransform: 'capitalize', border: 'none',
+                                 cursor: t === 'prediction' && predictionEpoch == null ? 'not-allowed' : 'pointer', textTransform: 'capitalize', border: 'none',
+                                 opacity: t === 'prediction' && predictionEpoch == null ? 0.4 : 1,
                                  background: tab === t ? 'rgba(255,255,255,0.14)' : 'transparent',
                                  color: tab === t ? '#fff' : 'rgba(255,255,255,0.55)' }}>
                   {t}
                 </button>
               ))}
-              {tab === 'overlay' && (
+              {(tab === 'overlay' || tab === 'prediction') && (
                 <div className="flex items-center gap-2" style={{ marginLeft: 'auto' }}>
                   <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.5)' }}>Opacity</span>
                   <input type="range" min={0} max={100} value={Math.round(sliderAlpha * 100)}
@@ -287,6 +314,10 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
               )}
             </div>
 
+            {tab === 'prediction' && predictionNote && predictionEpoch != null && (
+              <div role="note" className="px-4 shrink-0" style={{ fontSize: 11, padding: '4px 16px', background: 'var(--pai-navy)', color: 'rgba(255,255,255,0.7)' }}>{predictionNote}</div>
+            )}
+
             {/* full-res link (image path intentionally not shown) */}
             {origUrl && (
               <div className="flex items-center justify-end px-4 shrink-0"
@@ -303,6 +334,10 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
           {/* ── Dashboard summary ─────────────────────────────────────────────── */}
           <div className="flex flex-col shrink-0 overflow-y-auto"
                style={{ width: 372, borderLeft: '1px solid var(--c-border)', background: 'var(--c-surface)' }}>
+
+            {run && (
+              <TrainingSection history={history} epoch={selectedEpoch} row={row} />
+            )}
 
             <div className="px-4 pt-4 pb-1">
               <p className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--c-t3)' }}>Summary</p>
@@ -411,4 +446,33 @@ function fmtN(n: number) {
   if (Number.isInteger(n)) return n.toLocaleString()
   if (Math.abs(n) < 0.001 && n !== 0) return n.toExponential(2)
   return n.toPrecision(4).replace(/\.?0+$/, '')
+}
+
+
+const TERM_COLORS = ['#0E7C90', '#E08A1E', '#B5479C', '#4C78C8']
+
+function TrainingSection({ history, epoch, row }: { history: SampleHistory | null; epoch: number | null; row: CSVRow }) {
+  const rank = row['loss_total_rank'] as number | undefined
+  const hardness = row['hardness'] as number | undefined
+  const fmt = (v: number | undefined) => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(2))
+  return (
+    <div className="px-4 pt-4" aria-label="Training">
+      <p className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--c-t3)' }}>Training</p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+        <StatCard label="Hardness" value={fmt(hardness)} />
+        <StatCard label="Loss rank in split" value={fmt(rank)} />
+      </div>
+      {!history && <p className="text-[11px]" style={{ color: 'var(--c-t3)' }}>No loss history for this image in the run.</p>}
+      {history && Object.entries(history.terms).map(([term, values], i) => (
+        <div key={term} className="mb-2">
+          <LineChart title={term === 'total' ? 'loss (total)' : `loss · ${term}`} xLabel="epoch" height={120} marker={epoch ?? undefined}
+                     series={[{
+                       label: term, color: TERM_COLORS[i % TERM_COLORS.length],
+                       x: history.epochs.filter((_, k) => values[k] != null),
+                       y: values.filter((v): v is number => v != null),
+                     }]} />
+        </div>
+      ))}
+    </div>
+  )
 }

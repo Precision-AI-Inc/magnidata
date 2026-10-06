@@ -885,3 +885,64 @@ def test_experiment_routes_are_registered(app_client):
     _, app_module = app_client
     rules = {rule.rule for rule in app_module.app.url_map.iter_rules()}
     assert {"/api/experiments", "/api/runs", "/api/runs/<run_id>/metrics", "/api/runs/<run_id>/link"} <= rules
+
+
+@pytest.fixture
+def masked_image(app_client, tmp_path, monkeypatch):
+    """A 20x10 green image with a red mask over its left half, in the <dataset>/images + masks layout."""
+    monkeypatch.chdir(tmp_path)  # these endpoints open paths relative to the working directory (/app in Docker)
+    folder = tmp_path / "ds"
+    (folder / "images").mkdir(parents=True)
+    (folder / "masks").mkdir()
+    Image.new("RGB", (20, 10), (10, 160, 10)).save(folder / "images" / "x.png")
+    mask = np.zeros((10, 20, 3), dtype=np.uint8)
+    mask[:, :10] = (230, 20, 20)
+    Image.fromarray(mask).save(folder / "masks" / "x.png")
+    return "ds/images/x.png", "ds/masks/x.png"
+
+
+def _pixel(resp, xy):
+    x, y = xy
+    return tuple(int(v) for v in np.asarray(Image.open(io.BytesIO(resp.data)).convert("RGB"))[y, x])
+
+
+def test_overlay_composites_mask_over_image(app_client, masked_image):
+    client, _ = app_client
+    img, mask = masked_image
+    resp = client.get(f"/api/overlay?img={img}&mask={mask}")
+    assert resp.status_code == 200
+    assert resp.mimetype == "image/jpeg"
+    assert _pixel(resp, (3, 5))[0] > 180  # masked half is red
+    assert _pixel(resp, (15, 5))[1] > 120  # background half keeps the green image
+
+
+def test_annotation_overlay_honours_alpha(app_client, masked_image):
+    client, _ = app_client
+    img, _ = masked_image
+    full = client.get(f"/api/annotation/overlay?path={img}&alpha=1")
+    assert full.status_code == 200
+    assert _pixel(full, (3, 5))[0] > 180
+    none = client.get(f"/api/annotation/overlay?path={img}&alpha=0")
+    assert _pixel(none, (3, 5))[1] > 120
+    half = _pixel(client.get(f"/api/annotation/overlay?path={img}&alpha=0.5"), (3, 5))
+    assert 80 < half[0] < 200
+    assert 40 < half[1] < 140
+
+
+def test_annotation_overlay_without_mask_is_404(app_client, tmp_path, monkeypatch):
+    client, _ = app_client
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "plain" / "images").mkdir(parents=True)
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(tmp_path / "plain" / "images" / "y.png")
+    assert client.get("/api/annotation/overlay?path=plain/images/y.png").status_code == 404
+    assert client.get("/api/annotation/overlay?path=../x.png").status_code == 400
+
+
+def test_mask_endpoint_makes_background_transparent(app_client, masked_image):
+    client, _ = app_client
+    _, mask = masked_image
+    resp = client.get(f"/api/mask?path={mask}")
+    assert resp.mimetype == "image/png"
+    alpha = np.asarray(Image.open(io.BytesIO(resp.data)).convert("RGBA"))[:, :, 3]
+    assert alpha[5, 3] == 255
+    assert alpha[5, 15] == 0

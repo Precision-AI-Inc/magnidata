@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Epoch scrubber for an overlaid run (slider, "latest" toggle, play) that re-colours the dataset views as you move
+  through the scored epochs. The image preview gains a Training section with the image's loss curves per term,
+  its hardness and rank, and a Prediction view of the model's mask at the viewed epoch (only the hardest
+  samples of each epoch have one; the view falls back to the nearest earlier epoch). New API:
+  `GET /api/runs/<id>/samples/<image>` and `GET /api/runs/<id>/prediction`.
 - Train from the dashboard: a **Train** button (tab bar and Experiments tab) opens a dialog to launch a run on the
   loaded dataset, with the preset's tunable parameters validated against the server's bounds. The Header shows
   "Training · epoch 3/20" while it runs, a toast reports the outcome, run detail can cancel it, and an overlaid

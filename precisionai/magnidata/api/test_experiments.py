@@ -6,12 +6,16 @@
 Run:  python -m pytest precisionai/magnidata/api/test_experiments.py -q
 """
 
+import io
+
 import experiments
 import mlflow_store as store_module
+import numpy as np
 import pytest
 from conftest import seed_run
 from flask import Flask
 from mlflow_store import MlflowStore
+from PIL import Image
 
 from precisionai.magnidata.training import contract
 
@@ -322,3 +326,86 @@ def test_match_errors(client, scored_run, mlflow_store):
     assert client.get(f"/api/runs/{scored_run}/match?dataset=../x.csv").status_code == 404
     plain = seed_run(mlflow_store)
     assert client.get(f"/api/runs/{plain}/match?dataset=data_user/ds.csv").status_code == 409
+
+
+def _png_bytes(color, size=(8, 6)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@pytest.fixture
+def predicted_run(mlflow_store, client, tmp_path, monkeypatch):
+    """A run with 3 scored epochs, a linked dataset on disk, and predictions for a.png at epochs 1 and 3."""
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path / "root"))
+    folder = tmp_path / "root" / "data_user" / "ds" / "images"
+    folder.mkdir(parents=True)
+    (folder / "a.png").write_bytes(_png_bytes((10, 120, 10), (40, 30)))
+    (folder / "b.png").write_bytes(_png_bytes((120, 10, 10), (40, 30)))
+    (tmp_path / "root" / "data_user" / "ds.csv").write_text(
+        "image_path\ndata_user/ds/images/a.png\ndata_user/ds/images/b.png\n"
+    )
+    client_ = mlflow_store._client
+    texts = {}
+    for epoch, (a, b) in {1: (0.9, 0.2), 2: (0.7, 0.3), 3: (0.5, 0.4)}.items():
+        texts[contract.per_sample_path(epoch)] = (
+            f"image_name,split,loss_total,loss_dice,iou\na.png,train,{a},{a / 2},0.{epoch}\nb.png,val,{b},{b / 2},0.9\n"
+        )
+    tags = {
+        contract.TAG_PER_SAMPLE_SCHEMA: contract.SCHEMA_VERSION,
+        contract.TAG_SCORED_EPOCHS: "1,2,3",
+        contract.TAG_DATASET_SOURCE: "data_user/ds.csv",
+    }
+    run_id = seed_run(mlflow_store, tags=tags, artifacts=texts)
+    for epoch in (1, 3):
+        local = tmp_path / f"pred{epoch}" / "a.png"
+        local.parent.mkdir()
+        local.write_bytes(_png_bytes((255, 0, 0), (8, 6)))
+        client_.log_artifact(run_id, str(local), f"magnidata/predictions/epoch_{epoch:04d}")
+    return run_id
+
+
+def test_sample_history_is_aligned_with_epochs(client, predicted_run):
+    body = client.get(f"/api/runs/{predicted_run}/samples/a.png").get_json()
+    assert body["split"] == "train"
+    assert body["epochs"] == [1, 2, 3]
+    assert body["terms"]["total"] == pytest.approx([0.9, 0.7, 0.5])
+    assert body["terms"]["dice"] == pytest.approx([0.45, 0.35, 0.25])
+    assert body["iou"] == pytest.approx([0.1, 0.2, 0.3])
+    assert body["prediction_epochs"] == [1, 3]
+    assert client.get(f"/api/runs/{predicted_run}/samples/b.png").get_json()["prediction_epochs"] == []
+
+
+def test_sample_history_errors(client, predicted_run, mlflow_store):
+    assert client.get(f"/api/runs/{predicted_run}/samples/nope.png").status_code == 404
+    assert client.get(f"/api/runs/{predicted_run}/samples/..%2Fx.png").status_code in (400, 404)
+    assert client.get(f"/api/runs/{predicted_run}/samples/a..png").status_code == 400
+    plain = seed_run(mlflow_store)
+    assert client.get(f"/api/runs/{plain}/samples/a.png").status_code == 409
+
+
+def test_prediction_returns_composited_jpeg(client, predicted_run):
+    resp = client.get(f"/api/runs/{predicted_run}/prediction?image=a.png&epoch=3&alpha=1")
+    assert resp.status_code == 200
+    assert resp.mimetype == "image/jpeg"
+    assert resp.headers["X-Magnidata-Epoch"] == "3"
+    pixel = [int(v) for v in np.asarray(Image.open(io.BytesIO(resp.data)).convert("RGB"))[5, 5]]
+    assert pixel[0] > 200
+    assert pixel[1] < 60  # the red prediction covers the green image at full opacity
+    assert client.get(f"/api/runs/{predicted_run}/prediction?image=a.png&epoch=latest").status_code == 200
+
+
+def test_prediction_alpha_blends(client, predicted_run):
+    resp = client.get(f"/api/runs/{predicted_run}/prediction?image=a.png&epoch=1&alpha=0.5")
+    pixel = [int(v) for v in np.asarray(Image.open(io.BytesIO(resp.data)).convert("RGB"))[5, 5]]
+    assert 30 < pixel[1] < 100  # between the green image (120) and the red mask (0)
+    assert 80 < pixel[0] < 200
+
+
+def test_prediction_missing_and_invalid(client, predicted_run):
+    assert client.get(f"/api/runs/{predicted_run}/prediction?image=a.png&epoch=2").status_code == 404
+    assert client.get(f"/api/runs/{predicted_run}/prediction?image=b.png&epoch=3").status_code == 404
+    assert client.get(f"/api/runs/{predicted_run}/prediction?image=../a.png&epoch=3").status_code == 400
+    assert client.get(f"/api/runs/{predicted_run}/prediction?image=a.png&epoch=x").status_code == 400
+    assert client.get(f"/api/runs/{predicted_run}/prediction?image=a.png&alpha=big").status_code == 400
+    assert client.get(f"/api/runs/{predicted_run}/prediction").status_code == 400

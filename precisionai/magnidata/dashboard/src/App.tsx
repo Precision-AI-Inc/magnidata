@@ -11,6 +11,7 @@ import { useActiveRun } from './hooks/useActiveRun'
 import { TrainDialog } from './components/experiments/TrainDialog'
 import { progressLabel, trainDisabledReason } from './lib/train'
 import { RunOverlayPicker } from './components/RunOverlayPicker'
+import { EpochScrubber } from './components/EpochScrubber'
 import type { CSVRow, TabId } from './types'
 
 import { Header }         from './components/Header'
@@ -448,6 +449,11 @@ export default function App() {
                                   onSelect={id => void runOverlay.select(id)} onClear={runOverlay.clear} />
               )}
 
+              {data && runOverlay.overlay && (
+                <EpochScrubber scoredEpochs={runOverlay.scoredEpochs} epoch={runOverlay.overlay.epoch} loading={runOverlay.loading}
+                               onChange={e => void runOverlay.select(runOverlay.overlay!.runId, e)} />
+              )}
+
               {/* Visual-explorer plot controls — moved up here from the explorer panel.
                   Vertical split, then Color by / Sort / Fields on the right. */}
               {data && tab === 'visual-explorer' && visibleData && (
@@ -711,6 +717,7 @@ export default function App() {
           onToggleRemove={toggleRemove}
           added={added}
           onToggleAdd={toggleAdd}
+          run={runOverlay.overlay ? { runId: runOverlay.overlay.runId, epoch: runOverlay.overlay.epoch, scoredEpochs: runOverlay.scoredEpochs } : undefined}
         />
       )}
     </div>

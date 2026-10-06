@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import artifact_cache
+import image_overlay
 import mlflow_store
 import run_axes
 import trainer_backend
@@ -465,3 +466,90 @@ def cancel_run(run_id: str) -> ResponseReturnValue:
         raise Conflict(str(err)) from None
     clear_cache()
     return jsonify({"run_id": run_id, "status": status, "cancel_requested": status != "KILLED"})
+
+
+def _image_name(value: str) -> str:
+    if not value or "/" in value or "\\" in value or ".." in value or "\x00" in value:
+        raise _bad("invalid image name")
+    return value
+
+
+_PREDICTION_LISTINGS: dict[tuple[str, int], set[str]] = {}
+
+
+def prediction_epochs(run_id: str, scored: list[int], image_name: str) -> list[int]:
+    """Epochs that have a logged prediction mask for an image.
+
+    Listings of finished epochs never change and are cached; the newest epoch is always
+    re-listed because its predictions are logged just after it is marked scored.
+    """
+    store = mlflow_store.get_store()
+    stem = os.path.splitext(image_name)[0]
+    found = []
+    for epoch in scored:
+        key = (run_id, epoch)
+        names = _PREDICTION_LISTINGS.get(key)
+        if names is None:
+            folder = os.path.dirname(contract.prediction_path(epoch, "x.png"))
+            names = {os.path.splitext(os.path.basename(f["path"]))[0] for f in store.list_artifacts(run_id, folder)}
+            if epoch != scored[-1]:
+                _PREDICTION_LISTINGS[key] = names
+        if stem in names:
+            found.append(epoch)
+    return found
+
+
+@bp.get("/api/runs/<run_id>/samples/<image_name>")
+def run_sample(run_id: str, image_name: str) -> ResponseReturnValue:
+    """Return one image's per-term loss trajectory across scored epochs, and where predictions exist."""
+    run = _per_sample_run(run_id)
+    name = _image_name(image_name)
+    scored = contract.parse_scored_epochs(run["tags"])
+    files = artifact_cache.sync_per_sample(mlflow_store.get_store(), run_id, with_split=False)
+    history = run_axes.sample_history(files, name)
+    if history is None:
+        raise MlflowNotFoundError(f"image {name} is not in this run")
+    return jsonify({**history, "prediction_epochs": prediction_epochs(run_id, scored, name)})
+
+
+def _dataset_image_bytes(run: dict[str, Any], image_name: str) -> bytes:
+    source = run["tags"].get(contract.TAG_DATASET_SOURCE)
+    if not source:
+        raise _bad("run is not linked to a dataset")
+    root = os.environ.get("DATA_ROOT", ".")
+    csv_path = resolve_under(root, source)
+    if csv_path is None or not csv_path.is_file():
+        raise MlflowNotFoundError(f"dataset not found: {source}")
+    with open(csv_path, newline="") as fh:
+        reader = csv.DictReader(fh)
+        column = contract.image_path_column(reader.fieldnames or [])
+        rel = next((r[column] for r in reader if column and contract.image_key(r[column]) == image_name), None)
+    image = resolve_under(root, rel) if rel else None
+    if image is None or not image.is_file():
+        raise MlflowNotFoundError(f"image {image_name} not found in {source}")
+    return image.read_bytes()
+
+
+@bp.get("/api/runs/<run_id>/prediction")
+def run_prediction(run_id: str) -> ResponseReturnValue:
+    """Return the dataset image with the run's predicted mask composited on it (JPEG)."""
+    run = _per_sample_run(run_id)
+    name = _image_name(request.args.get("image", ""))
+    scored = contract.parse_scored_epochs(run["tags"])
+    raw = request.args.get("epoch", "latest")
+    if raw != "latest" and not raw.isdigit():
+        raise _bad("epoch must be 'latest' or a number")
+    epoch = scored[-1] if raw == "latest" else int(raw)
+    try:
+        alpha = max(0.0, min(1.0, float(request.args.get("alpha", 0.5))))
+        max_size = max(64, min(4000, int(request.args.get("max_size", 1600))))
+    except ValueError:
+        raise _bad("alpha and max_size must be numbers") from None
+
+    artifact = contract.prediction_path(epoch, name)
+    mask_file = artifact_cache.fetch_artifact(mlflow_store.get_store(), run_id, artifact)
+    if mask_file is None:
+        raise MlflowNotFoundError(f"no prediction for {name} at epoch {epoch}")
+    base = image_overlay.img_from_bytes(_dataset_image_bytes(run, name), max_size)
+    result = image_overlay.composite_mask(base, image_overlay.mask_as_rgba(mask_file.read_bytes()), alpha)
+    return Response(image_overlay.to_jpeg(result), mimetype="image/jpeg", headers={"X-Magnidata-Epoch": str(epoch)})

@@ -6,6 +6,8 @@ import { api } from '../api'
 import { useTheme } from '../hooks/useTheme'
 
 interface Props {
+  pageTitle: string
+  pageSubtitle: string
   data: CSVData | null
   rows: CSVRow[]                    // current selection (filters + 3D selection applied) to export
   filteredCount: number
@@ -13,11 +15,6 @@ interface Props {
   datasetSource?: string | null
   buildJob?: BuildJobStatus | null
   onDismissBuildJob?: () => void
-  onGoHome: () => void
-  onOpenMagniData: () => void
-  onOpenByod: () => void
-  onOpenHelp: () => void
-  onOpenExperiments: () => void
   /** Live training run, shown like the build badge */
   trainingBadge?: string | null
 }
@@ -35,11 +32,9 @@ function downloadBlob(content: string, filename: string, type: string) {
   URL.revokeObjectURL(a.href)
 }
 
-// Markup contract copied from the shared Precision AI app shell
-// (https://embeddings.precision.ai/ui/tokens.css, `.pai-shell*` classes) so this
-// header renders pixel-identical to the reference site's — same brand mark, product
-// nav, and theme toggle (including its CSS-driven sun/moon icon swap).
-export function Header({ data, rows, filteredCount, embeddingsAvailable, datasetSource, buildJob, onDismissBuildJob, onGoHome, onOpenMagniData, onOpenByod, onOpenHelp, onOpenExperiments, trainingBadge }: Props) {
+// Context bar for the MagniData application shell. Its theme toggle uses the
+// same persisted token contract as the other Precision AI surfaces.
+export function Header({ pageTitle, pageSubtitle, data, rows, filteredCount, embeddingsAvailable, datasetSource, buildJob, onDismissBuildJob, trainingBadge }: Props) {
   const { toggle } = useTheme()
 
   // Export the current selection (rows passing active filters/3D selection) as CSV, plus
@@ -73,24 +68,12 @@ export function Header({ data, rows, filteredCount, embeddingsAvailable, dataset
     }
   }
 
-  const nav = (label: string, onClick: () => void) => (
-    <a href="#" onClick={e => { e.preventDefault(); onClick() }}>{label}</a>
-  )
-
   return (
-    <header className="pai-shell" style={{ flexShrink: 0 }}>
-      <a className="pai-shell-brand" href="#" aria-label="Precision AI home"
-         onClick={e => { e.preventDefault(); onGoHome() }}>
-        <img className="brand-logo" src="/logo.png" alt="Precision AI" style={{ height: 28, width: 'auto' }} />
-      </a>
-
-      <nav className="pai-shell-nav" aria-label="Products">
-        {nav('Home', onGoHome)}
-        {nav('MagniData', onOpenMagniData)}
-        {nav('BYOD', onOpenByod)}
-        {nav('Experiments', onOpenExperiments)}
-        {nav('Help', onOpenHelp)}
-      </nav>
+    <header className="dashboard-topbar">
+      <div className="dashboard-topbar__title">
+        <h1>{pageTitle}</h1>
+        <p>{pageSubtitle}</p>
+      </div>
 
       {/* Stats */}
       {data && (
@@ -141,7 +124,7 @@ export function Header({ data, rows, filteredCount, embeddingsAvailable, dataset
         </div>
       )}
 
-      <div className="pai-shell-right">
+      <div className="dashboard-topbar__right">
         {/* Export the current selection */}
         {data && (
           <button onClick={exportSelection} disabled={exporting || !rows.length}

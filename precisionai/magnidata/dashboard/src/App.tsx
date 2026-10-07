@@ -20,7 +20,6 @@ import type { CSVRow, TabId } from './types'
 
 import { Header }         from './components/Header'
 import { Sidebar }        from './components/Sidebar'
-import { Landing }        from './components/Landing'
 import { CSVLoader }      from './components/CSVLoader'
 import { ByodDialog }     from './components/ByodDialog'
 import { HelpPage }       from './components/HelpPage'
@@ -31,6 +30,10 @@ import { Histograms }     from './components/Histograms'
 import { ImageModal }     from './components/ImageModal'
 import { Schema }         from './components/Dictionary'
 import { ExperimentsTab } from './components/experiments/ExperimentsTab'
+import { AppNavigation } from './components/AppNavigation'
+import type { AppSection } from './components/AppNavigation'
+import { WorkspaceDashboard } from './components/WorkspaceDashboard'
+import './components/WorkspaceDashboard.css'
 
 type LandingView = 'landing' | 'datasets' | 'help' | 'experiments'
 
@@ -221,6 +224,7 @@ export default function App() {
   const goHome = () => {
     clear()
     setDatasetSource(null)
+    setTab('visual-explorer')
     setLandingView('landing')
   }
 
@@ -231,6 +235,7 @@ export default function App() {
   const goToMagniData = () => {
     clear()
     setDatasetSource(null)
+    setTab('visual-explorer')
     if (datasetMeta.length === 0) {
       setShowByod(true)
       return
@@ -238,10 +243,32 @@ export default function App() {
     setLandingView('datasets')
   }
 
+  const goToDatasets = () => {
+    clear()
+    setDatasetSource(null)
+    setTab('visual-explorer')
+    setLandingView('datasets')
+  }
+
+  const goToExplorer = () => {
+    if (data) {
+      setTab('visual-explorer')
+      return
+    }
+    goToMagniData()
+  }
+
+  const goToSchema = () => {
+    clear()
+    setDatasetSource(null)
+    setTab('schema')
+  }
+
   // Help is a full page (not a dialog) — reachable the same way as Home/MagniData.
   const goToHelp = () => {
     clear()
     setDatasetSource(null)
+    setTab('visual-explorer')
     setLandingView('help')
   }
 
@@ -373,6 +400,7 @@ export default function App() {
   const goToExperiments = () => {
     clear()
     setDatasetSource(null)
+    setTab('visual-explorer')
     setLandingView('experiments')
   }
 
@@ -430,9 +458,43 @@ export default function App() {
     }
   }, [datasetSource, data, addName, added, reloadDatasets])
 
+  const activeSection: AppSection = data
+    ? (tab === 'experiments' ? 'experiments' : tab === 'schema' ? 'schema' : 'explorer')
+    : tab === 'schema'
+      ? 'schema'
+      : landingView === 'datasets'
+        ? 'datasets'
+        : landingView === 'experiments'
+          ? 'experiments'
+          : landingView === 'help'
+            ? 'help'
+            : 'workspace'
+
+  const pageCopy: Record<AppSection, [string, string]> = {
+    workspace: ['Workspace', 'Your scientific data and model development hub'],
+    explorer: ['Visual Explorer', data ? `Explore ${data.fileName} across features, embeddings, and samples` : 'Explore high-dimensional data and inspect samples'],
+    datasets: ['Datasets', 'Manage and explore your scientific datasets'],
+    experiments: ['Experiments', 'Track, compare, and analyze model training runs'],
+    schema: ['Data Schema', 'Understand the fields available to every visualization'],
+    help: ['Help & Setup', 'Prepare datasets and run the training feedback loop'],
+  }
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', background: 'var(--c-bg)', fontFamily: 'Epilogue, sans-serif' }}>
+    <div className="app-shell">
+      <AppNavigation
+        active={activeSection}
+        onWorkspace={goHome}
+        onExplorer={goToExplorer}
+        onDatasets={goToDatasets}
+        onExperiments={goToExperiments}
+        onSchema={goToSchema}
+        onHelp={goToHelp}
+      />
+
+      <div className="app-stage">
       <Header
+        pageTitle={pageCopy[activeSection][0]}
+        pageSubtitle={pageCopy[activeSection][1]}
         data={data}
         rows={liveFilteredRows}
         filteredCount={liveFilteredRows.length}
@@ -440,11 +502,6 @@ export default function App() {
         datasetSource={datasetSource}
         buildJob={buildJob.job}
         onDismissBuildJob={buildJob.dismiss}
-        onGoHome={goHome}
-        onOpenMagniData={goToMagniData}
-        onOpenByod={() => setShowByod(true)}
-        onOpenHelp={goToHelp}
-        onOpenExperiments={goToExperiments}
         trainingBadge={trainingBadge}
       />
 
@@ -452,9 +509,13 @@ export default function App() {
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
         {!data && !loading && !error && tab !== 'schema' && landingView === 'landing' && (
-          <Landing
-            onOpenMagniData={goToMagniData}
+          <WorkspaceDashboard
+            datasets={datasetMeta}
+            onOpenDataset={loadDatasetBySource}
+            onOpenDatasets={goToDatasets}
+            onOpenExplorer={goToMagniData}
             onOpenByod={() => setShowByod(true)}
+            onOpenExperiments={goToExperiments}
             onOpenHelp={goToHelp}
           />
         )}
@@ -776,6 +837,7 @@ export default function App() {
             </div>
           </>
         )}
+      </div>
       </div>
 
       {trainOn && activeRun.presets && (

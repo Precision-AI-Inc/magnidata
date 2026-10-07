@@ -23,6 +23,20 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.dashboard-topbar {
+  min-height: 64px; flex: 0 0 auto; display: flex; align-items: center; gap: 18px;
+  padding: 9px 16px; background: var(--c-surface); border-bottom: 1px solid var(--c-border);
+}
+.dashboard-topbar__title { min-width: 190px; margin-right: auto; }
+.dashboard-topbar__title h1 { margin: 0; color: var(--c-t1); font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
+.dashboard-topbar__title p { margin: 3px 0 0; color: var(--c-t3); font-size: 10.5px; }
+.dashboard-topbar__right { display: flex; align-items: center; gap: 8px; }
+@media (max-width: 900px) {
+  .dashboard-topbar { gap: 10px; }
+  .dashboard-topbar__title { min-width: 0; }
+  .dashboard-topbar__title p, .dashboard-topbar > .flex.items-center.gap-4 { display: none; }
+}
+
 /* ── Scrollbars ──────────────────────────────────────────── */
 ::-webkit-scrollbar        { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track  { background: transparent; }

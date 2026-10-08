@@ -360,9 +360,20 @@ def warm_cache(
     cache.evict({cache.key(s) for s in samples})
 
 
-def build_palette_cached(cache: ResizedCache, samples: Sequence[Sample], max_classes: int = 32) -> Palette:
+def build_palette_cached(
+    cache: ResizedCache,
+    samples: Sequence[Sample],
+    max_classes: int = 32,
+    progress: Callable[[int, int], None] | None = None,
+) -> Palette:
     """Derive the palette like `build_palette`, from the cache's per-mask colour counts."""
-    return _palette_from_counts([cache.counts(s) for s in samples], max_classes)
+    counts = []
+    every = max(len(samples) // 20, 1)
+    for done, sample in enumerate(samples, start=1):
+        counts.append(cache.counts(sample))
+        if progress and (done % every == 0 or done == len(samples)):
+            progress(done, len(samples))
+    return _palette_from_counts(counts, max_classes)
 
 
 def make_split(

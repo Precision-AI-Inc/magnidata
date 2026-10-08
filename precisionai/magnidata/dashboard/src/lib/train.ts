@@ -92,9 +92,23 @@ export function trainDisabledReason(s: TrainState): string | null {
   return null
 }
 
-/** "epoch 3/20" while running; "queued" while scheduled. */
-export function progressLabel(status: string, epochsDone: number, totalEpochs: number): string {
+/** Current preparation/batch stage when available, with an epoch fallback for older trainers. */
+export function progressLabel(
+  status: string,
+  epochsDone: number,
+  totalEpochs: number,
+  tags: Record<string, string> = {},
+): string {
   if (status === 'SCHEDULED') return 'queued'
+  const stage = tags['magnidata.progress_stage']
+  const current = Number(tags['magnidata.progress_current'])
+  const total = Number(tags['magnidata.progress_total'])
+  if (stage) {
+    const percent = Number.isFinite(current) && Number.isFinite(total) && total > 0
+      ? ` · ${Math.min(100, Math.round((current / total) * 100))}%`
+      : ''
+    return `${stage}${percent}`
+  }
   return `epoch ${Math.min(epochsDone + 1, totalEpochs || epochsDone + 1)}/${totalEpochs || '?'}`
 }
 

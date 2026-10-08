@@ -100,6 +100,9 @@ def test_run_reports_device_and_progress(mlflow_tracking, synthetic_dataset, cap
     run = client.get_run(run_id)
     assert run.data.tags[contract.TAG_DEVICE] == "cpu"
     assert run.data.tags[contract.TAG_ETA_SECONDS] == "0"
+    assert run.data.tags[contract.TAG_PROGRESS_STAGE] == "Complete"
+    assert run.data.tags[contract.TAG_PROGRESS_CURRENT] == "1"
+    assert run.data.tags[contract.TAG_PROGRESS_TOTAL] == "1"
     assert len(_history(client, run_id, contract.EPOCH_SECONDS_METRIC)) == 2
     assert all(v > 0 for v in _history(client, run_id, contract.SAMPLES_PER_SEC_METRIC))
 

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The dashboard remembers the latest server dataset and restores it after refresh, with brief retries for a busy
+  API and a recoverable error screen if loading still fails. Large parallel-coordinate plots render a deterministic
+  3,000-line representation while brushes, counts, tables, exports, and selections continue to use every row.
+  Training status now distinguishes data preparation, mask indexing, GPU batches, validation, and scoring, with
+  coarse percentages refreshed every two seconds.
 - A calmer Material-style dashboard shell with floating navigation, a breadcrumb context header, at-a-glance
   workspace cards, focused recent datasets and experiments, compact task shortcuts, and collapsible service
   readiness. Dataset views now live beneath **Visual Explorer** in the left navigation, while the connected

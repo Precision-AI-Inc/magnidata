@@ -21,6 +21,7 @@ import contextlib
 import heapq
 import os
 import random
+import re
 import sys
 import tempfile
 import time
@@ -161,6 +162,13 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
+def set_run_progress(sink: MlflowSink, stage: str, current: int, total: int) -> None:
+    """Publish coarse run progress for the dashboard."""
+    sink.set_tag(contract.TAG_PROGRESS_STAGE, stage)
+    sink.set_tag(contract.TAG_PROGRESS_CURRENT, str(current))
+    sink.set_tag(contract.TAG_PROGRESS_TOTAL, str(total))
+
+
 def describe_device(device: torch.device) -> str:
     """Return ``cuda:0 (GPU name)`` or ``cpu``."""
     if device.type == "cuda":
@@ -251,6 +259,7 @@ def train_epoch(
     on_step: Callable[[float], None],
     label: str = "",
     amp: AmpMode | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> EpochMeans:
     """Run one training epoch; stop early (``cancelled=True``) when ``cancel()`` is true.
 
@@ -280,6 +289,8 @@ def train_epoch(
         seen += _accumulate(sums, out.per_sample)
         on_step(optimizer.param_groups[0]["lr"])
         if index % every == 0 or index == n_batches:
+            if on_progress:
+                on_progress(index, n_batches)
             rate = index / max(time.monotonic() - started, 1e-9)
             log(
                 f"{label} train batch {index}/{n_batches} "
@@ -431,7 +442,11 @@ class _Setup:
 
 
 def prepare_data(
-    cfg: TrainConfig, data_root: Path, recorder: LossRecorder, device: torch.device | None = None
+    cfg: TrainConfig,
+    data_root: Path,
+    recorder: LossRecorder,
+    device: torch.device | None = None,
+    progress: Callable[[str, int, int], None] | None = None,
 ) -> _Setup:
     """Resolve samples, cache them resized, build palette and split, log them, and make the data loaders."""
     csv_path = data_root / cfg.dataset_source
@@ -447,9 +462,26 @@ def prepare_data(
     cache = data.ResizedCache(data_root / "data_user" / data.CACHE_DIRNAME, (size, size))
     log(f"caching {len(samples)} images at {size}x{size} with {max(cfg.num_workers, 1)} process(es)")
     started = time.monotonic()
-    data.warm_cache(cache, samples, cfg.num_workers, log)
+    cache_bucket = [-1]
+
+    def cache_progress(message: str) -> None:
+        log(message)
+        match = re.search(r"(\d+)/(\d+)$", message)
+        if not match or not progress:
+            return
+        done, total = map(int, match.groups())
+        bucket = done * 20 // max(total, 1)
+        if bucket != cache_bucket[0] or done == total:
+            cache_bucket[0] = bucket
+            progress("Preparing data", done, total)
+
+    data.warm_cache(cache, samples, cfg.num_workers, cache_progress)
     log(f"cache ready in {_format_duration(time.monotonic() - started)}")
-    palette = data.build_palette_cached(cache, samples)
+    palette = data.build_palette_cached(
+        cache,
+        samples,
+        progress=(lambda done, total: progress("Indexing masks", done, total)) if progress else None,
+    )
     column = {s.image_name: s.csv_split for s in samples if s.csv_split} if cfg.split_mode == "column" else {}
     if cfg.split_mode == "column" and not column:
         raise ValueError("split_mode=column but the dataset CSV has no split column")
@@ -523,6 +555,7 @@ def run_epochs(
 ) -> str:
     """Train, validate and score for every epoch; return the final status (FINISHED or KILLED)."""
     cfg = setup.cfg
+    set_run_progress(sink, "Starting GPU training" if device.type == "cuda" else "Starting training", 0, 0)
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
     amp = make_amp(device, cfg.amp)
@@ -555,10 +588,14 @@ def run_epochs(
             on_step,
             label=f"epoch {epoch}/{cfg.epochs}",
             amp=amp,
+            on_progress=lambda current, total, current_epoch=epoch: set_run_progress(
+                sink, f"Epoch {current_epoch}/{cfg.epochs} training", current, total
+            ),
         )
         if train.cancelled:
             buffer.flush()
             return "KILLED"
+        set_run_progress(sink, f"Epoch {epoch}/{cfg.epochs} validating", 0, 0)
         val, confusion = (
             evaluate(model, setup.val_loader, criterion, device, setup.palette.num_classes, amp)
             if setup.n_val
@@ -581,6 +618,7 @@ def run_epochs(
             f"val={val.get('total', float('nan')):.3f} {seconds:.1f}s ETA {_format_duration(eta)}"
         )
         if epoch == 1 or epoch % cfg.score_every == 0 or epoch == cfg.epochs:
+            set_run_progress(sink, f"Epoch {epoch}/{cfg.epochs} scoring", 0, 0)
             hardest = score_epoch(
                 model, setup.score_loader, criterion, device, recorder, setup.splits, epoch, cfg.top_k_predictions, amp
             )
@@ -590,6 +628,7 @@ def run_epochs(
             if cfg.checkpoint_every_score:
                 save_checkpoint(sink, model, cfg, setup.palette, epoch, scratch)
     save_checkpoint(sink, model, cfg, setup.palette, cfg.epochs, scratch)
+    set_run_progress(sink, "Complete", 1, 1)
     return "FINISHED"
 
 
@@ -624,7 +663,14 @@ def run(run_id: str, tracking_uri: str, data_root: Path, device_name: str = "aut
                 status = "KILLED"
             else:
                 recorder = LossRecorder(cfg.loss_terms, sink, scratch / "per_sample")
-                setup = prepare_data(cfg, data_root, recorder, device)
+                set_run_progress(sink, "Preparing data", 0, 0)
+                setup = prepare_data(
+                    cfg,
+                    data_root,
+                    recorder,
+                    device,
+                    lambda stage, current, total: set_run_progress(sink, stage, current, total),
+                )
                 log_missing_params(
                     client, existing, cfg, {"num_classes": str(setup.palette.num_classes), "device": str(device)}
                 )

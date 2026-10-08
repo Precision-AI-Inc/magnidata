@@ -9,6 +9,7 @@ import { BRAND_CATEGORICAL, BRAND_SEQUENTIAL, TABLE_HEADER, TABLE_HEADER_ACTIVE 
 import { defaultTrainingAxes, highLossBrush } from '../lib/runAxes'
 import { defaultTrainingCategorical, splitColor, SPLIT_COLUMN } from '../lib/split'
 import { DIVERGING_SCALE, divergingRange, isDivergingColumn } from '../lib/diverging'
+import { sampleParallelRows } from '../lib/parallelSample'
 
 interface Props {
   data: CSVData
@@ -31,6 +32,7 @@ interface Props {
 
 const PALETTE = BRAND_CATEGORICAL
 const PC_HEIGHT = 330
+const MAX_PARALLEL_LINES = 3000
 
 // Brand teal → emerald → mint sequential scale (shared with Graph3D via vizColors).
 // Passed as an explicit array (not a named string) so it renders correctly on the very first
@@ -108,6 +110,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
   const divRef  = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<typeof Plotly | null>(null)
+  const resizeFrame = useRef<number | null>(null)
 
   // Height of the parallel-coordinates panel (top row); the bottom row (3D + table) flexes to fill.
   // Draggable via the splitter handle between the two rows.
@@ -118,8 +121,13 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     const startY = e.clientY
     const startH = pcHeight
     const onMove = (ev: MouseEvent) => {
-      const max = (rootRef.current?.clientHeight ?? 800) - 300   // leave room for the bottom row (min 280)
-      setPcHeight(Math.max(160, Math.min(max, startH + (ev.clientY - startY))))
+      const clientY = ev.clientY
+      if (resizeFrame.current != null) window.cancelAnimationFrame(resizeFrame.current)
+      resizeFrame.current = window.requestAnimationFrame(() => {
+        const max = (rootRef.current?.clientHeight ?? 800) - 300   // leave room for the bottom row (min 280)
+        setPcHeight(Math.max(160, Math.min(max, startH + (clientY - startY))))
+        resizeFrame.current = null
+      })
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
@@ -132,6 +140,9 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }
+  useEffect(() => () => {
+    if (resizeFrame.current != null) window.cancelAnimationFrame(resizeFrame.current)
+  }, [])
 
   // colorBy / sortMode / showFields are controlled by App (rendered in the tab bar).
   // App seeds colorBy via an effect (async), so on the very first paint it can be ''. Use a
@@ -241,6 +252,19 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     return result
   }, [rows, constraints, selectedCols, selectedCatCols, filter3D, removed])
 
+  // Plotly becomes expensive and unresponsive when every line of a large dataset is sent
+  // to its parcoords trace. Keep all filtering/counting/export semantics on `rows`, while
+  // drawing an evenly distributed, deterministic subset of the current visual population.
+  const basePlotRows = useMemo(
+    () => (removed?.size ? rows.filter(row => !removed.has(row._idx as number)) : rows),
+    [rows, removed],
+  )
+  const plotCandidates = filter3D ? filteredRows : basePlotRows
+  const plottedRows = useMemo(
+    () => sampleParallelRows(plotCandidates, MAX_PARALLEL_LINES),
+    [plotCandidates],
+  )
+
   // ── Color helpers ──────────────────────────────────────────────────────────
   // displayRows: the rows to assign colors to; cmin/cmax always derived from all rows for stable scale
   function buildColorData(col: string, displayRows: CSVRow[]) {
@@ -331,10 +355,8 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     const Plotly = plotRef.current
 
     const sortedCols  = getSortedCols()
-    // When a 3D cluster is selected show only those rows; axis ranges stay pinned to full data
-    // Drop removed rows from the drawn lines (axis ranges below still use full `rows` so they're stable).
-    const baseRows = (removed && removed.size) ? rows.filter(r => !removed.has(r._idx as number)) : rows
-    const displayRows = filter3D ? filteredRows : baseRows
+    // Axis ranges and brush results stay pinned to the complete dataset; only rendered lines are sampled.
+    const displayRows = plottedRows
     const { colorData, colorscale, cmin, cmax, tickvals, ticktext } = buildColorData(colorByEff, displayRows)
 
     // Re-apply any active brush so the selection survives a redraw (color-by / sort / axis change).
@@ -491,7 +513,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
   extractRef.current = extractConstraints
 
   // Redraw when active columns, color-by, sort mode, data, or 3D cluster selection changes
-  useEffect(() => { drawPlot() }, [rows, colorByEff, sortMode, activeCols, activeCatCols, filter3D, removed]) // eslint-disable-line
+  useEffect(() => { drawPlot() }, [rows, plottedRows, colorByEff, sortMode, activeCols, activeCatCols]) // eslint-disable-line
 
   // Resize the plot to the new panel height during splitter drags — relayout (not redraw) so the
   // current axis brush is preserved.
@@ -780,7 +802,17 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
           <p style={{ fontSize: 12, color: 'var(--c-t3)' }}>Select at least one field above to draw the chart</p>
         </div>
       ) : (
-        <div ref={divRef} style={{ height: pcHeight, flexShrink: 0, background: '#0a1422' }} />
+        <div style={{ height: pcHeight, flexShrink: 0, position: 'relative', background: '#0a1422' }}>
+          <div ref={divRef} style={{ height: '100%' }} />
+          {plotCandidates.length > plottedRows.length && (
+            <span title="Brushes and result counts still apply to every row"
+                  style={{ position: 'absolute', left: 12, bottom: 7, zIndex: 2, pointerEvents: 'none',
+                           padding: '3px 7px', borderRadius: 5, fontSize: 9.5,
+                           color: 'rgba(206,238,228,.72)', background: 'rgba(4,16,28,.72)' }}>
+              Representative {plottedRows.length.toLocaleString()} of {plotCandidates.length.toLocaleString()} lines · filters use all rows
+            </span>
+          )}
+        </div>
       )}
 
       <div onMouseDown={startResize} title="Drag to resize"

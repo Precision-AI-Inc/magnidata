@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Activity, ChevronLeft, ChevronRight, Columns, Download, FlaskConical, LayoutGrid, Loader2, Plus, Save, Share2, SlidersHorizontal, Table2, Trash2, X, BarChart2 } from 'lucide-react'
-import { api } from './api'
+import { api, errorText } from './api'
 import type { DatasetMeta } from './api'
 import { useCSV } from './hooks/useCSV'
 import { useFilters } from './hooks/useFilters'
@@ -33,6 +33,9 @@ import { ExperimentsTab } from './components/experiments/ExperimentsTab'
 import { AppNavigation } from './components/AppNavigation'
 import type { AppSection } from './components/AppNavigation'
 import { WorkspaceDashboard } from './components/WorkspaceDashboard'
+import {
+  forgetDatasetSource, readLastDatasetSource, rememberedDataset, rememberDatasetSource, retry,
+} from './lib/datasetSession'
 import './components/WorkspaceDashboard.css'
 
 type LandingView = 'landing' | 'datasets' | 'help' | 'experiments'
@@ -53,6 +56,12 @@ export default function App() {
   const [hiddenCols, setHiddenCols] = useState<Set<string>>(new Set())
   const [datasetSource, setDatasetSource] = useState<string | null>(null)
   const [datasetMeta, setDatasetMeta] = useState<DatasetMeta[]>([])
+  const [catalogReady, setCatalogReady] = useState(false)
+  const [restoringDataset, setRestoringDataset] = useState(() => readLastDatasetSource() !== null)
+  const [fetchingDataset, setFetchingDataset] = useState(false)
+  const [datasetLoadError, setDatasetLoadError] = useState<string | null>(null)
+  const [failedDatasetSource, setFailedDatasetSource] = useState<string | null>(null)
+  const restoreAttempted = useRef(false)
   const [landingView, setLandingView] = useState<LandingView>('landing')
   const [showByod, setShowByod] = useState(false)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
@@ -218,13 +227,28 @@ export default function App() {
       return next
     })
 
-  const reloadDatasets = useCallback(() => {
-    api.datasets().then(setDatasetMeta).catch(() => {})
+  const reloadDatasets = useCallback(async () => {
+    try {
+      const datasets = await retry(() => api.datasets())
+      setDatasetMeta(datasets)
+      setCatalogReady(true)
+      setDatasetLoadError(null)
+      return datasets
+    } catch (caught) {
+      setCatalogReady(false)
+      setRestoringDataset(false)
+      setDatasetLoadError(`Could not load the dataset catalogue. ${errorText(caught)}`)
+      return null
+    }
   }, [])
 
   const deleteDataset = useCallback((id: number) => {
-    api.deleteDataset(id).then(reloadDatasets).catch(() => {})
-  }, [reloadDatasets])
+    const source = datasetMeta.find(dataset => dataset.id === id)?.source
+    api.deleteDataset(id).then(() => {
+      if (source) forgetDatasetSource(source)
+      void reloadDatasets()
+    }).catch(() => {})
+  }, [datasetMeta, reloadDatasets])
 
   // Global dataset-build progress — lives here (not inside the BYOD dialog) so it keeps
   // polling and stays visible (as a Header badge) after the dialog that started it closes.
@@ -236,11 +260,14 @@ export default function App() {
 
   // Load the dataset catalogue (for embeddings availability) on mount
   useEffect(() => {
-    reloadDatasets()
+    void reloadDatasets()
   }, [reloadDatasets])
 
   const handleLoad = (f: File, source?: string) => {
     load(f)
+    if (source) rememberDatasetSource(source)
+    setDatasetLoadError(null)
+    setFailedDatasetSource(null)
     setTab('visual-explorer')
     setPreview(null)
     reset()
@@ -309,15 +336,50 @@ export default function App() {
   // "Load dataset" from a run: fetch the CSV of a known dataset and open it like the picker does.
   const loadDatasetBySource = async (source: string) => {
     const ds = datasetMeta.find(d => d.source === source)
-    if (!ds) return
+    if (!ds) {
+      setRestoringDataset(false)
+      return false
+    }
+    setFetchingDataset(true)
+    setDatasetLoadError(null)
+    setFailedDatasetSource(source)
     try {
-      const res = await fetch(api.datasetCsvUrl(ds.source))
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const res = await retry(async () => {
+        const response = await fetch(api.datasetCsvUrl(ds.source))
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return response
+      })
       handleLoad(new File([await res.blob()], ds.name + '.csv', { type: 'text/csv' }), ds.source)
-    } catch (e) {
-      console.error('Failed to load dataset:', e)
+      return true
+    } catch (caught) {
+      console.error('Failed to load dataset:', caught)
+      setDatasetLoadError(`Could not load ${ds.name}. ${errorText(caught)}`)
+      return false
+    } finally {
+      setFetchingDataset(false)
+      setRestoringDataset(false)
     }
   }
+
+  // Restore the most recently opened server dataset after the catalogue has loaded. The
+  // catalogue and CSV requests both retry transient failures, and a missing/deleted source
+  // is forgotten only after a successful catalogue response proves it is gone.
+  useEffect(() => {
+    if (!catalogReady || restoreAttempted.current) return
+    restoreAttempted.current = true
+    if (window.location.hash.startsWith('#compare=')) {
+      setRestoringDataset(false)
+      return
+    }
+    const source = readLastDatasetSource()
+    const dataset = rememberedDataset(datasetMeta, source)
+    if (!source || !dataset) {
+      if (source) forgetDatasetSource(source)
+      setRestoringDataset(false)
+      return
+    }
+    void loadDatasetBySource(dataset.source)
+  }, [catalogReady, datasetMeta]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const runOverlay = useRunOverlay(data, datasetSource, replaceData)
   const activeRun = useActiveRun()
@@ -378,7 +440,7 @@ export default function App() {
     void activeRun.loadPresets()
   }
   const trainingBadge = activeRun.active && activeRun.run
-    ? `Training · ${progressLabel(activeRun.run.status, activeRun.epochsDone, Number(activeRun.run.params.epochs ?? 0))}`
+    ? `Training · ${progressLabel(activeRun.run.status, activeRun.epochsDone, Number(activeRun.run.params.epochs ?? 0), activeRun.run.tags)}`
     : null
 
   // Overlay the launched (or newest running) run by itself as soon as it has a split or losses to show.
@@ -550,7 +612,7 @@ export default function App() {
       {/* Main content */}
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
-        {!data && !loading && !error && tab !== 'schema' && landingView === 'landing' && (
+        {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'landing' && (
           <WorkspaceDashboard
             datasets={datasetMeta}
             onOpenDataset={loadDatasetBySource}
@@ -562,15 +624,15 @@ export default function App() {
           />
         )}
 
-        {!data && !loading && !error && tab !== 'schema' && landingView === 'datasets' && (
+        {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'datasets' && (
           <CSVLoader onLoad={handleLoad} datasets={datasetMeta} onDelete={deleteDataset} />
         )}
 
-        {!data && !loading && !error && tab !== 'schema' && landingView === 'help' && (
+        {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'help' && (
           <HelpPage onOpenByod={() => setShowByod(true)} />
         )}
 
-        {!data && !loading && !error && tab !== 'schema' && landingView === 'experiments' && (
+        {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'experiments' && (
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
             <ExperimentsTab datasetSource={null} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)}
               onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun} onCompareOnDataset={compareOnDataset} onSelectRunId={setSelectedRunId}
@@ -580,11 +642,35 @@ export default function App() {
           </div>
         )}
 
-        {loading && (
+        {(loading || restoringDataset || fetchingDataset) && (
           <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div className="text-center">
               <div className="loading-spinner" />
-              <p className="text-sm mt-3" style={{ color: 'var(--c-t3)' }}>Parsing CSV…</p>
+              <p className="text-sm mt-3" style={{ color: 'var(--c-t3)' }}>
+                {restoringDataset ? 'Restoring your last dataset…' : fetchingDataset ? 'Loading dataset…' : 'Parsing CSV…'}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {!data && datasetLoadError && !loading && !restoringDataset && !fetchingDataset && (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className="text-center p-8" style={{ maxWidth: 560 }}>
+              <p className="text-4xl mb-3">⚠</p>
+              <p className="font-semibold mb-1" style={{ color: 'var(--c-t1)' }}>Dataset could not be restored</p>
+              <p className="text-sm font-semibold" style={{ color: 'var(--c-t3)', marginBottom: 14 }}>{datasetLoadError}</p>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 8 }}>
+                <button className="btn-primary" onClick={() => {
+                  setDatasetLoadError(null)
+                  if (failedDatasetSource) void loadDatasetBySource(failedDatasetSource)
+                  else void reloadDatasets()
+                }}>Retry</button>
+                <button className="btn-ghost" onClick={() => {
+                  setDatasetLoadError(null)
+                  setFailedDatasetSource(null)
+                  setLandingView('datasets')
+                }}>Choose another dataset</button>
+              </div>
             </div>
           </div>
         )}

@@ -81,6 +81,16 @@ describe('progressLabel', () => {
     expect(progressLabel('SCHEDULED', 0, 20)).toBe('queued')
     expect(progressLabel('RUNNING', 2, 20)).toBe('epoch 3/20')
     expect(progressLabel('RUNNING', 20, 20)).toBe('epoch 20/20')
+    expect(progressLabel('RUNNING', 0, 20, {
+      'magnidata.progress_stage': 'Preparing data',
+      'magnidata.progress_current': '250',
+      'magnidata.progress_total': '1000',
+    })).toBe('Preparing data · 25%')
+    expect(progressLabel('RUNNING', 0, 20, {
+      'magnidata.progress_stage': 'Epoch 1/20 validating',
+      'magnidata.progress_current': '0',
+      'magnidata.progress_total': '0',
+    })).toBe('Epoch 1/20 validating')
   })
 })
 

@@ -4,7 +4,7 @@ import type { RunDetailData, TrainingPresets } from '../api'
 import { buildFilter } from '../lib/experiments'
 import { isActive } from '../lib/train'
 
-const POLL_MS = 5000
+const POLL_MS = 2000
 const PRESETS_MS = 15000
 
 export interface Toast { id: number; tone: 'success' | 'danger' | 'neutral'; message: string }

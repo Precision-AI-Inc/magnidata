@@ -278,5 +278,9 @@ def test_warm_cache_parallel_reports_progress_and_palette_matches(synthetic_data
     lines: list[str] = []
     data.warm_cache(cache, samples, workers=2, progress=lines.append)
     assert lines[-1] == f"caching resized images {len(samples)}/{len(samples)}"
-    cached = data.build_palette_cached(cache, samples)
+    palette_progress: list[tuple[int, int]] = []
+    cached = data.build_palette_cached(
+        cache, samples, progress=lambda done, total: palette_progress.append((done, total))
+    )
+    assert palette_progress[-1] == (len(samples), len(samples))
     assert cached == data.build_palette([s.mask_path for s in samples])

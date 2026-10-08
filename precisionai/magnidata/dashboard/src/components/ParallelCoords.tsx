@@ -599,7 +599,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
   const unselected   = data.numericCols.length - selectedCols.size
 
   return (
-    <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
+    <div ref={rootRef} style={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
                                 overflowY: 'auto', overflowX: 'hidden' }}>
 
       {/* ── Action bar — only rendered when there's an active 3D selection ── */}
@@ -630,7 +630,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
 
       {/* ── Field picker panel ── */}
       {showFields && (
-        <div style={{ flexShrink: 0, borderBottom: '1px solid var(--c-border)',
+        <div className="explorer-fields-drawer" style={{ flexShrink: 0, borderBottom: '1px solid var(--c-border)',
                       background: 'var(--c-surface)', padding: '10px 14px' }}>
 
           {/* Picker header */}
@@ -774,7 +774,6 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
         </div>
       )}
 
-      {/* ── PC Chart ── */}
       {totalActive === 0 ? (
         <div style={{ height: pcHeight, flexShrink: 0, display: 'flex', alignItems: 'center',
                       justifyContent: 'center', background: '#f8fafc' }}>
@@ -784,48 +783,27 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
         <div ref={divRef} style={{ height: pcHeight, flexShrink: 0, background: '#0a1422' }} />
       )}
 
-      {/* ── Splitter — drag to resize the top (parallel coords) vs bottom (3D + table) rows ── */}
-      <div
-        onMouseDown={startResize}
-        title="Drag to resize"
-        style={{ height: 8, flexShrink: 0, cursor: 'row-resize', position: 'relative',
-                 background: 'var(--c-border)',
-                 display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-accent)')}
-        onMouseLeave={e => (e.currentTarget.style.background = 'var(--c-border)')}
-      >
-        <div style={{ width: 38, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.55)',
-                      pointerEvents: 'none' }} />
+      <div onMouseDown={startResize} title="Drag to resize"
+           style={{ height: 8, flexShrink: 0, cursor: 'row-resize', position: 'relative',
+                    background: 'var(--c-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+           onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-accent)')}
+           onMouseLeave={e => (e.currentTarget.style.background = 'var(--c-border)')}>
+        <div style={{ width: 38, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.55)', pointerEvents: 'none' }} />
       </div>
 
-      {/* ── Bottom split: 3D graph (left) + results table (right) ──
-          minHeight keeps both panes usable on short screens; the explorer root scrolls if needed. */}
       <div style={{ flex: 1, minHeight: 280, display: 'flex', overflow: 'hidden' }}>
-
-        {/* Left — 3D graph */}
         <div style={{ width: '50%', flexShrink: 0, borderRight: '2px solid var(--c-border)',
                       display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <Graph3D
-            data={data}
-            rows={rows}
-            embeddingsAvailable={embeddingsAvailable}
-            datasetSource={datasetSource}
-            selectedRows={filteredRows}
-            colorBy={colorByEff}
-            onClusterSelect={handleClusterSelect}
-            onPointClick={row => onPlay(row, filteredRows)}
-            partitions={partitions}
-            onCommitClusterColumn={onCommitClusterColumn}
-          />
+          <Graph3D data={data} rows={rows} embeddingsAvailable={embeddingsAvailable} datasetSource={datasetSource}
+                   selectedRows={filteredRows} colorBy={colorByEff} onClusterSelect={handleClusterSelect}
+                   onPointClick={row => onPlay(row, filteredRows)} partitions={partitions}
+                   onCommitClusterColumn={onCommitClusterColumn} />
         </div>
-
-        {/* Right — results */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <ResultsSummary data={data} rows={filteredRows} total={rows.length}
                           activeConstraints={Object.keys(constraints).filter(k => selectedCols.has(k) || selectedCatCols.has(k)).length} />
           <ResultsTable data={data} rows={filteredRows} partitions={partitions} onPlay={row => onPlay(row, filteredRows)} />
         </div>
-
       </div>
     </div>
   )

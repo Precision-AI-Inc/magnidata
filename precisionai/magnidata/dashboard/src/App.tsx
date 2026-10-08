@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { BarChart2, Table2, Share2, Activity, LayoutGrid, Trash2, Save, X, Loader2, Plus, Download, Columns, FlaskConical } from 'lucide-react'
+import { Activity, ChevronLeft, ChevronRight, Columns, Download, FlaskConical, LayoutGrid, Loader2, Plus, Save, Share2, SlidersHorizontal, Table2, Trash2, X, BarChart2 } from 'lucide-react'
 import { api } from './api'
 import type { DatasetMeta } from './api'
 import { useCSV } from './hooks/useCSV'
@@ -77,6 +77,8 @@ export default function App() {
   const chooseColorBy = useCallback((c: string) => { userPickedColor.current = true; setColorByState(c) }, [])
   const [sortMode, setSortMode]     = useState<'default' | 'variance' | 'corr'>('default')
   const [showFields, setShowFields] = useState(false)
+  const [explorerPanelOpen, setExplorerPanelOpen] = useState(true)
+  const [exportingSelection, setExportingSelection] = useState(false)
 
   const [added, setAdded] = useState<Set<number>>(new Set())
   const [showAddSave, setShowAddSave] = useState(false)
@@ -136,6 +138,38 @@ export default function App() {
     () => (removed.size ? filteredRows.filter(r => !removed.has(r._idx as number)) : filteredRows),
     [filteredRows, removed],
   )
+
+  const exportSelection = useCallback(async () => {
+    if (!data || !liveFilteredRows.length) return
+    const baseName = (data.fileName || 'dataset').replace(/\.csv$/i, '')
+    const cols = Object.keys(liveFilteredRows[0]).filter(key => key !== '_idx')
+    const escape = (value: unknown) => {
+      const text = value == null ? '' : String(value)
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+    }
+    const csv = [cols.join(','), ...liveFilteredRows.map(row => cols.map(col => escape(row[col])).join(','))].join('\n')
+    const download = (content: string, filename: string, type: string) => {
+      const anchor = document.createElement('a')
+      anchor.href = URL.createObjectURL(new Blob([content], { type }))
+      anchor.download = filename
+      anchor.click()
+      URL.revokeObjectURL(anchor.href)
+    }
+    download(csv, `${baseName}_selection.csv`, 'text/csv')
+    if (!embeddingsAvailable || !datasetSource || !data.imagePath) return
+    setExportingSelection(true)
+    try {
+      const { embeddings } = await api.getEmbeddings(datasetSource)
+      const keys = new Set(liveFilteredRows.map(row => String(row[data.imagePath!] ?? '')).filter(Boolean))
+      const selected: Record<string, number[]> = {}
+      for (const key of keys) if (embeddings[key]) selected[key] = embeddings[key]
+      download(JSON.stringify({ embeddings: selected }), `${baseName}_selection_embeddings.json`, 'application/json')
+    } catch {
+      // The CSV has already downloaded; embeddings are an optional companion export.
+    } finally {
+      setExportingSelection(false)
+    }
+  }, [data, datasetSource, embeddingsAvailable, liveFilteredRows])
 
   const toggleRemove = useCallback((row: CSVRow) => {
     setRemoved(prev => {
@@ -459,7 +493,7 @@ export default function App() {
   }, [datasetSource, data, addName, added, reloadDatasets])
 
   const activeSection: AppSection = data
-    ? (tab === 'experiments' ? 'experiments' : tab === 'schema' ? 'schema' : 'explorer')
+    ? (tab === 'experiments' ? 'experiments' : 'explorer')
     : tab === 'schema'
       ? 'schema'
       : landingView === 'datasets'
@@ -478,6 +512,14 @@ export default function App() {
     schema: ['Data Schema', 'Understand the fields available to every visualization'],
     help: ['Help & Setup', 'Prepare datasets and run the training feedback loop'],
   }
+  const datasetPageCopy: Partial<Record<TabId, [string, string]>> = {
+    'visual-explorer': ['Visual Explorer', 'Explore relationships, embeddings, and individual samples'],
+    charts: ['Charts', 'Compare distributions across the current selection'],
+    schema: ['Data Schema', 'Review and manage the fields in this dataset'],
+    table: ['Data Table', 'Inspect the current selection row by row'],
+    overview: ['Dataset Overview', 'Review summary statistics for the current selection'],
+  }
+  const headerCopy = data && datasetPageCopy[tab] ? datasetPageCopy[tab]! : pageCopy[activeSection]
 
   return (
     <div className="app-shell">
@@ -489,17 +531,17 @@ export default function App() {
         onExperiments={goToExperiments}
         onSchema={goToSchema}
         onHelp={goToHelp}
+        hasDataset={!!data}
+        activeTab={tab}
+        onDatasetView={setTab}
       />
 
       <div className="app-stage">
       <Header
-        pageTitle={pageCopy[activeSection][0]}
-        pageSubtitle={pageCopy[activeSection][1]}
+        pageTitle={headerCopy[0]}
+        pageSubtitle={headerCopy[1]}
         data={data}
-        rows={liveFilteredRows}
         filteredCount={liveFilteredRows.length}
-        embeddingsAvailable={embeddingsAvailable}
-        datasetSource={datasetSource}
         buildJob={buildJob.job}
         onDismissBuildJob={buildJob.dismiss}
         trainingBadge={trainingBadge}
@@ -563,20 +605,22 @@ export default function App() {
           <>
             {/* Tab bar — spans the full width above the sidebar */}
             <div className="tab-bar shrink-0" style={{ margin: '0', flexShrink: 0 }}>
-              {TABS.map(t => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className="tab-item"
-                  data-active={tab === t.id}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
-                >
-                  {t.icon}
-                  {t.label}
-                </button>
-              ))}
-              <div style={{ flex: 1 }} />
+              <div className="tab-bar__nav">
+                {TABS.map(t => (
+                  <button
+                    key={t.id}
+                    onClick={() => setTab(t.id)}
+                    className="tab-item"
+                    data-active={tab === t.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                  >
+                    {t.icon}
+                    {t.label}
+                  </button>
+                ))}
+              </div>
 
+              {data && <div className="tab-bar__tools" aria-label="Dataset tools">
               {data && (
                 <button className="btn-primary" disabled={!!trainOnLoaded} title={trainOnLoaded ?? 'Train a model on this dataset'}
                         onClick={() => { void activeRun.loadPresets(); setShowTrain(true) }}
@@ -707,6 +751,7 @@ export default function App() {
                   </button>
                 </div>
               )}
+              </div>}
             </div>
 
             {/* Inline save form for the curated (post-removal) dataset */}
@@ -777,7 +822,7 @@ export default function App() {
             )}
 
             {/* Row below the tab bar: sidebar (left) + tab content (right) */}
-            <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+            <div className="dataset-workspace-row" style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
               {/* Sidebar — hidden on visual-explorer and schema tabs */}
               {data && tab !== 'visual-explorer' && tab !== 'schema' && tab !== 'experiments' && (
                 <Sidebar
@@ -834,6 +879,106 @@ export default function App() {
                   <Schema data={data} hiddenCols={hiddenCols} onToggleCol={toggleCol} />
                 )}
               </div>
+
+              {data && tab === 'visual-explorer' && visibleData && (
+                <aside className="explorer-config" data-open={explorerPanelOpen} aria-label="Visual Explorer configuration">
+                  <div className="explorer-config__header">
+                    {explorerPanelOpen && <span><SlidersHorizontal size={14} /> Explorer setup</span>}
+                    <button className="btn-icon" onClick={() => setExplorerPanelOpen(open => !open)}
+                            aria-label={explorerPanelOpen ? 'Collapse explorer setup' : 'Expand explorer setup'}>
+                      {explorerPanelOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+                    </button>
+                  </div>
+
+                  {explorerPanelOpen && (
+                    <div className="explorer-config__body">
+                      <section className="explorer-config__section">
+                        <div className="explorer-config__section-title"><span>Workflow</span><small>Train and export</small></div>
+                        <button className="btn-primary explorer-config__wide" disabled={!!trainOnLoaded}
+                                title={trainOnLoaded ?? 'Train a model on this dataset'}
+                                onClick={() => { void activeRun.loadPresets(); setShowTrain(true) }}
+                                style={{ opacity: trainOnLoaded ? 0.5 : 1 }}>
+                          <FlaskConical size={14} /> Train model
+                        </button>
+                        <button className="btn-ghost explorer-config__wide" disabled={exportingSelection || !liveFilteredRows.length}
+                                onClick={() => void exportSelection()}>
+                          {exportingSelection ? <Loader2 size={13} style={{ animation: 'spin .7s linear infinite' }} /> : <Download size={13} />}
+                          Export selection
+                        </button>
+                        {!!data.runColumns?.length && (
+                          <button className="btn-ghost explorer-config__wide" onClick={() => void exportRelabelQueue()}>
+                            <Download size={13} /> Export relabel queue
+                          </button>
+                        )}
+                      </section>
+
+                      {datasetSource && (
+                        <section className="explorer-config__section">
+                          <div className="explorer-config__section-title"><span>Experiment overlay</span><small>Add training signals</small></div>
+                          <RunOverlayPicker runs={runOverlay.runs} overlay={runOverlay.overlay} compare={runOverlay.compare} match={runOverlay.match}
+                                            loading={runOverlay.loading} error={runOverlay.error}
+                                            onSelect={id => void runOverlay.select(id)} onClear={runOverlay.clear}
+                                            onOpen={() => void runOverlay.refreshRuns()} />
+                          {runOverlay.overlay && hasSplitColumn && <p className="explorer-config__hint">{splitSummary(data.rows)}</p>}
+                          {runOverlay.overlay && (
+                            <EpochScrubber scoredEpochs={runOverlay.scoredEpochs} epoch={runOverlay.overlay.epoch}
+                                           loading={runOverlay.loading} onChange={epoch => void runOverlay.select(runOverlay.overlay!.runId, epoch)} />
+                          )}
+                        </section>
+                      )}
+
+                      <section className="explorer-config__section">
+                        <div className="explorer-config__section-title"><span>Appearance</span><small>Shape the canvas</small></div>
+                        <label className="explorer-config__field">
+                          <span>Color by</span>
+                          <select value={colorBy} onChange={event => chooseColorBy(event.target.value)}>
+                            {[...visibleData.categoricalCols, ...visibleData.numericCols].filter(col => !visibleData.runColumns?.includes(col)).map(col => <option key={col} value={col}>{col}</option>)}
+                            {!!visibleData.runColumns?.length && (
+                              <optgroup label="Training">
+                                {[...visibleData.categoricalCols, ...visibleData.numericCols].filter(col => visibleData.runColumns!.includes(col)).map(col => <option key={col} value={col}>{col}</option>)}
+                              </optgroup>
+                            )}
+                          </select>
+                        </label>
+                        <label className="explorer-config__field">
+                          <span>Axis order</span>
+                          <select value={sortMode} onChange={event => setSortMode(event.target.value as 'default' | 'variance' | 'corr')}>
+                            <option value="default">Dataset order</option>
+                            <option value="variance">Highest variance</option>
+                            <option value="corr">Strongest correlation</option>
+                          </select>
+                        </label>
+                        <button className="btn-ghost explorer-config__wide" data-active={showFields}
+                                onClick={() => setShowFields(open => !open)}>
+                          <Columns size={13} /> {showFields ? 'Close field selection' : 'Choose visible fields'}
+                        </button>
+                      </section>
+
+                      {(activeCount > 0 || removed.size > 0 || added.size > 0) && (
+                        <section className="explorer-config__section">
+                          <div className="explorer-config__section-title"><span>Current selection</span><small>Curation actions</small></div>
+                          {activeCount > 0 && <p className="explorer-config__metric"><strong>{liveFilteredRows.length.toLocaleString()}</strong> of {data.rows.length.toLocaleString()} samples</p>}
+                          {removed.size > 0 && (
+                            <div className="explorer-config__action-row">
+                              <span className="explorer-config__badge explorer-config__badge--danger"><Trash2 size={11} /> {removed.size} removed</span>
+                              {datasetSource && data.imagePath && <button onClick={() => { setShowRemovalSave(true); setRemovalMsg(null) }}>Save</button>}
+                              <button onClick={discardRemovals}>Discard</button>
+                            </div>
+                          )}
+                          {added.size > 0 && (
+                            <div className="explorer-config__action-row">
+                              <span className="explorer-config__badge"><Plus size={11} /> {added.size} picked</span>
+                              <button onClick={exportAdded}>Export</button>
+                              {datasetSource && data.imagePath && <button onClick={() => { setShowAddSave(true); setAddMsg(null) }}>Create</button>}
+                              <button onClick={clearAdded}>Clear</button>
+                            </div>
+                          )}
+                        </section>
+                      )}
+                    </div>
+                  )}
+                </aside>
+              )}
             </div>
           </>
         )}

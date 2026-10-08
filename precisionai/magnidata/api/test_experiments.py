@@ -460,6 +460,33 @@ def test_prediction_missing_and_invalid(client, predicted_run):
     assert client.get(f"/api/runs/{predicted_run}/prediction").status_code == 400
 
 
+def test_inference_request_requires_checkpoint_and_known_image(client, predicted_run):
+    assert client.post(f"/api/runs/{predicted_run}/inference", json={"image": "b.png"}).status_code == 409
+    assert client.post(f"/api/runs/{predicted_run}/inference", json={"image": "missing.png"}).status_code == 404
+    assert client.post(f"/api/runs/{predicted_run}/inference", json={"image": "../b.png"}).status_code == 400
+
+
+def test_inference_request_is_queued_and_saved_result_becomes_ready(client, predicted_run, mlflow_store, tmp_path):
+    mlflow_client = mlflow_store._client
+    checkpoint = tmp_path / "last.pt"
+    checkpoint.write_bytes(b"checkpoint placeholder")
+    mlflow_client.log_artifact(predicted_run, str(checkpoint), "checkpoints")
+
+    queued = client.post(f"/api/runs/{predicted_run}/inference", json={"image": "b.png"})
+    assert queued.status_code == 202
+    assert queued.get_json() == {"status": "queued", "image": "b.png", "epoch": 3}
+    assert client.get(f"/api/runs/{predicted_run}/inference?image=b.png").get_json()["status"] == "queued"
+
+    prediction = tmp_path / "b.png"
+    prediction.write_bytes(_png_bytes((0, 0, 255)))
+    mlflow_client.log_artifact(predicted_run, str(prediction), "magnidata/predictions/epoch_0003")
+    mlflow_client.set_tag(predicted_run, contract.TAG_INFERENCE_STATUS, "ready")
+
+    ready = client.get(f"/api/runs/{predicted_run}/inference?image=b.png").get_json()
+    assert ready == {"status": "ready", "image": "b.png", "epoch": 3}
+    assert client.get(f"/api/runs/{predicted_run}/samples/b.png").get_json()["prediction_epochs"] == [3]
+
+
 def _scored(mlflow_store, rows_by_epoch):
     """Seed a run whose per-sample files hold ``{epoch: [(image, split, loss_total), ...]}``."""
     artifacts = {

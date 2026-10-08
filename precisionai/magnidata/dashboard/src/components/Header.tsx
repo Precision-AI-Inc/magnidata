@@ -1,18 +1,13 @@
-import { useState } from 'react'
-import { Download, X, CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'
-import type { CSVData, CSVRow } from '../types'
+import { CheckCircle2, ChevronRight, Home, AlertTriangle, Loader2, X } from 'lucide-react'
+import type { CSVData } from '../types'
 import type { BuildJobStatus } from '../api'
-import { api } from '../api'
 import { useTheme } from '../hooks/useTheme'
 
 interface Props {
   pageTitle: string
   pageSubtitle: string
   data: CSVData | null
-  rows: CSVRow[]                    // current selection (filters + 3D selection applied) to export
   filteredCount: number
-  embeddingsAvailable?: boolean
-  datasetSource?: string | null
   buildJob?: BuildJobStatus | null
   onDismissBuildJob?: () => void
   /** Live training run, shown like the build badge */
@@ -24,66 +19,25 @@ function buildJobLabel(job: BuildJobStatus): string {
   return job.name && !job.message.includes(job.name) ? `${job.name} · ${job.message}` : job.message
 }
 
-function downloadBlob(content: string, filename: string, type: string) {
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(new Blob([content], { type }))
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(a.href)
-}
-
 // Context bar for the MagniData application shell. Its theme toggle uses the
 // same persisted token contract as the other Precision AI surfaces.
-export function Header({ pageTitle, pageSubtitle, data, rows, filteredCount, embeddingsAvailable, datasetSource, buildJob, onDismissBuildJob, trainingBadge }: Props) {
+export function Header({ pageTitle, pageSubtitle, data, filteredCount, buildJob, onDismissBuildJob, trainingBadge }: Props) {
   const { toggle } = useTheme()
-
-  // Export the current selection (rows passing active filters/3D selection) as CSV, plus
-  // a matching embeddings JSON (filtered to the same rows) when the dataset has embeddings.
-  const [exporting, setExporting] = useState(false)
-  const exportSelection = async () => {
-    if (!data || !rows.length) return
-    const baseName = (data.fileName || 'dataset').replace(/\.csv$/i, '')
-
-    const cols = Object.keys(rows[0]).filter(k => k !== '_idx')
-    const esc = (v: unknown) => {
-      const s = v == null ? '' : String(v)
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-    }
-    const csv = [cols.join(','), ...rows.map(r => cols.map(c => esc(r[c])).join(','))].join('\n')
-    downloadBlob(csv, `${baseName}_selection.csv`, 'text/csv')
-
-    if (embeddingsAvailable && datasetSource && data.imagePath) {
-      setExporting(true)
-      try {
-        const { embeddings } = await api.getEmbeddings(datasetSource)
-        const keys = new Set(rows.map(r => String(r[data.imagePath!] ?? '')).filter(Boolean))
-        const selected: Record<string, number[]> = {}
-        for (const k of keys) if (embeddings[k]) selected[k] = embeddings[k]
-        downloadBlob(JSON.stringify({ embeddings: selected }), `${baseName}_selection_embeddings.json`, 'application/json')
-      } catch {
-        // CSV already downloaded; embeddings are a best-effort addition.
-      } finally {
-        setExporting(false)
-      }
-    }
-  }
 
   return (
     <header className="dashboard-topbar">
       <div className="dashboard-topbar__title">
-        <h1>{pageTitle}</h1>
-        <p>{pageSubtitle}</p>
-      </div>
-
-      {/* Stats */}
-      {data && (
-        <div className="flex items-center gap-4">
-          <Stat label="dataset" value={data.fileName} mono />
-          <Stat label="rows" value={`${filteredCount.toLocaleString()} / ${data.rows.length.toLocaleString()}`} />
-          <Stat label="cols" value={String(data.cols.length)} />
-          <Stat label="numeric" value={String(data.numericCols.length)} />
+        <div className="dashboard-topbar__breadcrumb"><Home size={11} /><span>MagniData</span><ChevronRight size={11} /><strong>{pageTitle}</strong></div>
+        <div className="dashboard-topbar__heading-row">
+          <div><h1>{pageTitle}</h1><p>{pageSubtitle}</p></div>
+          {data && (
+            <div className="dashboard-topbar__context" title={`${data.cols.length} columns · ${data.numericCols.length} numeric`}>
+              <span className="dashboard-topbar__dataset"><strong>{data.fileName}</strong><small>Active dataset</small></span>
+              <span className="dashboard-topbar__count"><strong>{filteredCount.toLocaleString()}</strong><small>of {data.rows.length.toLocaleString()} samples</small></span>
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Global dataset-build progress — stays visible across the whole app, even once the
           dialog that started it is closed, until dismissed or the build finishes/fails. */}
@@ -125,23 +79,6 @@ export function Header({ pageTitle, pageSubtitle, data, rows, filteredCount, emb
       )}
 
       <div className="dashboard-topbar__right">
-        {/* Export the current selection */}
-        {data && (
-          <button onClick={exportSelection} disabled={exporting || !rows.length}
-                  title={embeddingsAvailable
-                    ? 'Export the selected rows as CSV, plus their embeddings as JSON'
-                    : 'Export the selected rows as CSV'}
-                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600,
-                           padding: '4px 10px', borderRadius: 'var(--radius-sm)',
-                           cursor: exporting || !rows.length ? 'not-allowed' : 'pointer',
-                           opacity: exporting || !rows.length ? 0.6 : 1,
-                           color: 'var(--color-text-muted)', background: 'transparent',
-                           border: '1px solid var(--color-border-strong)' }}>
-            {exporting ? <Loader2 size={13} style={{ animation: 'spin 0.7s linear infinite' }} /> : <Download size={13} />}
-            Export Selection
-          </button>
-        )}
-
         {/* Light / dark mode — icon visibility is driven entirely by tokens.css's
             .pai-theme-icon--sun/--moon rules keyed off [data-theme], so no JS state here. */}
         <button type="button" className="theme-toggle" onClick={toggle} aria-label="Toggle dark mode">
@@ -154,17 +91,5 @@ export function Header({ pageTitle, pageSubtitle, data, rows, filteredCount, emb
         </button>
       </div>
     </header>
-  )
-}
-
-function Stat({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="flex flex-col leading-none">
-      <span className="text-[10px] uppercase tracking-widest" style={{ color: 'var(--color-text-subtle)' }}>{label}</span>
-      <span className={`text-xs mt-0.5 ${mono ? 'font-mono' : 'font-medium'}`}
-            style={{ color: 'var(--color-text)' }}>
-        {value}
-      </span>
-    </div>
   )
 }

@@ -546,7 +546,8 @@ def run_sample(run_id: str, image_name: str) -> ResponseReturnValue:
     return jsonify({**history, "prediction_epochs": prediction_epochs(run_id, scored, name)})
 
 
-def _dataset_image_bytes(run: dict[str, Any], image_name: str) -> bytes:
+def _dataset_image_path(run: dict[str, Any], image_name: str) -> Path:
+    """Resolve an image from the dataset linked to a run."""
     source = run["tags"].get(contract.TAG_DATASET_SOURCE)
     if not source:
         raise _bad("run is not linked to a dataset")
@@ -561,7 +562,59 @@ def _dataset_image_bytes(run: dict[str, Any], image_name: str) -> bytes:
     image = resolve_under(root, rel) if rel else None
     if image is None or not image.is_file():
         raise MlflowNotFoundError(f"image {image_name} not found in {source}")
-    return image.read_bytes()
+    return image
+
+
+def _dataset_image_bytes(run: dict[str, Any], image_name: str) -> bytes:
+    return _dataset_image_path(run, image_name).read_bytes()
+
+
+def _prediction_exists(store: mlflow_store.MlflowStore, run_id: str, epoch: int, image_name: str) -> bool:
+    """Return whether a prediction artifact exists without downloading it."""
+    artifact = contract.prediction_path(epoch, image_name)
+    folder, filename = os.path.split(artifact)
+    return any(
+        not item["is_dir"] and os.path.basename(item["path"]) == filename
+        for item in store.list_artifacts(run_id, folder)
+    )
+
+
+@bp.route("/api/runs/<run_id>/inference", methods=["GET", "POST"])
+def run_inference(run_id: str) -> ResponseReturnValue:
+    """Queue or report persisted on-demand inference for one run image."""
+    run = _per_sample_run(run_id)
+    payload = request.get_json(silent=True) or {}
+    name = _image_name(str(payload.get("image", "")) if request.method == "POST" else request.args.get("image", ""))
+    scored = contract.parse_scored_epochs(run["tags"])
+    if not scored:
+        raise Conflict("the run has no scored checkpoint")
+    epoch = scored[-1]
+    store = mlflow_store.get_store()
+    if _prediction_exists(store, run_id, epoch, name):
+        return jsonify({"status": "ready", "image": name, "epoch": epoch})
+
+    tags = run["tags"]
+    status = tags.get(contract.TAG_INFERENCE_STATUS, "idle")
+    queued_image = tags.get(contract.TAG_INFERENCE_IMAGE)
+    if request.method == "GET":
+        if queued_image != name:
+            status = "idle"
+        body = {"status": status, "image": name, "epoch": epoch}
+        if status == "error":
+            body["error"] = tags.get(contract.TAG_INFERENCE_ERROR, "inference failed")
+        return jsonify(body)
+
+    if status in {"queued", "running"} and queued_image != name:
+        raise Conflict(f"inference is already {status} for {queued_image}")
+    _dataset_image_path(run, name)
+    checkpoint_names = {os.path.basename(item["path"]) for item in store.list_artifacts(run_id, "checkpoints")}
+    if os.path.basename(contract.CHECKPOINT_ARTIFACT) not in checkpoint_names:
+        raise Conflict("the run has no checkpoint for on-demand inference")
+    store.set_tag(run_id, contract.TAG_INFERENCE_IMAGE, name)
+    store.set_tag(run_id, contract.TAG_INFERENCE_EPOCH, str(epoch))
+    store.set_tag(run_id, contract.TAG_INFERENCE_ERROR, "")
+    store.set_tag(run_id, contract.TAG_INFERENCE_STATUS, "queued")
+    return jsonify({"status": "queued", "image": name, "epoch": epoch}), 202
 
 
 @bp.get("/api/runs/<run_id>/prediction")

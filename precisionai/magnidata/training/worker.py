@@ -82,6 +82,21 @@ def find_scheduled(client: Any) -> list[Any]:
     return _search(client, contract.RunStatus.SCHEDULED.value)
 
 
+def find_inference_requests(client: Any) -> list[Any]:
+    """Return runs with queued on-demand inference, oldest first."""
+    ids = _experiment_ids(client)
+    if not ids:
+        return []
+    return list(
+        client.search_runs(
+            ids,
+            f"tags.`{contract.TAG_INFERENCE_STATUS}` = 'queued'",
+            order_by=["attributes.start_time ASC"],
+            max_results=100,
+        )
+    )
+
+
 def claim(client: Any, run_id: str, me: str | None = None) -> bool:
     """Try to take a run: tag it with this worker's id and confirm the tag stuck.
 
@@ -158,6 +173,25 @@ def trainer_argv(run_id: str, data_root: Path, tracking_uri: str) -> list[str]:
     ]
 
 
+def inference_argv(run_id: str, image_name: str, data_root: Path, tracking_uri: str) -> list[str]:
+    """Return the command that generates one persisted prediction mask."""
+    return [
+        sys.executable,
+        "-m",
+        "precisionai.magnidata.training.infer",
+        "--run-id",
+        run_id,
+        "--image",
+        image_name,
+        "--data-root",
+        str(data_root),
+        "--tracking-uri",
+        tracking_uri,
+        "--device",
+        os.environ.get("MAGNIDATA_TRAIN_DEVICE", "auto"),
+    ]
+
+
 def _stop_child(child: subprocess.Popen) -> None:
     child.terminate()
     try:
@@ -218,6 +252,34 @@ def run_one(
     return status
 
 
+def run_inference(client: Any, run_id: str, data_root: Path, argv: Sequence[str] | None = None) -> bool:
+    """Process one queued inference request and persist its completion status."""
+    run = client.get_run(run_id)
+    if run.data.tags.get(contract.TAG_INFERENCE_STATUS) != "queued":
+        return False
+    image_name = run.data.tags.get(contract.TAG_INFERENCE_IMAGE, "")
+    client.set_tag(run_id, contract.TAG_INFERENCE_STATUS, "running")
+    log = data_root / "data_user" / LOG_DIRNAME / run_id / "inference.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    command = list(argv) if argv else inference_argv(run_id, image_name, data_root, client.tracking_uri)
+    with open(log, "w") as out:
+        child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
+        interrupted = _watch(child, client, run_id, log, lambda: touch_heartbeat(data_root), LOG_UPLOAD_S)
+    _upload_log(client, run_id, log)
+    if child.returncode == 0 and not interrupted:
+        client.set_tag(run_id, contract.TAG_INFERENCE_ERROR, "")
+        client.set_tag(run_id, contract.TAG_INFERENCE_STATUS, "ready")
+    else:
+        detail = (
+            "inference stopped with the worker"
+            if interrupted
+            else f"inference exited with code {child.returncode}: {_last_line(log)}"
+        )
+        client.set_tag(run_id, contract.TAG_INFERENCE_ERROR, detail[:250])
+        client.set_tag(run_id, contract.TAG_INFERENCE_STATUS, "error")
+    return True
+
+
 def loop(client: Any, data_root: Path, max_iterations: int | None = None, poll_s: float = POLL_S) -> None:
     """Poll for scheduled runs until stopped (or for ``max_iterations`` passes)."""
     iteration = 0
@@ -225,9 +287,15 @@ def loop(client: Any, data_root: Path, max_iterations: int | None = None, poll_s
         iteration += 1
         touch_heartbeat(data_root)
         try:
+            handled = False
             for run in find_scheduled(client):
                 if run_one(client, run.info.run_id, data_root) is not None:
+                    handled = True
                     break
+            if not handled:
+                for run in find_inference_requests(client):
+                    if run_inference(client, run.info.run_id, data_root):
+                        break
         except Exception as err:
             print(f"worker: {type(err).__name__}: {err}", file=sys.stderr, flush=True)
         if max_iterations is None or iteration < max_iterations:

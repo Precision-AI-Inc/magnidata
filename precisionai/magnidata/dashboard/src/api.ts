@@ -237,6 +237,13 @@ export interface SampleHistory {
   prediction_epochs: number[]
 }
 
+export interface InferenceStatus {
+  status: 'idle' | 'queued' | 'running' | 'ready' | 'error'
+  image: string
+  epoch: number
+  error?: string
+}
+
 export interface RunMatch {
   matched: number
   run_only: number
@@ -365,6 +372,10 @@ export const api = {
   },
   getRunSample: (runId: string, imageName: string) =>
     get<SampleHistory>(`${BASE}/runs/${runId}/samples/${encodeURIComponent(imageName)}`),
+  getInferenceStatus: (runId: string, imageName: string) =>
+    get<InferenceStatus>(`${BASE}/runs/${runId}/inference?image=${encodeURIComponent(imageName)}`),
+  runInference: (runId: string, imageName: string) =>
+    mutate<InferenceStatus>('POST', `${BASE}/runs/${runId}/inference`, { image: imageName }),
   runPredictionUrl: (runId: string, imageName: string, epoch: number | 'latest', alpha: number, maxSize = 1280) =>
     `${BASE}/runs/${runId}/prediction?image=${encodeURIComponent(imageName)}&epoch=${epoch}&alpha=${alpha}&max_size=${maxSize}`,
   /** Per-image comparison of two runs (hardness and loss change from a to b), as CSV text. */

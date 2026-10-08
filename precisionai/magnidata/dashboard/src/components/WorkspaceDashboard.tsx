@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import {
+  Activity,
   ArrowRight,
+  BarChart3,
   CheckCircle2,
   Database,
   FlaskConical,
-  HelpCircle,
   ImageIcon,
   Loader2,
   ScanSearch,
-  Server,
+  Sparkles,
   UploadCloud,
 } from 'lucide-react'
 import { api } from '../api'
@@ -55,7 +56,6 @@ export function WorkspaceDashboard({
   onOpenExplorer,
   onOpenByod,
   onOpenExperiments,
-  onOpenHelp,
 }: Props) {
   const [state, setState] = useState<WorkspaceState>({ runs: [], mlflow: null, presets: null })
   const [loading, setLoading] = useState(true)
@@ -88,21 +88,27 @@ export function WorkspaceDashboard({
   const recentDatasets = datasets.slice(0, 4)
   const running = state.runs.filter(run => run.status === 'RUNNING' || run.status === 'SCHEDULED').length
   const completed = state.runs.filter(run => run.status === 'FINISHED').length
+  const readyDatasets = datasets.filter(dataset => dataset.has_embeddings).length
+  const servicesReady = !!state.mlflow?.reachable && !!state.presets?.backend.available
 
   return (
     <div className="workspace-dashboard">
-      <section className="workspace-quick surface" aria-labelledby="quick-actions-title">
-        <div className="workspace-section-heading">
-          <div>
-            <h2 id="quick-actions-title">Quick actions</h2>
-            <p>Move from raw images to a measurable training run.</p>
-          </div>
+      <section className="workspace-summary" aria-label="Workspace summary">
+        <SummaryCard icon={Database} tone="teal" label="Datasets" value={String(datasets.length)} detail="registered locally" />
+        <SummaryCard icon={Sparkles} tone="green" label="Explorer ready" value={String(readyDatasets)} detail="with embeddings" />
+        <SummaryCard icon={Loader2} tone="amber" label="Active runs" value={String(running)} detail={running ? 'training or queued' : 'nothing in progress'} active={running > 0} />
+        <SummaryCard icon={CheckCircle2} tone="blue" label="Recent finishes" value={String(completed)} detail="in latest activity" />
+      </section>
+
+      <section className="workspace-welcome surface">
+        <div>
+          <span className="workspace-eyebrow">Model development workspace</span>
+          <h2>Move from raw imagery to better training data.</h2>
+          <p>Explore patterns, inspect difficult samples, and compare training runs from one focused workflow.</p>
         </div>
-        <div className="workspace-quick__grid">
-          <QuickAction icon={UploadCloud} label="Upload dataset" detail="Images, labels, or CSV" onClick={onOpenByod} />
-          <QuickAction icon={ScanSearch} label="Visual explorer" detail="Embeddings and feature axes" onClick={onOpenExplorer} />
-          <QuickAction icon={FlaskConical} label="Experiments" detail="Launch and compare runs" onClick={onOpenExperiments} />
-          <QuickAction icon={HelpCircle} label="Setup guide" detail="Data and training contracts" onClick={onOpenHelp} />
+        <div className="workspace-welcome__actions">
+          <button className="btn-primary" onClick={onOpenByod}><UploadCloud size={15} /> Add dataset</button>
+          <button className="btn-ghost" onClick={onOpenExplorer}><ScanSearch size={15} /> Open explorer</button>
         </div>
       </section>
 
@@ -125,7 +131,7 @@ export function WorkspaceDashboard({
                   <strong>{dataset.name}</strong>
                   <small>{datasetSize(dataset)}{dataset.has_embeddings ? ' · embeddings' : ''}</small>
                 </span>
-                <ArrowRight size={14} />
+                <span className="workspace-row-action">Explore <ArrowRight size={13} /></span>
               </button>
             ))}
             {!recentDatasets.length && (
@@ -167,7 +173,17 @@ export function WorkspaceDashboard({
         </section>
       </div>
 
-      <section className="workspace-health surface">
+      <section className="workspace-actions" aria-label="Common tasks">
+        <QuickAction icon={UploadCloud} label="Import data" detail="Create a new dataset" onClick={onOpenByod} />
+        <QuickAction icon={BarChart3} label="Analyze samples" detail="Open visual explorer" onClick={onOpenExplorer} />
+        <QuickAction icon={FlaskConical} label="Compare models" detail="Review experiment runs" onClick={onOpenExperiments} />
+      </section>
+
+      <details className="workspace-health surface">
+        <summary>
+          <span><span className="workspace-health__pulse" data-ok={servicesReady} />System readiness</span>
+          <small>{servicesReady ? 'All training services are available' : 'Some services need attention'}</small>
+        </summary>
         <div className="workspace-section-heading">
           <div>
             <h2>Workspace status</h2>
@@ -176,21 +192,40 @@ export function WorkspaceDashboard({
         </div>
         <div className="workspace-health__grid">
           <HealthItem icon={Database} label="Datasets" value={`${datasets.length} registered`} ok />
-          <HealthItem icon={Server} label="MLflow" value={state.mlflow?.reachable ? 'Connected' : 'Unavailable'} ok={!!state.mlflow?.reachable} />
+          <HealthItem icon={Activity} label="MLflow" value={state.mlflow?.reachable ? 'Connected' : 'Unavailable'} ok={!!state.mlflow?.reachable} />
           <HealthItem icon={FlaskConical} label="Trainer" value={state.presets?.backend.available ? 'Worker ready' : (state.presets?.backend.reason || 'No heartbeat')} ok={!!state.presets?.backend.available} />
-          <HealthItem icon={CheckCircle2} label="Feedback loop" value={datasets.some(d => d.has_embeddings) ? 'Ready to explore' : 'Dataset required'} ok={datasets.some(d => d.has_embeddings)} />
+          <HealthItem icon={CheckCircle2} label="Feedback loop" value={readyDatasets ? 'Ready to explore' : 'Dataset required'} ok={readyDatasets > 0} />
         </div>
-      </section>
+      </details>
     </div>
+  )
+}
+
+function SummaryCard({ icon: Icon, tone, label, value, detail, active = false }: {
+  icon: typeof Database
+  tone: 'teal' | 'green' | 'amber' | 'blue'
+  label: string
+  value: string
+  detail: string
+  active?: boolean
+}) {
+  return (
+    <article className="workspace-summary-card surface">
+      <span className={`workspace-summary-card__icon workspace-summary-card__icon--${tone}`}>
+        <Icon size={21} className={active ? 'workspace-summary-card__spinner' : undefined} />
+      </span>
+      <span className="workspace-summary-card__copy"><small>{label}</small><strong>{value}</strong></span>
+      <span className="workspace-summary-card__detail">{detail}</span>
+    </article>
   )
 }
 
 function QuickAction({ icon: Icon, label, detail, onClick }: { icon: typeof UploadCloud; label: string; detail: string; onClick: () => void }) {
   return (
     <button className="workspace-action" onClick={onClick}>
-      <span><Icon size={22} /></span>
-      <strong>{label}</strong>
-      <small>{detail}</small>
+      <span><Icon size={18} /></span>
+      <span><strong>{label}</strong><small>{detail}</small></span>
+      <ArrowRight size={14} />
     </button>
   )
 }

@@ -304,9 +304,17 @@ class ResizedCache:
             if file.suffix == ".npy":
                 entries.setdefault(file.name.split(".")[0], []).append(file)
         total = self.size_bytes()
+
+        def last_used(key: str) -> float:
+            # The main array is the entry's access marker: ``get`` refreshes it, while
+            # the companion colour-count file is immutable after creation. Including
+            # the companion mtime makes creation timing override the actual LRU order.
+            entry = self.directory / f"{key}.npy"
+            return entry.stat().st_mtime if entry.is_file() else max(f.stat().st_mtime for f in entries[key])
+
         order = sorted(
             entries,
-            key=lambda k: (k in keep, max(f.stat().st_mtime for f in entries[k])),
+            key=lambda k: (k in keep, last_used(k)),
         )
         removed = 0
         for key in order:

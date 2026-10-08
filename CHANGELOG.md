@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A calmer Material-style dashboard shell with floating navigation, a breadcrumb context header, at-a-glance
+  workspace cards, focused recent datasets and experiments, compact task shortcuts, and collapsible service
+  readiness. Dataset views now live beneath **Visual Explorer** in the left navigation, while the connected
+  parallel-coordinates, 3D, and results workspace keeps the full available height. Training, run overlays,
+  appearance, field selection, exports and curation actions are organized in a collapsible right setup panel;
+  dataset identity and sample counts sit in the page header beside the title. Responsive and dark-theme behavior
+  are preserved.
+- Missing model predictions can be generated from the image preview. The API queues the request for the trainer,
+  which loads the run's latest checkpoint and stores the resulting mask with the MLflow run; the modal follows
+  progress, displays the result when ready, and reuses that artifact the next time the sample is opened.
 - The train/val partition shows across the dashboard: an overlay that brings a split adds `split` as the first
   categorical axis (listed under **Training** in Fields) and, unless colouring was chosen by hand, colours by it with
   fixed train/val/test colours in Parallel Coordinates, the 3D view and histograms. Histograms can **stack by split**,
@@ -145,6 +155,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resized training-cache eviction now uses the main cache entry's access time instead of the newer timestamp from
+  its immutable colour-count companion, so least-recently-used ordering is deterministic and retains recent entries.
 - Loading a dataset could fail in the browser with a bare "Failed to fetch", console-only
   and with no indication of the cause. `/api/dataset/csv` and `/api/dataset/embeddings`
   serve a dataset's CSV/embeddings from a path that can be rebuilt in place (re-running a

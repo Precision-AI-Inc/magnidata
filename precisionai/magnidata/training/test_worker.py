@@ -49,6 +49,14 @@ def test_find_scheduled_without_experiments(mlflow_tracking):
     assert worker.find_scheduled(client) == []
 
 
+def test_find_inference_requests_filters_and_orders(env):
+    _, client, exp = env
+    first = _run(client, exp, {contract.TAG_INFERENCE_STATUS: "queued"}, status="FINISHED")
+    second = _run(client, exp, {contract.TAG_INFERENCE_STATUS: "queued"}, status="FINISHED")
+    _run(client, exp, {contract.TAG_INFERENCE_STATUS: "ready"}, status="FINISHED")
+    assert [run.info.run_id for run in worker.find_inference_requests(client)] == [first, second]
+
+
 def test_claim_tags_run_once(env):
     _, client, exp = env
     run_id = _run(client, exp)
@@ -91,6 +99,13 @@ def test_trainer_argv_passes_device_from_env(monkeypatch, tmp_path):
     assert argv[argv.index("--device") + 1] == "auto"
 
 
+def test_inference_argv_passes_image_and_device(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+    argv = worker.inference_argv("abc", "sample.png", tmp_path, "sqlite:///mlflow.db")
+    assert argv[argv.index("--image") + 1] == "sample.png"
+    assert argv[argv.index("--device") + 1] == "cpu"
+
+
 def test_log_upload_interval_is_near_live():
     assert worker.LOG_UPLOAD_S <= 60
 
@@ -111,6 +126,32 @@ def test_run_one_skips_unclaimable_run(env, tmp_path):
     run_id = _run(client, exp, {contract.TAG_WORKER: "someone:1:else"})
     assert worker.run_one(client, run_id, tmp_path, argv=[sys.executable, "-c", "pass"]) is None
     assert client.get_run(run_id).info.status == "SCHEDULED"
+
+
+def test_run_inference_records_success_and_failure(env, tmp_path):
+    _, client, exp = env
+    success = _run(
+        client,
+        exp,
+        {contract.TAG_INFERENCE_STATUS: "queued", contract.TAG_INFERENCE_IMAGE: "a.png"},
+        status="FINISHED",
+    )
+    assert worker.run_inference(client, success, tmp_path, [sys.executable, "-c", "print('saved')"])
+    assert client.get_run(success).data.tags[contract.TAG_INFERENCE_STATUS] == "ready"
+    assert [a.path for a in client.list_artifacts(success, "logs")] == ["logs/inference.log"]
+
+    failed = _run(
+        client,
+        exp,
+        {contract.TAG_INFERENCE_STATUS: "queued", contract.TAG_INFERENCE_IMAGE: "b.png"},
+        status="FINISHED",
+    )
+    argv = [sys.executable, "-c", "import sys; print('bad inference'); sys.exit(4)"]
+    assert worker.run_inference(client, failed, tmp_path, argv)
+    run = client.get_run(failed)
+    assert run.data.tags[contract.TAG_INFERENCE_STATUS] == "error"
+    assert "code 4" in run.data.tags[contract.TAG_INFERENCE_ERROR]
+    assert "bad inference" in run.data.tags[contract.TAG_INFERENCE_ERROR]
 
 
 def test_run_one_trains_for_real(env, synthetic_dataset, monkeypatch):

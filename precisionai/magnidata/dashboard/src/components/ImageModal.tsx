@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, type CSSProperties } from 'react'
 import {
   X, ChevronLeft, ChevronRight, Image as ImageIcon, Plus, Check,
-  ExternalLink, AlertTriangle, RotateCw,
+  ExternalLink, AlertTriangle, Loader2, RotateCw,
 } from 'lucide-react'
 import { api } from '../api'
 import type { CSVData, CSVRow, ColMeta } from '../types'
@@ -70,6 +70,7 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
   }, [sliderAlpha])
 
   const [history, setHistory] = useState<SampleHistory | null>(null)
+  const [inference, setInference] = useState<{ status: string; epoch?: number; error?: string }>({ status: 'idle' })
 
   const idx     = allRows.findIndex(r => r._idx === row._idx)
   const hasPrev = idx > 0
@@ -103,7 +104,7 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
   const heroSet = new Set(heroes)
   const metricCols = data.numericCols.filter(c => !heroSet.has(c) && c !== 'width' && c !== 'height')
 
-  useEffect(() => { setTab('image') }, [row._idx])
+  useEffect(() => { setTab('image'); setInference({ status: 'idle' }) }, [row._idx])
   useEffect(() => { setImgError(null); setNoAnnotations(false); setLoading(true) }, [row, reloadKey, tab])
 
   const navigate = (dir: -1 | 1) => {
@@ -140,13 +141,44 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
     return () => { live = false }
   }, [run?.runId, baseName]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!run || !baseName || !['queued', 'running'].includes(inference.status)) return
+    const timer = window.setInterval(() => {
+      api.getInferenceStatus(run.runId, baseName).then(status => {
+        setInference(status)
+        if (status.status === 'ready') {
+          api.getRunSample(run.runId, baseName).then(setHistory).catch(() => {})
+          setReloadKey(key => key + 1)
+        }
+      }).catch(error => setInference({ status: 'error', error: error instanceof Error ? error.message : String(error) }))
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [baseName, inference.status, run])
+
   // The prediction for the epoch being viewed; only the hardest samples get one logged, so fall
   // back to the closest earlier epoch that has one, and say so.
   const selectedEpoch = run ? resolveEpoch(run.scoredEpochs, run.epoch) : null
-  const predictionEpoch = history && selectedEpoch != null ? nearestEarlierPrediction(history.prediction_epochs, selectedEpoch) : null
+  const earlierPrediction = history && selectedEpoch != null ? nearestEarlierPrediction(history.prediction_epochs, selectedEpoch) : null
+  const latestPrediction = history?.prediction_epochs[history.prediction_epochs.length - 1]
+  const predictionEpoch = earlierPrediction ?? latestPrediction ?? (inference.status === 'ready' ? inference.epoch ?? null : null)
   const predictionNote = predictionEpoch == null
-    ? (history ? 'No prediction was saved for this image: only the hardest samples of each scored epoch get one.' : 'Loading…')
+    ? (history ? 'No prediction has been saved for this image yet.' : 'Loading…')
     : predictionEpoch !== selectedEpoch ? `Prediction from epoch ${predictionEpoch} (none saved for epoch ${selectedEpoch})` : null
+
+  const requestInference = async () => {
+    if (!run || !baseName) return
+    setInference({ status: 'queued' })
+    try {
+      const status = await api.runInference(run.runId, baseName)
+      setInference(status)
+      if (status.status === 'ready') {
+        api.getRunSample(run.runId, baseName).then(setHistory).catch(() => {})
+        setReloadKey(key => key + 1)
+      }
+    } catch (error) {
+      setInference({ status: 'error', error: error instanceof Error ? error.message : String(error) })
+    }
+  }
 
   const imgSrc = !imgPath ? '' :
     tab === 'prediction' && run && predictionEpoch != null ? api.runPredictionUrl(run.runId, baseName, predictionEpoch, overlayAlpha) :
@@ -207,11 +239,11 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
             <div className="flex items-center gap-1 px-4 shrink-0"
                  style={{ height: 40, background: 'var(--pai-navy)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
               {(['image', 'mask', 'overlay', ...(run ? ['prediction' as const] : [])] as PreviewTab[]).map(t => (
-                <button key={t} onClick={() => setTab(t)} disabled={t === 'prediction' && predictionEpoch == null}
+                <button key={t} onClick={() => setTab(t)} disabled={t === 'prediction' && !history}
                         title={t === 'prediction' ? (predictionNote ?? `Model prediction at epoch ${predictionEpoch}`) : undefined}
                         style={{ padding: '5px 12px', borderRadius: 7, fontSize: 11.5, fontWeight: 600,
-                                 cursor: t === 'prediction' && predictionEpoch == null ? 'not-allowed' : 'pointer', textTransform: 'capitalize', border: 'none',
-                                 opacity: t === 'prediction' && predictionEpoch == null ? 0.4 : 1,
+                                 cursor: t === 'prediction' && !history ? 'not-allowed' : 'pointer', textTransform: 'capitalize', border: 'none',
+                                 opacity: t === 'prediction' && !history ? 0.4 : 1,
                                  background: tab === t ? 'rgba(255,255,255,0.14)' : 'transparent',
                                  color: tab === t ? '#fff' : 'rgba(255,255,255,0.55)' }}>
                   {t}
@@ -280,7 +312,23 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
                               boxShadow: '0 16px 50px rgba(0,0,0,0.55)', opacity: loading ? 0 : 1, transition: 'opacity .25s ease' }} />
               )}
 
-              {!imgSrc && (
+              {!imgSrc && tab === 'prediction' && (
+                <div style={{ textAlign: 'center', zIndex: 4, maxWidth: 420 }}>
+                  <p style={{ fontSize: 13, color: '#fff', fontWeight: 600 }}>No saved inference for this sample</p>
+                  <p style={{ margin: '6px 0 14px', fontSize: 11.5, color: 'rgba(255,255,255,.5)' }}>
+                    Run the latest checkpoint once and store its mask with this experiment.
+                  </p>
+                  <button className="btn-primary" onClick={() => void requestInference()}
+                          disabled={inference.status === 'queued' || inference.status === 'running'}>
+                    {inference.status === 'queued' || inference.status === 'running'
+                      ? <><Loader2 size={13} style={{ animation: 'spin .7s linear infinite' }} /> {inference.status === 'queued' ? 'Queued…' : 'Running inference…'}</>
+                      : 'Run inference'}
+                  </button>
+                  {inference.status === 'error' && <p role="alert" style={{ marginTop: 10, fontSize: 11, color: '#fca5a5' }}>{inference.error}</p>}
+                </div>
+              )}
+
+              {!imgSrc && tab !== 'prediction' && (
                 <div style={{ textAlign: 'center', zIndex: 4 }}>
                   <p style={{ fontSize: 40, marginBottom: 10, color: 'rgba(255,255,255,0.18)' }}>◻</p>
                   <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>No image path detected</p>

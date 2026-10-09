@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { layoutDatasetGraph } from './datasetGraph'
+import { adjacentDataset, layoutDatasetGraph, lineageOf } from './datasetGraph'
 
 describe('layoutDatasetGraph', () => {
   it('places cloud, mini datasets, and a two-parent derived dataset in successive columns', () => {
@@ -47,5 +47,48 @@ describe('layoutDatasetGraph', () => {
 
     expect(deep.width).toBeGreaterThan(narrow.width)
     expect(wide.height).toBeGreaterThan(narrow.height)
+  })
+})
+
+const FAMILY = [
+  { name: 'Cloud', description: '', source: 'cloud' },
+  { name: 'Mini 1', description: '', source: 'mini1', parent_sources: ['cloud'] },
+  { name: 'Mini 2', description: '', source: 'mini2', parent_sources: ['cloud'] },
+  { name: 'Curated', description: '', source: 'curated', parent_sources: ['mini1', 'cloud'] },
+  { name: 'Unrelated', description: '', source: 'solo' },
+]
+
+describe('lineageOf', () => {
+  const { edges } = layoutDatasetGraph(FAMILY)
+
+  it('finds transitive ancestors and descendants', () => {
+    expect(lineageOf(edges, 'curated')).toEqual({ ancestors: new Set(['mini1', 'cloud']), descendants: new Set() })
+    const cloud = lineageOf(edges, 'cloud')
+    expect(cloud.ancestors.size).toBe(0)
+    expect(cloud.descendants).toEqual(new Set(['mini1', 'mini2', 'curated']))
+  })
+
+  it('leaves unrelated datasets alone and survives cycles', () => {
+    expect(lineageOf(edges, 'solo')).toEqual({ ancestors: new Set(), descendants: new Set() })
+    const cycle = [{ parent: 'a', child: 'b' }, { parent: 'b', child: 'a' }]
+    expect(lineageOf(cycle, 'a')).toEqual({ ancestors: new Set(['b']), descendants: new Set(['b']) })
+  })
+})
+
+describe('adjacentDataset', () => {
+  const layout = layoutDatasetGraph(FAMILY)
+
+  it('moves along lineage edges', () => {
+    expect(adjacentDataset(layout, 'cloud', 'child')).toBe('mini1')
+    expect(adjacentDataset(layout, 'curated', 'parent')).toBe('cloud')
+    expect(adjacentDataset(layout, 'cloud', 'parent')).toBeNull()
+    expect(adjacentDataset(layout, 'curated', 'child')).toBeNull()
+  })
+
+  it('moves between siblings in a column and stops at the ends', () => {
+    expect(adjacentDataset(layout, 'mini1', 'down')).toBe('mini2')
+    expect(adjacentDataset(layout, 'mini2', 'up')).toBe('mini1')
+    expect(adjacentDataset(layout, 'mini1', 'up')).toBeNull()
+    expect(adjacentDataset(layout, 'missing', 'down')).toBeNull()
   })
 })

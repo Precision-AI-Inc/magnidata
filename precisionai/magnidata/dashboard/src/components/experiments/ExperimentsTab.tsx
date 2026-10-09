@@ -14,6 +14,8 @@ import { compareHash, parseCompareHash } from '../../lib/compare'
 interface Props {
   /** Dataset CSV path relative to the data root, when one is loaded. */
   datasetSource: string | null
+  /** Dataset the run table starts filtered to, without that dataset being loaded. */
+  datasetFilter?: string | null
   selectedRunId: string | null
   onSelectRun: (run: RunSummary) => void
   onCloseRun: () => void
@@ -52,8 +54,8 @@ export function StatusBadge({ status }: { status: string }) {
   )
 }
 
-export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset, onOverlayRun, trainDisabled, workerReason, onTrain, onRunChanged, liveKey, onSelectRunId, onCompareOnDataset }: Props) {
-  const x = useExperiments(datasetSource)
+export function ExperimentsTab({ datasetSource, datasetFilter = null, selectedRunId, onSelectRun, onCloseRun, knownDatasets, onLoadDataset, onOverlayRun, trainDisabled, workerReason, onTrain, onRunChanged, liveKey, onSelectRunId, onCompareOnDataset }: Props) {
+  const x = useExperiments(datasetSource, datasetFilter)
   const [pickerOpen, setPickerOpen] = useState(false)
   const [checked, setChecked] = useState<string[]>([])
   // The comparison lives in the URL hash so a reload (or a shared link) restores it.
@@ -147,10 +149,10 @@ export function ExperimentsTab({ datasetSource, selectedRunId, onSelectRun, onCl
               </button>
             ))}
           </div>
-          {datasetSource && (
+          {(datasetSource || datasetFilter) && (
             <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--c-t2)' }}>
               <input type="checkbox" checked={x.onlyDataset} onChange={e => x.setOnlyDataset(e.target.checked)} />
-              Only runs for this dataset
+              Only runs for {datasetFilter ? <span className="font-mono">{datasetFilter.split('/').pop()}</span> : 'this dataset'}
             </label>
           )}
           <input value={x.text} onChange={e => x.setText(e.target.value)}

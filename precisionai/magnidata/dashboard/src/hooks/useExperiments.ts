@@ -21,7 +21,11 @@ function loadColumns(): ChosenColumns {
 }
 
 /** Experiments, the run table's data and its filter/sort/column state. */
-export function useExperiments(currentDataset: string | null) {
+/**
+ * `filterDataset` opens the run table already narrowed to that dataset even when no dataset is
+ * loaded (the workspace's "View experiments" action); the checkbox can still widen it.
+ */
+export function useExperiments(currentDataset: string | null, filterDataset: string | null = null) {
   const [mlflow, setMlflow] = useState<MlflowStatus | null>(null)
   const [experiments, setExperiments] = useState<Experiment[]>([])
   const [selected, setSelected] = useState<string[]>([])
@@ -32,7 +36,7 @@ export function useExperiments(currentDataset: string | null) {
   const [error, setError] = useState<string | null>(null)
 
   const [status, setStatus] = useState<RunStatus | null>(null)
-  const [onlyDataset, setOnlyDataset] = useState(false)
+  const [onlyDataset, setOnlyDataset] = useState(filterDataset !== null)
   const [text, setText] = useState('')
   const [sort, setSort] = useState<SortState>({ kind: 'attribute', key: 'start', dir: 'desc' })
   const [columns, setColumnsState] = useState<ChosenColumns>(loadColumns)
@@ -62,7 +66,7 @@ export function useExperiments(currentDataset: string | null) {
     }
   }, [experimentQuery])
 
-  const filter = buildFilter({ status, dataset: onlyDataset ? currentDataset : null, text })
+  const filter = buildFilter({ status, dataset: onlyDataset ? (filterDataset ?? currentDataset) : null, text })
   const orderBy = buildOrderBy(sort.kind, sort.key, sort.dir)
 
   const loadRuns = useCallback(async (append: boolean, token: string | null) => {

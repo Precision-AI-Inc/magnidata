@@ -62,3 +62,49 @@ export function layoutDatasetGraph(datasets: DatasetMeta[]): DatasetGraphLayout 
   })))
   return { nodes, edges, width, height }
 }
+
+export interface DatasetLineage {
+  ancestors: Set<string>
+  descendants: Set<string>
+}
+
+/** Every dataset a source was derived from, and every dataset derived from it. */
+export function lineageOf(edges: DatasetGraphEdge[], source: string): DatasetLineage {
+  const walk = (start: string, next: (edge: DatasetGraphEdge) => [string, string]): Set<string> => {
+    const seen = new Set<string>()
+    const queue = [start]
+    while (queue.length) {
+      const current = queue.pop()!
+      for (const edge of edges) {
+        const [from, to] = next(edge)
+        if (from === current && to !== start && !seen.has(to)) {
+          seen.add(to)
+          queue.push(to)
+        }
+      }
+    }
+    return seen
+  }
+  return {
+    ancestors: walk(source, edge => [edge.child, edge.parent]),
+    descendants: walk(source, edge => [edge.parent, edge.child]),
+  }
+}
+
+export type GraphDirection = 'parent' | 'child' | 'up' | 'down'
+
+/** The dataset to select after an arrow key: a parent, a child, or a sibling in the same column. */
+export function adjacentDataset(layout: DatasetGraphLayout, selected: string, direction: GraphDirection): string | null {
+  const current = layout.nodes.find(node => node.dataset.source === selected)
+  if (!current) return null
+  const byY = (a: DatasetGraphNode, b: DatasetGraphNode) => a.y - b.y
+  if (direction === 'up' || direction === 'down') {
+    const column = layout.nodes.filter(node => node.depth === current.depth).sort(byY)
+    const index = column.findIndex(node => node.dataset.source === selected)
+    return column[index + (direction === 'up' ? -1 : 1)]?.dataset.source ?? null
+  }
+  const linked = new Set(layout.edges
+    .filter(edge => (direction === 'parent' ? edge.child : edge.parent) === selected)
+    .map(edge => (direction === 'parent' ? edge.parent : edge.child)))
+  return layout.nodes.filter(node => linked.has(node.dataset.source)).sort(byY)[0]?.dataset.source ?? null
+}

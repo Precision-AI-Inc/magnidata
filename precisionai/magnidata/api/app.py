@@ -52,6 +52,7 @@ os.makedirs(USER_DATA_DIR, exist_ok=True)
 # which that import relies on.
 import dataset_builder
 import dataset_curation
+import dataset_summary
 import db
 import embeddings_io
 import experiments
@@ -507,6 +508,8 @@ def list_datasets() -> ResponseReturnValue:
             }
             if os.path.isfile(path):
                 meta["file_size_bytes"] = os.path.getsize(path)
+                if lfs_info is None:
+                    meta["row_count"] = dataset_summary.count_rows(path)
             if lfs_info is not None:
                 meta["is_lfs_pointer"] = True
                 if "size" in lfs_info:
@@ -534,6 +537,26 @@ def list_datasets() -> ResponseReturnValue:
         return jsonify(out)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.get("/api/datasets/summary")
+def dataset_summary_view() -> ResponseReturnValue:
+    """Statistics, sample images, mask coverage and partition count for one dataset."""
+    source = request.args.get("source", "").strip()
+    if not source:
+        return jsonify({"error": "source required"}), 400
+    try:
+        path = _data_path(source)
+    except ValueError:
+        return jsonify({"error": "invalid source path"}), 400
+    if not os.path.isfile(path):
+        return jsonify({"error": "dataset not found"}), 404
+    if _lfs_pointer_info(path) is not None:
+        return jsonify({"error": "dataset is a Git LFS pointer"}), 409
+    summary = dataset_summary.summarize_dataset(path, DATA_ROOT)
+    summary["partitions_committed"] = sum(1 for p in db.list_partitions(source) if p.get("cluster_id") is not None)
+    summary["has_embeddings"] = _resolve_emb_source(source) is not None
+    return jsonify(summary)
 
 
 def _slugify(name: str) -> str:

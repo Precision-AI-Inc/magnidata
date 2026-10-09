@@ -3,7 +3,6 @@ import {
   BarChart2,
   BarChart3,
   CircleHelp,
-  Database,
   FlaskConical,
   LayoutDashboard,
   ScanSearch,
@@ -11,13 +10,12 @@ import {
 } from 'lucide-react'
 import type { TabId } from '../types'
 
-export type AppSection = 'workspace' | 'explorer' | 'datasets' | 'experiments' | 'schema' | 'help'
+export type AppSection = 'workspace' | 'explorer' | 'experiments' | 'schema' | 'help'
 
 interface Props {
   active: AppSection
   onWorkspace: () => void
   onExplorer: () => void
-  onDatasets: () => void
   onExperiments: () => void
   onSchema: () => void
   onHelp: () => void
@@ -29,7 +27,6 @@ interface Props {
 const WORKSPACE_ITEMS = [
   ['workspace', 'Workspace', LayoutDashboard, 'onWorkspace'],
   ['explorer', 'Visual Explorer', ScanSearch, 'onExplorer'],
-  ['datasets', 'Datasets', Database, 'onDatasets'],
   ['experiments', 'Experiments', FlaskConical, 'onExperiments'],
 ] as const
 
@@ -45,7 +42,6 @@ export function AppNavigation(props: Props) {
   const actions = {
     onWorkspace: props.onWorkspace,
     onExplorer: props.onExplorer,
-    onDatasets: props.onDatasets,
     onExperiments: props.onExperiments,
     onSchema: props.onSchema,
     onHelp: props.onHelp,

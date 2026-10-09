@@ -86,6 +86,28 @@ export interface DatasetMeta {
   row_count?: number
 }
 
+export interface NumericColumnSummary {
+  name: string
+  min: number
+  max: number
+  mean: number
+  histogram: number[]
+}
+
+/** Per-dataset statistics for the workspace detail panel. */
+export interface DatasetSummary {
+  row_count: number
+  column_count: number
+  numeric_column_count: number
+  numeric_columns: NumericColumnSummary[]
+  image_column: string | null
+  sample_images: string[]
+  mask_coverage: { checked: number; with_masks: number }
+  partitions_committed: number
+  has_embeddings: boolean
+  truncated: boolean
+}
+
 /** { embeddings: { "<file_path>": number[] } } */
 export interface EmbeddingsFile {
   embeddings: Record<string, number[]>
@@ -337,6 +359,8 @@ export const api = {
     `${BASE}/annotation/overlay?path=${encodeURIComponent(path)}&alpha=${alpha}&max_size=${maxSize}`,
 
   // ── Cluster partitions (cluster_id, persisted per dataset by image filename) ──
+  datasetSummary: (source: string) =>
+    get<DatasetSummary>(`${BASE}/datasets/summary?source=${encodeURIComponent(source)}`),
   getPartitions: (source: string) =>
     get<{ partitions: Partition[] }>(`${BASE}/partitions?source=${encodeURIComponent(source)}`),
   commitPartitions: (source: string, entries: { image_name: string; cluster_id: number }[]) =>

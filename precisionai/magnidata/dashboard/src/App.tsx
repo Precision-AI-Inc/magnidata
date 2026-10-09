@@ -20,7 +20,6 @@ import type { CSVRow, TabId } from './types'
 
 import { Header }         from './components/Header'
 import { Sidebar }        from './components/Sidebar'
-import { CSVLoader }      from './components/CSVLoader'
 import { ByodDialog }     from './components/ByodDialog'
 import { HelpPage }       from './components/HelpPage'
 import { DataTable }      from './components/DataTable'
@@ -32,13 +31,13 @@ import { Schema }         from './components/Dictionary'
 import { ExperimentsTab } from './components/experiments/ExperimentsTab'
 import { AppNavigation } from './components/AppNavigation'
 import type { AppSection } from './components/AppNavigation'
-import { WorkspaceDashboard } from './components/WorkspaceDashboard'
+import { WorkspaceView } from './components/WorkspaceView'
 import {
   forgetDatasetSource, readLastDatasetSource, rememberedDataset, rememberDatasetSource, retry,
 } from './lib/datasetSession'
 import './components/WorkspaceDashboard.css'
 
-type LandingView = 'landing' | 'datasets' | 'help' | 'experiments'
+type LandingView = 'landing' | 'help' | 'experiments'
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'visual-explorer', label: 'Visual Explorer', icon: <Share2 size={13} /> },
@@ -64,6 +63,7 @@ export default function App() {
   const restoreAttempted = useRef(false)
   const [landingView, setLandingView] = useState<LandingView>('landing')
   const [showByod, setShowByod] = useState(false)
+  const [experimentsDataset, setExperimentsDataset] = useState<string | null>(null)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [pendingOverlay, setPendingOverlay] = useState<{ runId: string; compareWith?: string; source: string } | null>(null)
   // A reloaded `#compare=…` link goes straight to the experiments view.
@@ -258,7 +258,7 @@ export default function App() {
   // polling and stays visible (as a Header badge) after the dialog that started it closes.
   const handleBuildDone = useCallback((_dataset: DatasetMeta) => {
     reloadDatasets()
-    setLandingView('datasets')     // the finished dataset shows up in the picker grid
+    setLandingView('landing')      // the finished dataset shows up in the lineage graph
   }, [reloadDatasets])
   const buildJob = useBuildJob(handleBuildDone)
 
@@ -306,14 +306,7 @@ export default function App() {
       setShowByod(true)
       return
     }
-    setLandingView('datasets')
-  }
-
-  const goToDatasets = () => {
-    clear()
-    setDatasetSource(null)
-    setTab('visual-explorer')
-    setLandingView('datasets')
+    setLandingView('landing')
   }
 
   const goToExplorer = () => {
@@ -499,10 +492,17 @@ export default function App() {
 
   // Experiments are global (MLflow), so they open without a dataset too.
   const goToExperiments = () => {
+    setExperimentsDataset(null)
     clear()
     setDatasetSource(null)
     setTab('visual-explorer')
     setLandingView('experiments')
+  }
+
+  // Same view, narrowed to the runs trained on one dataset (the workspace panel's action).
+  const goToDatasetExperiments = (source: string) => {
+    goToExperiments()
+    setExperimentsDataset(source)
   }
 
   // Persist the curated set (everything except the removed images) as a new child dataset.
@@ -591,18 +591,15 @@ export default function App() {
     ? (tab === 'experiments' ? 'experiments' : 'explorer')
     : tab === 'schema'
       ? 'schema'
-      : landingView === 'datasets'
-        ? 'datasets'
-        : landingView === 'experiments'
-          ? 'experiments'
-          : landingView === 'help'
-            ? 'help'
-            : 'workspace'
+      : landingView === 'experiments'
+        ? 'experiments'
+        : landingView === 'help'
+          ? 'help'
+          : 'workspace'
 
   const pageCopy: Record<AppSection, [string, string]> = {
-    workspace: ['Workspace', 'Your scientific data and model development hub'],
+    workspace: ['Workspace', 'Browse dataset lineage, inspect a dataset, and jump into exploration or experiments'],
     explorer: ['Visual Explorer', data ? `Explore ${data.fileName} across features, embeddings, and samples` : 'Explore high-dimensional data and inspect samples'],
-    datasets: ['Datasets', 'Manage and explore your scientific datasets'],
     experiments: ['Experiments', 'Track, compare, and analyze model training runs'],
     schema: ['Data Schema', 'Understand the fields available to every visualization'],
     help: ['Help & Setup', 'Prepare datasets and run the training feedback loop'],
@@ -622,7 +619,6 @@ export default function App() {
         active={activeSection}
         onWorkspace={goHome}
         onExplorer={goToExplorer}
-        onDatasets={goToDatasets}
         onExperiments={goToExperiments}
         onSchema={goToSchema}
         onHelp={goToHelp}
@@ -646,19 +642,14 @@ export default function App() {
       <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
         {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'landing' && (
-          <WorkspaceDashboard
+          <WorkspaceView
             datasets={datasetMeta}
-            onOpenDataset={loadDatasetBySource}
-            onOpenDatasets={goToDatasets}
-            onOpenExplorer={goToMagniData}
+            onOpenDataset={source => void loadDatasetBySource(source)}
+            onViewExperiments={goToDatasetExperiments}
+            onDelete={deleteDataset}
             onOpenByod={() => setShowByod(true)}
-            onOpenExperiments={goToExperiments}
-            onOpenHelp={goToHelp}
+            onUploadFile={file => handleLoad(file)}
           />
-        )}
-
-        {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'datasets' && (
-          <CSVLoader onLoad={handleLoad} datasets={datasetMeta} onDelete={deleteDataset} />
         )}
 
         {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'help' && (
@@ -667,7 +658,7 @@ export default function App() {
 
         {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'experiments' && (
           <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-            <ExperimentsTab datasetSource={null} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)}
+            <ExperimentsTab key={experimentsDataset ?? 'all'} datasetSource={null} datasetFilter={experimentsDataset} selectedRunId={selectedRunId} onSelectRun={r => setSelectedRunId(r.run_id)}
               onCloseRun={() => setSelectedRunId(null)} knownDatasets={datasetMeta.map(d => d.source)} onLoadDataset={loadDatasetBySource} onOverlayRun={overlayRun} onCompareOnDataset={compareOnDataset} onSelectRunId={setSelectedRunId}
                 trainDisabled={trainBlocked(!!data && !!datasetSource)} workerReason={activeRun.presets && !activeRun.presets.backend.available ? (activeRun.presets.backend.reason ?? 'no trainer worker has reported in') : null}
                 onTrain={() => { void activeRun.loadPresets(); setShowTrain(true) }} onRunChanged={() => void activeRun.refresh()}
@@ -701,7 +692,7 @@ export default function App() {
                 <button className="btn-ghost" onClick={() => {
                   setDatasetLoadError(null)
                   setFailedDatasetSource(null)
-                  setLandingView('datasets')
+                  setLandingView('landing')
                 }}>Choose another dataset</button>
               </div>
             </div>

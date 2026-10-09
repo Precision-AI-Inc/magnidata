@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
-import { Cloud, Database, GitBranch, Loader2, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import type { KeyboardEvent } from 'react'
+import { Cloud, Database, GitBranch, Trash2 } from 'lucide-react'
 import {
   Background,
   BackgroundVariant,
@@ -11,63 +12,73 @@ import {
   Position,
   ReactFlow,
   type Edge,
+  type FitViewOptions,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import './DatasetGraph.css'
 import type { DatasetMeta } from '../api'
-import { layoutDatasetGraph } from '../lib/datasetGraph'
+import { adjacentDataset, layoutDatasetGraph, lineageOf } from '../lib/datasetGraph'
+import type { GraphDirection } from '../lib/datasetGraph'
 
 interface Props {
   datasets: DatasetMeta[]
-  loadingSource: string | null
-  onOpen: (dataset: DatasetMeta) => void
+  selected: string | null
+  onSelect: (source: string | null) => void
+  onOpen: (source: string) => void
   onDelete?: (id: number) => void
 }
+
+type Emphasis = 'selected' | 'related' | 'dimmed' | 'idle'
 
 interface DatasetNodeData extends Record<string, unknown> {
   dataset: DatasetMeta
   datasets: DatasetMeta[]
-  loadingSource: string | null
-  onOpen: (dataset: DatasetMeta) => void
+  emphasis: Emphasis
   onDelete?: (id: number) => void
 }
 
 type DatasetFlowNode = Node<DatasetNodeData, 'dataset'>
+
+const NODE_WIDTH = 210
+const NODE_HEIGHT = 92
+// Bottom padding keeps the fitted graph clear of the minimap.
+const FIT_VIEW: FitViewOptions = { padding: { top: '56px', right: '40px', bottom: '130px', left: '40px' }, maxZoom: 1.1 }
+const ARROW_DIRECTIONS: Record<string, GraphDirection> = {
+  ArrowLeft: 'parent', ArrowRight: 'child', ArrowUp: 'up', ArrowDown: 'down',
+}
 
 function label(source: string, datasets: DatasetMeta[]): string {
   return datasets.find(dataset => dataset.source === source)?.name ?? source.split('/').pop() ?? source
 }
 
 function DatasetNodeCard({ data }: NodeProps<DatasetFlowNode>) {
-  const { dataset, datasets, loadingSource, onOpen, onDelete } = data
-  const active = loadingSource === dataset.source
+  const { dataset, datasets, emphasis, onDelete } = data
   const isCloud = dataset.name === 'Cloud Dataset'
   const parents = dataset.parent_sources ?? (dataset.parent_source ? [dataset.parent_source] : [])
 
   return (
-    <article className={`dataset-graph__node${isCloud ? ' dataset-graph__node--cloud' : ''}`}>
+    <article
+      className={`dataset-graph__node dataset-graph__node--${emphasis}${isCloud ? ' dataset-graph__node--cloud' : ''}`}
+    >
       <Handle className="dataset-graph__handle" type="target" position={Position.Left} />
       {dataset.deletable && dataset.id != null && onDelete && (
         <button
           className="dataset-graph__delete nodrag nopan"
           title="Delete dataset"
           aria-label={`Delete ${dataset.name}`}
-          onClick={() => {
+          onClick={event => {
+            event.stopPropagation()
             if (window.confirm(`Delete dataset "${dataset.name}"? This cannot be undone.`)) onDelete(dataset.id!)
           }}
         >
           <Trash2 size={11} />
         </button>
       )}
-      <button
-        className="dataset-graph__open nodrag nopan"
-        onClick={() => onOpen(dataset)}
-        disabled={loadingSource !== null}
-      >
-        <span className="dataset-graph__icon">
-          {active ? <Loader2 size={17} className="spin" /> : isCloud ? <Cloud size={17} /> : <Database size={17} />}
-        </span>
+      <div className="dataset-graph__open">
+        <span className="dataset-graph__icon">{isCloud ? <Cloud size={17} /> : <Database size={17} />}</span>
         <span className="dataset-graph__copy">
           <strong>{dataset.name}</strong>
           <small>{dataset.row_count?.toLocaleString() ?? 'CSV'} samples</small>
@@ -77,7 +88,7 @@ function DatasetNodeCard({ data }: NodeProps<DatasetFlowNode>) {
             <GitBranch size={10} /> {parents.length === 1 ? label(parents[0], datasets) : `${parents.length} parents`}
           </span>
         )}
-      </button>
+      </div>
       <Handle className="dataset-graph__handle" type="source" position={Position.Right} />
     </article>
   )
@@ -85,39 +96,94 @@ function DatasetNodeCard({ data }: NodeProps<DatasetFlowNode>) {
 
 const nodeTypes = { dataset: DatasetNodeCard }
 
-export function DatasetGraph({ datasets, loadingSource, onOpen, onDelete }: Props) {
+const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+
+export function DatasetGraph({ datasets, selected, onSelect, onOpen, onDelete }: Props) {
   const layout = useMemo(() => layoutDatasetGraph(datasets), [datasets])
+  const lineage = useMemo(() => (selected ? lineageOf(layout.edges, selected) : null), [layout.edges, selected])
+  const flow = useRef<ReactFlowInstance<DatasetFlowNode, Edge> | null>(null)
+
+  const emphasisOf = useCallback((source: string): Emphasis => {
+    if (!selected || !lineage) return 'idle'
+    if (source === selected) return 'selected'
+    return lineage.ancestors.has(source) || lineage.descendants.has(source) ? 'related' : 'dimmed'
+  }, [lineage, selected])
+
   const nodes = useMemo<DatasetFlowNode[]>(() => layout.nodes.map(({ dataset, x, y }) => ({
     id: dataset.source,
     type: 'dataset',
     position: { x, y },
-    data: { dataset, datasets, loadingSource, onOpen, onDelete },
+    initialWidth: NODE_WIDTH,
+    initialHeight: NODE_HEIGHT,
+    data: { dataset, datasets, emphasis: emphasisOf(dataset.source), onDelete },
     draggable: false,
-    selectable: false,
-  })), [datasets, layout.nodes, loadingSource, onDelete, onOpen])
-  const edges = useMemo<Edge[]>(() => layout.edges.map(edge => ({
-    id: `${edge.parent}\u0000${edge.child}`,
-    source: edge.parent,
-    target: edge.child,
-    type: 'smoothstep',
-    markerEnd: { type: MarkerType.ArrowClosed },
-  })), [layout.edges])
+    selected: dataset.source === selected,
+  })), [datasets, emphasisOf, layout.nodes, onDelete, selected])
+
+  const edges = useMemo<Edge[]>(() => layout.edges.map(edge => {
+    const inLineage = !!selected && !!lineage && [edge.parent, edge.child].every(
+      source => source === selected || lineage.ancestors.has(source) || lineage.descendants.has(source),
+    )
+    return {
+      id: `${edge.parent}\u0000${edge.child}`,
+      source: edge.parent,
+      target: edge.child,
+      type: 'smoothstep',
+      animated: inLineage && !prefersReducedMotion(),
+      className: selected ? (inLineage ? 'dataset-graph__edge--lineage' : 'dataset-graph__edge--dimmed') : undefined,
+      markerEnd: { type: MarkerType.ArrowClosed },
+    }
+  }), [layout.edges, lineage, selected])
+
+  useEffect(() => {
+    const node = layout.nodes.find(candidate => candidate.dataset.source === selected)
+    if (!node) return
+    // Wait for the detail panel's width transition so the centre is computed on the final viewport size.
+    const timer = window.setTimeout(() => {
+      void flow.current?.setCenter(node.x + NODE_WIDTH / 2, node.y + NODE_HEIGHT / 2, {
+        zoom: Math.max(flow.current.getZoom(), 0.6),
+        duration: prefersReducedMotion() ? 0 : 350,
+      })
+    }, prefersReducedMotion() ? 0 : 320)
+    return () => window.clearTimeout(timer)
+  }, [layout.nodes, selected])
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') return onSelect(null)
+    if (event.key === 'Enter' && selected) return onOpen(selected)
+    const direction = ARROW_DIRECTIONS[event.key]
+    if (!direction) return
+    event.preventDefault()
+    const next = selected
+      ? adjacentDataset(layout, selected, direction)
+      : layout.nodes[0]?.dataset.source ?? null
+    if (next) onSelect(next)
+  }
 
   return (
-    <div className="dataset-graph" aria-label="Interactive dataset lineage graph">
-      <ReactFlow
+    <div
+      className="dataset-graph"
+      role="group"
+      tabIndex={0}
+      aria-label="Interactive dataset lineage graph. Arrow keys move between datasets, Enter opens the explorer, Escape clears the selection."
+      onKeyDown={onKeyDown}
+    >
+      <ReactFlow<DatasetFlowNode, Edge>
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        onInit={instance => { flow.current = instance }}
+        onNodeClick={(_, node) => onSelect(node.id === selected ? null : node.id)}
+        onNodeDoubleClick={(_, node) => onOpen(node.id)}
+        onPaneClick={() => onSelect(null)}
         fitView
-        fitViewOptions={{ padding: 0.2, maxZoom: 1.1 }}
+        fitViewOptions={FIT_VIEW}
         minZoom={0.15}
         maxZoom={2}
         nodesDraggable={false}
         nodesConnectable={false}
         nodesFocusable={false}
         edgesFocusable={false}
-        elementsSelectable={false}
         zoomOnDoubleClick={false}
         proOptions={{ hideAttribution: true }}
       >
@@ -126,11 +192,15 @@ export function DatasetGraph({ datasets, loadingSource, onOpen, onDelete }: Prop
         <MiniMap<DatasetFlowNode>
           pannable
           zoomable
-          nodeColor={node => node.data.dataset.name === 'Cloud Dataset' ? 'var(--c-accent)' : 'var(--c-border-2)'}
+          nodeClassName={node => node.data.dataset.source === selected || node.data.dataset.name === 'Cloud Dataset'
+            ? 'dataset-graph__mini dataset-graph__mini--accent'
+            : 'dataset-graph__mini'}
           maskColor="var(--dataset-minimap-mask)"
           ariaLabel="Dataset lineage minimap"
         />
-        <Panel position="top-right" className="dataset-graph__hint">Drag to pan · scroll to zoom</Panel>
+        <Panel position="top-right" className="dataset-graph__hint">
+          Click to select · double-click to explore · drag to pan · scroll to zoom
+        </Panel>
       </ReactFlow>
     </div>
   )

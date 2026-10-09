@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Workspace and Datasets pages are now one lineage workspace: a storage-wide summary strip, the interactive
+  lineage graph, and a detail panel for the selected dataset with statistics, sample images, annotation coverage,
+  recent runs, and lineage links. The panel's **Open in Visual Explorer** and **View experiments** actions open the
+  explorer or the Experiments view filtered to that dataset. The selection highlights its ancestors and descendants,
+  can be driven with the keyboard (arrows, Enter, Escape), and survives a reload.
+- `GET /api/datasets/summary` returns per-dataset row and column counts, numeric distributions, sample images,
+  mask coverage, and partition counts; configured datasets now report `row_count` in `GET /api/datasets`.
 - Dataset lineage is now an interactive, read-only canvas with drag panning, wheel and pinch zoom, fit-view controls,
   and a pannable minimap. Its deterministic left-to-right layout expands for deep or branching dataset histories while
   preserving dataset loading and deletion actions.
@@ -137,6 +144,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docker compose up` now prints where to open the tool (`portal -> http://localhost:5175`,
   `api -> http://localhost:5051/api/health`) in the API's startup log, driven by the
   `MAGNIDATA_PORTAL_URL` / `MAGNIDATA_API_URL` variables in `docker-compose.yml`.
+
+### Fixed
+
+- Dataset cards in the lineage graph could not be clicked, so datasets could neither be opened in the Visual
+  Explorer nor deleted: React Flow disabled pointer events on its non-interactive nodes.
 
 ### Changed
 

@@ -1030,3 +1030,43 @@ def test_mask_endpoint_makes_background_transparent(app_client, masked_image):
     alpha = np.asarray(Image.open(io.BytesIO(resp.data)).convert("RGBA"))[:, :, 3]
     assert alpha[5, 3] == 255
     assert alpha[5, 15] == 0
+
+
+# ── Dataset summary ────────────────────────────────────────────────────────────
+
+
+def test_dataset_summary_reports_stats_and_samples(app_client, tmp_path):
+    client, _ = app_client
+    rows = [{"image_path": f"images/{i}.png", "width": str(100 + i), "score": "0.5"} for i in range(30)]
+    _write_feature_csv(tmp_path / "data_user" / "s.csv", rows)
+
+    res = client.get("/api/datasets/summary?source=data_user/s.csv")
+
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["row_count"] == 30
+    assert body["column_count"] == 3
+    assert body["image_column"] == "image_path"
+    assert len(body["sample_images"]) == 8
+    assert body["mask_coverage"] == {"checked": 30, "with_masks": 0}
+    names = [c["name"] for c in body["numeric_columns"]]
+    assert names == ["width", "score"]
+    assert sum(body["numeric_columns"][0]["histogram"]) == 30
+
+
+def test_dataset_summary_rejects_bad_sources(app_client):
+    client, _ = app_client
+
+    assert client.get("/api/datasets/summary").status_code == 400
+    assert client.get("/api/datasets/summary?source=../etc/passwd").status_code == 400
+    assert client.get("/api/datasets/summary?source=data_user/missing.csv").status_code == 404
+
+
+def test_confi_datasets_report_row_count(app_client, tmp_path):
+    client, _ = app_client
+    _write_feature_csv(tmp_path / "data_user" / "c.csv", [{"image_path": "a.png", "width": "1", "score": "2"}])
+    (tmp_path / "confi.yaml").write_text("datasets:\n  - name: C\n    source: data_user/c.csv\n")
+
+    listed = client.get("/api/datasets").get_json()
+
+    assert next(d for d in listed if d["source"] == "data_user/c.csv")["row_count"] == 1

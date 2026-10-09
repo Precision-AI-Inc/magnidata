@@ -10,6 +10,7 @@ monkeypatched.
 Run:  python -m pytest precisionai/magnidata/api/test_app.py -q
 """
 
+import csv
 import importlib
 import io
 import json
@@ -23,6 +24,14 @@ import pytest
 from PIL import Image
 
 
+def _write_feature_csv(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["image_path", "width", "score"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 @pytest.fixture
 def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
@@ -32,7 +41,7 @@ def app_client(tmp_path, monkeypatch):
     os.makedirs(tmp_path / "data_user", exist_ok=True)
 
     app_module = importlib.import_module("app")
-
+    monkeypatch.setattr(app_module.db, "DB_PATH", str(tmp_path / "test.db"))
     importlib.reload(app_module)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
@@ -318,6 +327,81 @@ def test_get_build_job_404_for_unknown_id(app_client, monkeypatch):
 
 
 # ── DELETE /api/datasets/<id> cleanup ──────────────────────────────────────────────
+
+
+def test_cloud_union_lineage_and_complement_derivation(app_client):
+    client, app_module = app_client
+    root = Path(app_module.DATA_ROOT)
+    mini1 = "data_user/agristress500-mini1.csv"
+    mini2 = "data_user/agristress500-mini2.csv"
+    _write_feature_csv(
+        root / mini1,
+        [
+            {"image_path": "images/a.png", "width": "256", "score": "0"},
+            {"image_path": "images/b.png", "width": "256", "score": "10"},
+        ],
+    )
+    _write_feature_csv(
+        root / mini2,
+        [
+            {"image_path": "images/c.png", "width": "256", "score": "1"},
+            {"image_path": "images/d.png", "width": "256", "score": "9"},
+        ],
+    )
+    app_module.db.create_dataset_record("Mini 1", "", mini1, None, None, 2)
+    app_module.db.create_dataset_record("Mini 2", "", mini2, None, None, 2)
+
+    catalog = client.get("/api/datasets").get_json()
+    by_source = {dataset["source"]: dataset for dataset in catalog}
+    cloud = by_source[app_module.dataset_curation.CLOUD_SOURCE]
+    assert cloud["name"] == "Cloud Dataset"
+    assert cloud["row_count"] == 4
+    assert cloud["deletable"] is False
+    assert by_source[mini1]["parent_sources"] == [app_module.dataset_curation.CLOUD_SOURCE]
+    assert by_source[mini2]["parent_sources"] == [app_module.dataset_curation.CLOUD_SOURCE]
+
+    response = client.post(
+        "/api/datasets",
+        json={
+            "name": "Mini 1 complemented",
+            "parent_source": mini1,
+            "image_names": ["a.png", "b.png"],
+            "query_image_names": ["a.png"],
+            "complement_top_k": 1,
+        },
+    )
+    assert response.status_code == 201
+    derived = response.get_json()
+    assert derived["complement_count"] == 1
+    assert derived["row_count"] == 3
+    assert derived["parent_sources"] == [mini1, app_module.dataset_curation.CLOUD_SOURCE]
+    _, rows = app_module.dataset_curation.read_rows(root / derived["source"])
+    assert [Path(row["image_path"]).name for row in rows] == ["a.png", "b.png", "c.png"]
+
+
+def test_removal_only_dataset_has_current_dataset_as_sole_parent(app_client):
+    client, app_module = app_client
+    source = "data_user/current.csv"
+    _write_feature_csv(
+        Path(app_module.DATA_ROOT) / source,
+        [
+            {"image_path": "images/a.png", "width": "256", "score": "1"},
+            {"image_path": "images/b.png", "width": "256", "score": "2"},
+        ],
+    )
+    app_module.db.create_dataset_record("Current", "", source, None, None, 2)
+
+    response = client.post(
+        "/api/datasets",
+        json={
+            "name": "Removed B",
+            "parent_source": source,
+            "image_names": ["a.png"],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["parent_sources"] == [source]
 
 
 def test_remove_dataset_cleans_up_built_dataset_files(app_client):

@@ -113,7 +113,7 @@ input[type=range] { accent-color: var(--c-accent); }
 .explorer-config__wide { width: 100%; min-height: 31px; justify-content: center; }
 .explorer-config__wide[data-active='true'] { border-color: var(--c-accent); background: var(--c-accent-light); color: var(--c-accent); }
 .explorer-config__field { display: flex; flex-direction: column; gap: 4px; color: var(--c-t3); font-size: 9px; font-weight: 600; }
-.explorer-config__field select { width: 100%; min-height: 30px; padding: 4px 7px; outline: none; border: 1px solid var(--c-border); border-radius: 7px; background: var(--c-raised); color: var(--c-t1); font: 10px var(--font); }
+.explorer-config__field select, .explorer-config__field input:not([type='range']) { width: 100%; min-height: 30px; padding: 4px 7px; outline: none; border: 1px solid var(--c-border); border-radius: 7px; background: var(--c-raised); color: var(--c-t1); font: 10px var(--font); }
 .explorer-config__hint, .explorer-config__metric { margin: 0; color: var(--c-t3); font-size: 9px; line-height: 1.45; }
 .explorer-config__metric strong { color: var(--c-accent); font-size: 12px; }
 .explorer-config__section > div[style] { width: 100%; margin-right: 0 !important; flex-wrap: wrap; }

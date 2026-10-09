@@ -29,7 +29,7 @@ def get_conn() -> Generator[sqlite3.Connection, None, None]:
 
 
 def init_db() -> None:
-    """Create the notes, created_datasets, and partitions tables if missing."""
+    """Create the notes, datasets, lineage, and partitions tables if missing."""
     with get_conn() as conn:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS notes (
@@ -54,6 +54,16 @@ def init_db() -> None:
                 created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
             );
 
+            -- A dataset can derive from more than one source (for example a curated
+            -- dataset plus samples pulled from the shared cloud pool).
+            CREATE TABLE IF NOT EXISTS dataset_parents (
+                child_source  TEXT NOT NULL,
+                parent_source TEXT NOT NULL,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (child_source, parent_source)
+            );
+            CREATE INDEX IF NOT EXISTS idx_dataset_parents_parent ON dataset_parents(parent_source);
+
             -- Cluster partitions: each row of a dataset (by image filename) gets a cluster_id
             -- (1-based, NULL = unassigned) from a committed clustering.
             CREATE TABLE IF NOT EXISTS partitions (
@@ -66,6 +76,10 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_partitions_source ON partitions(dataset_source);
         """)
+        conn.execute(
+            """INSERT OR IGNORE INTO dataset_parents (child_source, parent_source)
+               SELECT source, parent_source FROM created_datasets WHERE parent_source IS NOT NULL"""
+        )
 
 
 def list_created_datasets() -> list[dict]:
@@ -105,7 +119,39 @@ def create_dataset_record(
             (name, description, source, parent_source, emb_source, row_count),
         )
         row = conn.execute("SELECT * FROM created_datasets WHERE id = ?", (cur.lastrowid,)).fetchone()
+        if parent_source:
+            conn.execute(
+                "INSERT OR IGNORE INTO dataset_parents (child_source, parent_source) VALUES (?, ?)",
+                (source, parent_source),
+            )
         return dict(row)
+
+
+def set_dataset_parents(child_source: str, parent_sources: list[str]) -> None:
+    """Replace a dataset's parent edges and keep the legacy first parent in sync."""
+    parents = list(dict.fromkeys(parent_sources))
+    with get_conn() as conn:
+        conn.execute("DELETE FROM dataset_parents WHERE child_source = ?", (child_source,))
+        conn.executemany(
+            "INSERT INTO dataset_parents (child_source, parent_source) VALUES (?, ?)",
+            [(child_source, parent) for parent in parents],
+        )
+        conn.execute(
+            "UPDATE created_datasets SET parent_source = ? WHERE source = ?",
+            (parents[0] if parents else None, child_source),
+        )
+
+
+def dataset_parent_map() -> dict[str, list[str]]:
+    """Return every child source mapped to its ordered parent sources."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT child_source, parent_source FROM dataset_parents ORDER BY created_at, parent_source"
+        ).fetchall()
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        result.setdefault(row["child_source"], []).append(row["parent_source"])
+    return result
 
 
 def delete_created_dataset(ds_id: int) -> dict | None:
@@ -115,6 +161,9 @@ def delete_created_dataset(ds_id: int) -> dict | None:
         if not row:
             return None
         conn.execute("DELETE FROM created_datasets WHERE id = ?", (ds_id,))
+        conn.execute(
+            "DELETE FROM dataset_parents WHERE child_source = ? OR parent_source = ?", (row["source"], row["source"])
+        )
         return dict(row)
 
 

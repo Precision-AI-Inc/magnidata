@@ -51,6 +51,7 @@ os.makedirs(USER_DATA_DIR, exist_ok=True)
 # inserts the precisionai package root onto sys.path (see its own _find_package_root),
 # which that import relies on.
 import dataset_builder
+import dataset_curation
 import db
 import embeddings_io
 import experiments
@@ -489,6 +490,8 @@ def _confi_datasets() -> list[dict]:
 def list_datasets() -> ResponseReturnValue:
     """Datasets from confi.yaml (permanent) + user-created child datasets (deletable)."""
     try:
+        dataset_curation.ensure_cloud_dataset(DATA_ROOT, db)
+        parent_map = db.dataset_parent_map()
         out = []
         for ds in _confi_datasets():
             source = ds.get("source", "")
@@ -498,6 +501,7 @@ def list_datasets() -> ResponseReturnValue:
                 "name": ds.get("name", source),
                 "description": ds.get("description", ""),
                 "source": source,
+                "parent_sources": parent_map.get(source, []),
                 "deletable": False,
                 "has_embeddings": _resolve_emb_source(source) is not None,
             }
@@ -520,8 +524,9 @@ def list_datasets() -> ResponseReturnValue:
                     "description": rec["description"],
                     "source": rec["source"],
                     "parent_source": rec["parent_source"],
+                    "parent_sources": parent_map.get(rec["source"], []),
                     "row_count": rec["row_count"],
-                    "deletable": True,
+                    "deletable": rec["source"] != dataset_curation.CLOUD_SOURCE,
                     "has_embeddings": _resolve_emb_source(rec["source"]) is not None,
                     "file_size_bytes": os.path.getsize(path),
                 }
@@ -540,39 +545,41 @@ def _slugify(name: str) -> str:
 def create_dataset() -> ResponseReturnValue:
     """Carve a child dataset from a parent's selection.
 
-    Body: {name, description, parent_source, image_names:[...]}. Writes a child CSV
-    (subset of the parent rows by image filename) and registers it; embeddings are
-    inherited from the parent (resolved at compute time, not copied).
+    Body: {name, description, parent_source, image_names:[...], query_image_names:[...],
+    complement_top_k, cloud_source}. Writes a child CSV from the retained parent rows
+    plus optional feature-similar cloud-complement rows and registers all parent edges.
     """
     body = request.get_json(silent=True) or {}
-    name = (body.get("name") or "").strip()
-    description = (body.get("description") or "").strip()
-    parent_source = (body.get("parent_source") or "").strip()
-    image_names = body.get("image_names") or []
-    if not name:
-        return jsonify({"error": "name required"}), 400
-    if not parent_source or os.path.isabs(parent_source) or ".." in parent_source:
-        return jsonify({"error": "invalid parent_source"}), 400
-    if not isinstance(image_names, list) or not image_names:
-        return jsonify({"error": "image_names required"}), 400
+    try:
+        spec = dataset_curation.parse_create_request(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
-    parent_path = os.path.normpath(os.path.join(DATA_ROOT, parent_source))
+    parent_path = os.path.normpath(os.path.join(DATA_ROOT, spec.parent_source))
     if not os.path.isfile(parent_path):
         return jsonify({"error": "parent dataset not found"}), 404
 
-    # Read the parent CSV (full columns) and keep rows whose image filename is in the selection.
-    with open(parent_path, newline="") as f:
-        reader = csv.DictReader(f)
-        cols = reader.fieldnames or []
-        rows = list(reader)
-    col = embeddings_io.image_path_column(cols)
-    wanted = {os.path.basename(str(x)) for x in image_names}
-    kept = [r for r in rows if col and os.path.basename(str(r.get(col, ""))) in wanted]
-    if not kept:
-        return jsonify({"error": "no matching rows"}), 400
+    parents = [spec.parent_source]
+    cloud_path = None
+    if spec.complement_top_k:
+        cloud_path = os.path.normpath(os.path.join(DATA_ROOT, spec.cloud_source))
+        if not os.path.isfile(cloud_path):
+            return jsonify({"error": "cloud dataset not found"}), 404
+        if spec.cloud_source != spec.parent_source:
+            parents.append(spec.cloud_source)
+    try:
+        derived = dataset_curation.derive_dataset(
+            parent_path,
+            spec.image_names,
+            cloud_path=cloud_path,
+            query_image_names=spec.query_image_names,
+            top_k=spec.complement_top_k,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     # Unique child path under the writable user-data dir
-    base_slug = _slugify(name)
+    base_slug = _slugify(spec.name)
     rel = f"{USER_DATA_REL}/{base_slug}.csv"
     n = 2
     while os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, rel))) or db.get_created_dataset_by_source(rel):
@@ -580,12 +587,13 @@ def create_dataset() -> ResponseReturnValue:
         n += 1
     out_path = os.path.normpath(os.path.join(DATA_ROOT, rel))
     with open(out_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=cols)
+        writer = csv.DictWriter(f, fieldnames=derived.columns)
         writer.writeheader()
-        writer.writerows(kept)
+        writer.writerows(derived.rows)
 
-    emb_source = _resolve_emb_source(parent_source)  # None if the parent has no embeddings
-    rec = db.create_dataset_record(name, description, rel, parent_source, emb_source, len(kept))
+    emb_source = _resolve_emb_source(spec.parent_source)  # None if the parent has no embeddings
+    rec = db.create_dataset_record(spec.name, spec.description, rel, spec.parent_source, emb_source, len(derived.rows))
+    db.set_dataset_parents(rec["source"], parents)
     return jsonify(
         {
             "id": rec["id"],
@@ -593,7 +601,9 @@ def create_dataset() -> ResponseReturnValue:
             "description": rec["description"],
             "source": rec["source"],
             "parent_source": rec["parent_source"],
+            "parent_sources": parents,
             "row_count": rec["row_count"],
+            "complement_count": derived.complement_count,
             "deletable": True,
             "has_embeddings": bool(rec["emb_source"]),
         }
@@ -614,6 +624,9 @@ def remove_dataset(ds_id: int) -> ResponseReturnValue:
     from images (parent_source is None) also removes its embeddings JSON, staged
     images folder, and provenance sidecars.
     """
+    existing = db.get_created_dataset(ds_id)
+    if existing and existing["source"] == dataset_curation.CLOUD_SOURCE:
+        return jsonify({"error": "Cloud Dataset is a protected workspace dataset"}), 409
     rec = db.delete_created_dataset(ds_id)
     if rec is None:
         return jsonify({"error": "dataset not found"}), 404

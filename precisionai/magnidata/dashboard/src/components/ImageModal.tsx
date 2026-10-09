@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, type CSSProperties } from 'react'
 import {
   X, ChevronLeft, ChevronRight, Image as ImageIcon, Plus, Check,
-  ExternalLink, AlertTriangle, Loader2, RotateCw,
+  ExternalLink, AlertTriangle, Loader2, RotateCw, Trash2,
 } from 'lucide-react'
 import { api } from '../api'
 import type { CSVData, CSVRow, ColMeta } from '../types'
@@ -52,7 +52,7 @@ const prettify = (s: string) => s.replace(/_/g, ' ')
 
 type PreviewTab = 'image' | 'mask' | 'overlay' | 'prediction'
 
-export function ImageModal({ data, row: initialRow, allRows, onClose, partitionMap, added, onToggleAdd, run }: Props) {
+export function ImageModal({ data, row: initialRow, allRows, onClose, partitionMap, removed, onToggleRemove, added, onToggleAdd, run }: Props) {
   const [row, setRow]           = useState(initialRow)
   const [imgError, setImgError] = useState<string | null>(null)
   const [noAnnotations, setNoAnnotations] = useState(false)
@@ -113,6 +113,7 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
   }
 
   const isAdded = !!added?.has(row._idx as number)
+  const isRemoved = !!removed?.has(row._idx as number)
   const toggleAdd = () => {
     if (!onToggleAdd) return
     const wasAdded = isAdded
@@ -218,6 +219,15 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
                              background: isAdded ? 'rgba(41,204,165,0.95)' : 'rgba(255,255,255,0.1)',
                              border: `1px solid ${isAdded ? 'rgba(41,204,165,0.95)' : 'rgba(255,255,255,0.22)'}` }}>
               {isAdded ? <Check size={13} /> : <Plus size={13} />}{isAdded ? 'Added' : 'Add'}
+            </button>
+          )}
+          {onToggleRemove && (
+            <button onClick={() => { onToggleRemove(row); onClose() }} title="Exclude this image from the next derived dataset"
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, fontWeight: 600,
+                             padding: '5px 11px', borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap',
+                             color: isRemoved ? '#fff' : '#fecaca', background: isRemoved ? 'rgba(41,204,165,.9)' : 'rgba(239,68,68,.14)',
+                             border: `1px solid ${isRemoved ? 'rgba(41,204,165,.9)' : 'rgba(248,113,113,.4)'}` }}>
+              <Trash2 size={13} /> {isRemoved ? 'Restore' : 'Remove image'}
             </button>
           )}
           <button onClick={onClose} title="Close (Esc)"

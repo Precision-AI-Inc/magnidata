@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { Activity, ChevronLeft, ChevronRight, Columns, Download, FlaskConical, LayoutGrid, Loader2, Plus, Save, Share2, SlidersHorizontal, Table2, Trash2, X, BarChart2 } from 'lucide-react'
+import { Activity, ChevronLeft, ChevronRight, CloudDownload, Columns, Download, FlaskConical, LayoutGrid, Loader2, Plus, Save, Share2, SlidersHorizontal, Table2, Trash2, X, BarChart2 } from 'lucide-react'
 import { api, errorText } from './api'
 import type { DatasetMeta } from './api'
 import { useCSV } from './hooks/useCSV'
@@ -94,6 +94,10 @@ export default function App() {
   const [addName, setAddName] = useState('')
   const [savingAdd, setSavingAdd] = useState(false)
   const [addMsg, setAddMsg] = useState<string | null>(null)
+  const [complementName, setComplementName] = useState('')
+  const [complementTopK, setComplementTopK] = useState(100)
+  const [savingComplement, setSavingComplement] = useState(false)
+  const [complementMsg, setComplementMsg] = useState<string | null>(null)
 
   // Embeddings now live entirely on the API — the browser only needs to know they exist.
   const embeddingsAvailable = useMemo(
@@ -276,6 +280,7 @@ export default function App() {
     setShowRemovalSave(false); setRemovalName(''); setRemovalMsg(null)
     setAdded(new Set())            // the curation basket is per-dataset
     setShowAddSave(false); setAddName(''); setAddMsg(null)
+    setComplementName(''); setComplementMsg(null)
     // Embeddings are computed server-side now — the browser never downloads the vectors.
     setDatasetSource(source ?? null)
   }
@@ -553,6 +558,34 @@ export default function App() {
       setSavingAdd(false)
     }
   }, [datasetSource, data, addName, added, reloadDatasets])
+
+  const createComplement = useCallback(async () => {
+    if (!datasetSource || !data?.imagePath || !complementName.trim() || !liveFilteredRows.length) return
+    const basename = (row: CSVRow) => String(row[data.imagePath!] ?? '').split(/[/\\]/).pop() ?? ''
+    const kept = data.rows.filter(row => !removed.has(row._idx as number)).map(basename).filter(Boolean)
+    const query = liveFilteredRows.map(basename).filter(Boolean)
+    setSavingComplement(true); setComplementMsg(null)
+    try {
+      const created = await api.createDataset({
+        name: complementName.trim(),
+        description: `${kept.length} retained samples plus up to ${complementTopK} feature-similar Cloud samples`,
+        parent_source: datasetSource,
+        image_names: kept,
+        query_image_names: query,
+        complement_top_k: complementTopK,
+        cloud_source: 'data_user/cloud-dataset.csv',
+      })
+      await reloadDatasets()
+      setCreatedDataset(created)
+      setRemoved(new Set())
+      setComplementName('')
+      setComplementMsg(`Created ${created.row_count?.toLocaleString() ?? ''} sample dataset.`)
+    } catch (error) {
+      setComplementMsg(`error: ${errorText(error)}`)
+    } finally {
+      setSavingComplement(false)
+    }
+  }, [datasetSource, data, complementName, liveFilteredRows, removed, complementTopK, reloadDatasets])
 
   const activeSection: AppSection = data
     ? (tab === 'experiments' ? 'experiments' : 'explorer')
@@ -997,6 +1030,34 @@ export default function App() {
                           </button>
                         )}
                       </section>
+
+                      {datasetSource && data.imagePath && (
+                        <section className="explorer-config__section">
+                          <div className="explorer-config__section-title"><span>Complement</span><small>Expand from Cloud</small></div>
+                          <p className="explorer-config__hint">
+                            Find Cloud samples closest to the {liveFilteredRows.length.toLocaleString()} currently filtered samples.
+                            {removed.size > 0 ? ` The ${removed.size.toLocaleString()} staged removals will be excluded.` : ''}
+                          </p>
+                          <label className="explorer-config__field">
+                            <span>New dataset name</span>
+                            <input value={complementName} placeholder="Curated + complement"
+                                   onChange={event => setComplementName(event.target.value)} />
+                          </label>
+                          <label className="explorer-config__field">
+                            <span>Top-K Cloud samples</span>
+                            <input type="number" min={1} max={5000} value={complementTopK}
+                                   onChange={event => setComplementTopK(Math.max(1, Math.min(5000, Number(event.target.value) || 1)))} />
+                          </label>
+                          <button className="btn-primary explorer-config__wide"
+                                  disabled={savingComplement || !complementName.trim() || !liveFilteredRows.length || datasetSource === 'data_user/cloud-dataset.csv'}
+                                  onClick={() => void createComplement()}>
+                            {savingComplement ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />}
+                            {savingComplement ? 'Finding complement…' : 'Create complemented dataset'}
+                          </button>
+                          {datasetSource === 'data_user/cloud-dataset.csv' && <p className="explorer-config__hint">Cloud Dataset already contains the full complement pool.</p>}
+                          {complementMsg && <p className="explorer-config__hint" role="status">{complementMsg}</p>}
+                        </section>
+                      )}
 
                       {datasetSource && (
                         <section className="explorer-config__section">

@@ -1,15 +1,9 @@
 import { useRef, useState } from 'react'
-import { UploadCloud, Database, ArrowRight, Loader2, Filter, Trash2, GitBranch, AlertTriangle } from 'lucide-react'
+import { UploadCloud, Filter, AlertTriangle } from 'lucide-react'
 import { api } from '../api'
 import type { DatasetMeta } from '../api'
+import { DatasetGraph } from './DatasetGraph'
 import './CSVLoader.css'
-
-// Hero gradient per card index — teal → navy → green → …
-const HERO_GRADIENTS = [
-  'linear-gradient(140deg, #006A7C 0%, #008eaa 100%)',
-  'linear-gradient(140deg, #013755 0%, #025a8a 100%)',
-  'linear-gradient(140deg, #02AA52 0%, #018f44 100%)',
-]
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
@@ -69,8 +63,6 @@ export function CSVLoader({ onLoad, datasets, onDelete }: Props) {
     }
   }
 
-  const isLoading = downloading !== null
-
   return (
     <div className="loader-root">
 
@@ -107,92 +99,10 @@ export function CSVLoader({ onLoad, datasets, onDelete }: Props) {
         </div>
       )}
 
-      {/* Card grid */}
+      {/* Dataset lineage graph */}
       {shownDatasets.length > 0 && (
-        <div className="dataset-grid">
-          {shownDatasets.map((ds, i) => {
-            const active = downloading === ds.name
-            const unavailable = !!ds.is_lfs_pointer
-            return (
-              <div key={ds.source} style={{ position: 'relative' }}>
-                {ds.deletable && ds.id != null && onDelete && (
-                  <button
-                    title="Delete dataset"
-                    onClick={() => { if (window.confirm(`Delete dataset "${ds.name}"? This cannot be undone.`)) onDelete(ds.id!) }}
-                    style={{
-                      position: 'absolute', top: 8, right: 8, zIndex: 2,
-                      width: 26, height: 26, borderRadius: 7, cursor: 'pointer',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.25)',
-                      color: '#fff', backdropFilter: 'blur(4px)',
-                    }}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                )}
-                <button
-                  className={`ds-card${active ? ' ds-card--active' : ''}${unavailable ? ' ds-card--unavailable' : ''}`}
-                  onClick={() => handleDataset(ds)}
-                  disabled={isLoading}
-                  aria-disabled={unavailable}
-                  aria-label={`Load ${ds.name}`}
-                  title={unavailable ? 'Git LFS data has not been downloaded for this dataset' : undefined}
-                  style={{ width: '100%' }}
-                >
-                  {/* Hero */}
-                  <div
-                    className="ds-card-hero"
-                    style={{ background: HERO_GRADIENTS[i % HERO_GRADIENTS.length] }}
-                  >
-                    <div className="ds-card-hero-icon">
-                      {active
-                        ? <Loader2 size={22} color="rgba(255,255,255,0.9)" style={{ animation: 'spin 0.7s linear infinite' }} />
-                        : <Database size={22} color="rgba(255,255,255,0.9)" />
-                      }
-                    </div>
-                    {active && <div className="ds-card-shimmer" />}
-                  </div>
-
-                  {/* Body */}
-                  <div className="ds-card-body">
-                    <div className="ds-card-name">{ds.name}</div>
-                    <div className="ds-card-desc">{ds.description}</div>
-
-                    {/* Badges */}
-                    <div className="ds-card-meta">
-                      {ds.deletable && (
-                        <span className="ds-badge" style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                          <GitBranch size={10} /> derived{ds.row_count != null ? ` · ${ds.row_count.toLocaleString()} rows` : ''}
-                        </span>
-                      )}
-                      {ds.is_lfs_pointer && (
-                        <span className="ds-badge ds-badge--warn">LFS missing</span>
-                      )}
-                      {ds.is_lfs_pointer && ds.lfs_size_bytes != null && (
-                        <span className="ds-badge">needs {formatBytes(ds.lfs_size_bytes)}</span>
-                      )}
-                      {!ds.is_lfs_pointer && ds.file_size_bytes != null && (
-                        <span className="ds-badge">{formatBytes(ds.file_size_bytes)}</span>
-                      )}
-                      {ds.has_embeddings && <span className="ds-badge ds-badge--accent">embeddings</span>}
-                      <span className="ds-badge ds-badge--accent">CSV</span>
-                    </div>
-
-                    {/* CTA */}
-                    <div className="ds-card-cta">
-                      <span className="ds-card-cta-label">
-                        {active ? 'Loading…' : unavailable ? 'Download LFS first' : 'Load dataset'}
-                      </span>
-                      <span className="ds-card-cta-icon">
-                        <ArrowRight size={13} color="var(--c-accent)" />
-                      </span>
-                    </div>
-                  </div>
-                </button>
-              </div>
-            )
-          })}
-        </div>
+        <DatasetGraph datasets={shownDatasets} loadingSource={downloading ? shownDatasets.find(ds => ds.name === downloading)?.source ?? null : null}
+                      onOpen={ds => void handleDataset(ds)} onDelete={onDelete} />
       )}
 
       {/* Divider */}

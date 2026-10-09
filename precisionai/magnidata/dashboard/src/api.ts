@@ -82,6 +82,7 @@ export interface DatasetMeta {
   id?: number               // present for user-created datasets
   deletable?: boolean
   parent_source?: string
+  parent_sources?: string[]
   row_count?: number
 }
 
@@ -101,6 +102,9 @@ export interface CreateDatasetPayload {
   description?: string
   parent_source: string
   image_names: string[]
+  query_image_names?: string[]
+  complement_top_k?: number
+  cloud_source?: string
 }
 
 /** A row-level partition annotation, keyed by image filename. cluster_id is 1-based (null = unassigned). */

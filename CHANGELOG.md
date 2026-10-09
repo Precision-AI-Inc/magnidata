@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A trainable **Cloud Dataset** now combines AgriStress500-mini1 and mini2 and appears with all derived datasets in
+  a selectable lineage graph. Filtered samples can create a top-K feature-similar complement from Cloud, optionally
+  applying image removals staged directly in the preview; complemented datasets retain both parent edges while
+  removal-only datasets retain the current dataset as their sole parent.
 - The dashboard remembers the latest server dataset and restores it after refresh, with brief retries for a busy
   API and a recoverable error screen if loading still fails. Large parallel-coordinate plots render a deterministic
   3,000-line representation while brushes, counts, tables, exports, and selections continue to use every row.

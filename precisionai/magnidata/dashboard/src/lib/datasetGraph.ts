@@ -15,8 +15,15 @@ export interface DatasetGraphEdge {
 export interface DatasetGraphLayout {
   nodes: DatasetGraphNode[]
   edges: DatasetGraphEdge[]
+  width: number
   height: number
 }
+
+const COLUMN_GAP = 290
+const ROW_GAP = 132
+const GRAPH_PADDING = 72
+const NODE_WIDTH = 210
+const NODE_HEIGHT = 92
 
 /** Lay datasets out in lineage columns, retaining multi-parent edges. */
 export function layoutDatasetGraph(datasets: DatasetMeta[]): DatasetGraphLayout {
@@ -40,16 +47,18 @@ export function layoutDatasetGraph(datasets: DatasetMeta[]): DatasetGraphLayout 
   const levels = Array.from({ length: maxDepth + 1 }, () => [] as DatasetMeta[])
   datasets.forEach(dataset => levels[depths.get(dataset.source) ?? 0].push(dataset))
   levels.forEach(level => level.sort((a, b) => a.name.localeCompare(b.name)))
-  const height = Math.max(340, Math.max(...levels.map(level => level.length), 1) * 116)
+  const largestLevel = Math.max(...levels.map(level => level.length), 1)
+  const width = GRAPH_PADDING * 2 + maxDepth * COLUMN_GAP + NODE_WIDTH
+  const height = GRAPH_PADDING * 2 + (largestLevel - 1) * ROW_GAP + NODE_HEIGHT
   const nodes = levels.flatMap((level, depth) => level.map((dataset, index) => ({
     dataset,
     depth,
-    x: maxDepth ? 8 + (depth / maxDepth) * 84 : 50,
-    y: ((index + 1) / (level.length + 1)) * 100,
+    x: GRAPH_PADDING + depth * COLUMN_GAP,
+    y: GRAPH_PADDING + index * ROW_GAP + ((largestLevel - level.length) * ROW_GAP) / 2,
   })))
   const edges = datasets.flatMap(dataset => (parents.get(dataset.source) ?? []).map(parent => ({
     parent,
     child: dataset.source,
   })))
-  return { nodes, edges, height }
+  return { nodes, edges, width, height }
 }

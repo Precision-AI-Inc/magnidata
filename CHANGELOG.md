@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Dataset lineage is now an interactive, read-only canvas with drag panning, wheel and pinch zoom, fit-view controls,
+  and a pannable minimap. Its deterministic left-to-right layout expands for deep or branching dataset histories while
+  preserving dataset loading and deletion actions.
 - A trainable **Cloud Dataset** now combines AgriStress500-mini1 and mini2 and appears with all derived datasets in
   a selectable lineage graph. Filtered samples can create a top-K feature-similar complement from Cloud, optionally
   applying image removals staged directly in the preview; complemented datasets retain both parent edges while

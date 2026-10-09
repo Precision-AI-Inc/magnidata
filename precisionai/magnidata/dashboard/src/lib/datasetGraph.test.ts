@@ -14,6 +14,10 @@ describe('layoutDatasetGraph', () => {
     })
     expect(layout.edges).toContainEqual({ parent: 'mini1', child: 'curated' })
     expect(layout.edges).toContainEqual({ parent: 'cloud', child: 'curated' })
+    const positions = Object.fromEntries(layout.nodes.map(node => [node.dataset.source, node]))
+    expect(positions.cloud.x).toBeLessThan(positions.mini1.x)
+    expect(positions.mini1.x).toBeLessThan(positions.curated.x)
+    expect(positions.mini1.y).not.toBe(positions.mini2.y)
   })
 
   it('breaks accidental lineage cycles', () => {
@@ -22,5 +26,26 @@ describe('layoutDatasetGraph', () => {
       { name: 'B', description: '', source: 'b', parent_sources: ['a'] },
     ])
     expect(layout.nodes).toHaveLength(2)
+  })
+
+  it('expands its bounds for deep and wide lineage graphs', () => {
+    const narrow = layoutDatasetGraph([
+      { name: 'Root', description: '', source: 'root' },
+      { name: 'Child', description: '', source: 'child', parent_sources: ['root'] },
+    ])
+    const deep = layoutDatasetGraph([
+      { name: 'Root', description: '', source: 'root' },
+      { name: 'Child', description: '', source: 'child', parent_sources: ['root'] },
+      { name: 'Grandchild', description: '', source: 'grandchild', parent_sources: ['child'] },
+    ])
+    const wide = layoutDatasetGraph([
+      { name: 'Root', description: '', source: 'root' },
+      { name: 'A', description: '', source: 'a', parent_sources: ['root'] },
+      { name: 'B', description: '', source: 'b', parent_sources: ['root'] },
+      { name: 'C', description: '', source: 'c', parent_sources: ['root'] },
+    ])
+
+    expect(deep.width).toBeGreaterThan(narrow.width)
+    expect(wide.height).toBeGreaterThan(narrow.height)
   })
 })

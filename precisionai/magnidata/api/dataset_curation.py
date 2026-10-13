@@ -94,6 +94,23 @@ def parse_merge_request(body: dict[str, Any]) -> MergeRequest:
     return MergeRequest(name=name, description=str(body.get("description") or "").strip(), sources=sources)
 
 
+def parse_parent_sources(body: dict[str, Any], own_source: str) -> list[str]:
+    """Validate the ``parent_sources`` list of a lineage update for the dataset ``own_source``."""
+    raw = body.get("parent_sources")
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise ValueError("parent_sources must be a list of dataset sources")
+    parents = list(dict.fromkeys(item.strip() for item in raw if item.strip()))
+    if not parents:
+        raise ValueError("at least one parent source required")
+    if len(parents) > MAX_MERGE_SOURCES:
+        raise ValueError(f"at most {MAX_MERGE_SOURCES} parents allowed")
+    if any(os.path.isabs(parent) or ".." in parent for parent in parents):
+        raise ValueError("invalid parent source")
+    if own_source in parents:
+        raise ValueError("a dataset cannot be its own parent")
+    return parents
+
+
 def read_rows(path: str | Path) -> tuple[list[str], list[dict[str, str]]]:
     """Read a CSV's header and rows."""
     with open(path, newline="") as handle:

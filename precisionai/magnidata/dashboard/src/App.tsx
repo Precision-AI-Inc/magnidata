@@ -22,7 +22,7 @@ import type { CSVRow, TabId } from './types'
 import { Header }         from './components/Header'
 import { Sidebar }        from './components/Sidebar'
 import { ByodDialog }     from './components/ByodDialog'
-import { HelpPage }       from './components/HelpPage'
+import { GuidePage }      from './components/guide/GuidePage'
 import { DataTable }      from './components/DataTable'
 import { Overview }       from './components/Overview'
 import { ParallelCoords } from './components/ParallelCoords'
@@ -68,7 +68,10 @@ export default function App() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [pendingOverlay, setPendingOverlay] = useState<{ runId: string; compareWith?: string; source: string } | null>(null)
   // A reloaded `#compare=…` link goes straight to the experiments view.
-  useEffect(() => { if (window.location.hash.startsWith('#compare=')) setLandingView('experiments') }, [])
+  useEffect(() => {
+    if (window.location.hash.startsWith('#compare=')) setLandingView('experiments')
+    else if (window.location.hash.startsWith('#guide=')) setLandingView('help')
+  }, [])
 
   // Staged image removals (by row _idx). They only shape the live views in memory; the original
   // dataset is never touched. They "apply" only when saved as a new dataset (or discarded otherwise).
@@ -370,7 +373,7 @@ export default function App() {
   useEffect(() => {
     if (!catalogReady || restoreAttempted.current) return
     restoreAttempted.current = true
-    if (window.location.hash.startsWith('#compare=')) {
+    if (window.location.hash.startsWith('#compare=') || window.location.hash.startsWith('#guide=')) {
       setRestoringDataset(false)
       return
     }
@@ -633,7 +636,7 @@ export default function App() {
     explorer: ['Visual Explorer', data ? `Explore ${data.fileName} across features, embeddings, and samples` : 'Explore high-dimensional data and inspect samples'],
     experiments: ['Experiments', 'Track, compare, and analyze model training runs'],
     schema: ['Data Schema', 'Understand the fields available to every visualization'],
-    help: ['Help & Setup', 'Prepare datasets and run the training feedback loop'],
+    help: ['Help & Setup', 'A guided path from AgriStress-500 to a curated, retrained dataset'],
   }
   const datasetPageCopy: Partial<Record<TabId, [string, string]>> = {
     'visual-explorer': ['Visual Explorer', 'Explore relationships, embeddings, and individual samples'],
@@ -685,7 +688,7 @@ export default function App() {
         )}
 
         {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'help' && (
-          <HelpPage onOpenByod={() => setShowByod(true)} />
+          <GuidePage onOpenByod={() => setShowByod(true)} />
         )}
 
         {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'experiments' && (

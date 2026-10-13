@@ -1220,3 +1220,74 @@ def test_annotation_overlay_and_run_prediction_show_different_masks(app_client, 
         assert client.get(f"/api/runs/{run_id}/prediction?image=b.png&epoch=1&alpha=1").status_code == 404
     finally:
         mlflow_store.set_store(None)
+
+
+# ── Lineage updates ────────────────────────────────────────────────────────────
+
+
+def _register(client, name, tmp_path, parents=None):
+    sources = _two_sources(tmp_path)
+    return client.post("/api/datasets/merge", json={"name": name, "sources": sources}).get_json(), sources
+
+
+def test_set_lineage_replaces_parents_and_appears_in_listing(app_client, tmp_path):
+    client, _ = app_client
+    merged, sources = _register(client, "Child", tmp_path)
+
+    res = client.post(f"/api/datasets/{merged['id']}/parents", json={"parent_sources": [sources[1]]})
+
+    assert res.status_code == 200
+    assert res.get_json()["parent_sources"] == [sources[1]]
+    listed = next(d for d in client.get("/api/datasets").get_json() if d["source"] == merged["source"])
+    assert listed["parent_sources"] == [sources[1]]
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "message"),
+    [
+        ({}, 400, "list"),
+        ({"parent_sources": []}, 400, "at least one"),
+        ({"parent_sources": ["../x.csv"]}, 400, "invalid"),
+        ({"parent_sources": ["data_user/missing.csv"]}, 404, "not found"),
+    ],
+)
+def test_set_lineage_rejects_bad_requests(app_client, tmp_path, body, status, message):
+    client, _ = app_client
+    merged, _ = _register(client, "Child", tmp_path)
+
+    res = client.post(f"/api/datasets/{merged['id']}/parents", json=body)
+
+    assert res.status_code == status
+    assert message in res.get_json()["error"]
+
+
+def test_set_lineage_rejects_self_cycles_and_unknown_datasets(app_client, tmp_path):
+    client, _ = app_client
+    merged, _ = _register(client, "Child", tmp_path)
+
+    own = client.post(f"/api/datasets/{merged['id']}/parents", json={"parent_sources": [merged["source"]]})
+    grandchild = client.post(
+        "/api/datasets/merge", json={"name": "Grandchild", "sources": [merged["source"], "data_user/m1.csv"]}
+    ).get_json()
+    cycle = client.post(f"/api/datasets/{merged['id']}/parents", json={"parent_sources": [grandchild["source"]]})
+
+    assert own.status_code == 400
+    assert cycle.status_code == 400
+    assert "cycle" in cycle.get_json()["error"]
+    assert client.post("/api/datasets/9999/parents", json={"parent_sources": ["x"]}).status_code == 404
+
+
+# ── Embeddings beside a created dataset ────────────────────────────────────────
+
+
+def test_created_dataset_picks_up_an_embeddings_file_placed_beside_its_csv(app_client, tmp_path):
+    client, _ = app_client
+    merged, _ = _register(client, "Embedded Later", tmp_path)
+    assert merged["has_embeddings"] is False
+    stem = merged["source"].removesuffix(".csv")
+
+    (tmp_path / f"{stem}.json").write_text(json.dumps({"embeddings": {"a.png": [0.1, 0.2]}}))
+
+    listed = next(d for d in client.get("/api/datasets").get_json() if d["source"] == merged["source"])
+    assert listed["has_embeddings"] is True
+    assert client.get(f"/api/dataset/embeddings?source={merged['source']}").status_code == 200

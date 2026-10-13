@@ -184,8 +184,9 @@ def test_upload_build_stages_provided_embeddings_file(monkeypatch):
     rec = db.get_created_dataset_by_source(job["dataset"]["source"])
     assert rec is not None
     assert rec["emb_source"] == rec["source"].replace(".csv", ".json")
-    with open(rec["emb_source"], "rb") as f:
-        assert f.read() == FAKE_EMBEDDINGS
+    with open(rec["emb_source"]) as f:
+        stored = json.load(f)["embeddings"]
+    assert list(stored.values()) == [[0.1, 0.2]]  # vectors kept, re-keyed to the staged image name
 
 
 def test_upload_build_with_annotations_stages_matching_labels(monkeypatch):
@@ -646,3 +647,30 @@ def test_build_job_reports_the_dataset_name(tmp_path, monkeypatch):
     job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
 
     assert job["name"] == "MMDE POC"
+
+
+def test_upload_build_rekeys_embeddings_to_the_staged_image_names(monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    images = [UploadedImage("weeds/a.png", b"AAAA"), UploadedImage("soil/b.png", b"BBBB")]
+    embeddings = json.dumps({"embeddings": {"a.png": [0.1, 0.2], "b.png": [0.3, 0.4]}}).encode()
+
+    job = _wait_for_job(dataset_builder.start_upload_build(images, [], embeddings, "Keyed Set", ""))
+
+    assert job["status"] == "done"
+    rec = db.get_created_dataset_by_source(job["dataset"]["source"])
+    assert rec is not None
+    with open(rec["emb_source"].replace(".csv", ".json")) as handle:
+        keys = set(json.load(handle)["embeddings"])
+    staged = set(os.listdir(rec["source"].replace(".csv", "_images") + "/images"))
+    assert keys == staged
+
+
+def test_upload_build_rejects_embeddings_that_match_no_image(monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    images = [UploadedImage("a.png", b"AAAA")]
+    embeddings = json.dumps({"embeddings": {"unrelated.png": [0.1]}}).encode()
+
+    job = _wait_for_job(dataset_builder.start_upload_build(images, [], embeddings, "Mismatched Set", ""))
+
+    assert job["status"] == "error"
+    assert "match the uploaded images" in job["error"]

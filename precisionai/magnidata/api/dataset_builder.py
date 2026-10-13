@@ -317,6 +317,20 @@ def _write_uploaded_file(upload: bytes | staging_mod.UploadedImage, dest: str) -
     raise RuntimeError(f"uploaded file is missing content: {upload.relative_path}")
 
 
+def _write_remapped_embeddings(
+    upload: bytes | staging_mod.UploadedImage, dest: str, staged_names: dict[str, str]
+) -> None:
+    """Write the uploaded embeddings re-keyed to the staged image names; refuse a file that matches no image."""
+    document = json.loads(_read_uploaded_bytes(upload))
+    remapped = staging_mod.remap_embeddings(document["embeddings"], staged_names)
+    if not remapped:
+        raise BuildValidationError(
+            "none of the names in the embeddings file match the uploaded images; key each vector by its image file name"
+        )
+    with open(dest, "w") as handle:
+        json.dump({"embeddings": remapped}, handle)
+
+
 def _cleanup_upload_sources(*groups: Any) -> None:
     incoming_root = (Path(DATA_ROOT) / USER_DATA_REL / INCOMING_UPLOAD_DIRNAME).resolve()
     cleanup_roots: set[Path] = set()
@@ -431,7 +445,8 @@ def _run_upload_build(
     try:
         _update_job(job_id, status="staging", percent=15, message="Staging images…")
         stage_root = f"{USER_DATA_REL}/{stem}_images"
-        manifest_path = staging_mod.stage_images(images, stage_root, annotations=annotations)
+        staged_names: dict[str, str] = {}
+        manifest_path = staging_mod.stage_images(images, stage_root, annotations=annotations, staged_names=staged_names)
 
         _update_job(job_id, status="extracting_features", percent=60, message="Extracting features…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
@@ -440,7 +455,7 @@ def _run_upload_build(
         emb_json_rel = None
         if embeddings_file is not None:
             emb_json_rel = f"{USER_DATA_REL}/{stem}.json"
-            _write_uploaded_file(embeddings_file, emb_json_rel)
+            _write_remapped_embeddings(embeddings_file, emb_json_rel, staged_names)
 
         if emb_json_rel is not None:
             _precompute_projections(job_id, feature_csv_rel, emb_json_rel)

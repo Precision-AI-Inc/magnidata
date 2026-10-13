@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The guide gained two chapters: **Bring your own data** (a folder of images and masks via Prepare From Server Folder, the
+  browser upload and its limits, an existing CSV, and a permanent catalog entry) and **Add embeddings** (what they enable,
+  computing them with the embeddings tool, the file format, ways to attach them, inheritance, and comparing models).
+- **Help & Setup** is now a self-contained, chaptered guide from `docker compose up` to a curated, retrained dataset
+  on AgriStress-500: how the services and data fit together, installing and resetting the stack, loading the demo,
+  partitioning from the command line, the workspace, the Visual Explorer, training, and closing the loop, plus a
+  reference and troubleshooting chapter. It has copyable commands, an inline architecture diagram, "what you should
+  see" checks and 19 screenshots from the real UI (`dashboard/scripts/capture-guide.mjs` regenerates them).
+- `python -m precisionai.magnidata.scripts.partition_dataset` tiles a dataset into fixed-size crops, splits them into
+  balanced sub-datasets (by source image by default), builds each with the portal's server-folder pipeline and
+  registers it under the source in the lineage graph. It supports `--dry-run`, `--limit-images` and safe re-runs.
+- `POST /api/datasets/<id>/parents` replaces a dataset's lineage parents (validated, cycle-checked).
 - Datasets can now be created from the Visual Explorer's current selection (**Save as dataset**, next to Export
   selection) and by merging datasets in the workspace: Shift/Ctrl/Cmd-click several lineage cards, name the result,
   and `POST /api/datasets/merge` writes the de-duplicated union with every source as a parent. Both appear in the
@@ -154,6 +166,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An embeddings file uploaded with a new dataset never matched its images: uploads are renamed when staged
+  (`<name>-<hash>.png`) but the file was stored keyed by the original names, so the Embeddings view had nothing to
+  draw. The portal now re-keys the vectors to the staged names and rejects a file that matches no image.
+- A dataset created in the portal (server-folder build, upload, tiles) had no way to gain embeddings afterwards. It now
+  picks up a `<csv stem>.json` placed beside its CSV, the same rule configured datasets already follow.
+- The image preview's ground-truth caption was unreadable (white text on a light bar); lineage card names now wrap
+  to two lines instead of truncating, and selecting a dataset frames its whole lineage instead of centring on it.
 - The image preview's **Prediction** tab showed the dataset's ground-truth overlay whenever the run had no saved
   prediction for that image, so ground truth could be mistaken for model output. Each tab now maps to its own
   source with no fallback (a missing prediction shows "No saved inference" and the Run inference button), and the

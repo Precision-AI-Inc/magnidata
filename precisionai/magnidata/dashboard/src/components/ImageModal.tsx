@@ -374,7 +374,7 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
             {caption && imgSrc && (
               <div role="note" data-preview-source={tab === 'prediction' ? 'prediction' : 'ground-truth'} className="shrink-0"
                    style={{ fontSize: 11, fontWeight: 600, padding: '4px 16px', color: '#fff',
-                            background: tab === 'prediction' ? 'var(--pai-teal)' : 'rgba(255,255,255,0.12)' }}>
+                            background: tab === 'prediction' ? 'var(--pai-teal)' : 'var(--pai-navy)' }}>
                 {caption}
               </div>
             )}

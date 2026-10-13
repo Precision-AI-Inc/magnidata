@@ -49,6 +49,10 @@ docker compose up --build
 #   mlflow -> http://localhost:5052   (experiment tracking UI)
 ```
 
+**New here?** Open **Help & Setup** in the portal. It is a self-contained, illustrated guide that takes you from
+`docker compose up` through loading AgriStress-500, partitioning it into sub-datasets from the command line,
+exploring, training and curating a better dataset, with every command and screenshot included.
+
 The API container also prints those local access URLs during startup. The stack has four
 services:
 

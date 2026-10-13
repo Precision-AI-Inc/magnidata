@@ -1,0 +1,98 @@
+{
+  "workspace-source": {
+    "alt": "The workspace showing the AgriStress-500 dataset as a single card in the lineage graph",
+    "caption": "A workspace with AgriStress-500 as the only dataset. The screenshots in this guide use a 24-image sample of it so they are quick to reproduce; the full dataset shows 451 samples."
+  },
+  "byod-demo": {
+    "alt": "The Bring Your Own Data dialog with the Load Demo choice",
+    "caption": "Add dataset \u2192 Load Demo lists the one-click demos; AgriStress-500 is the one this guide uses."
+  },
+  "workspace-lineage": {
+    "alt": "The lineage graph with AgriStress-500 on the left and two tiled sub-datasets connected to it",
+    "caption": "After partitioning: both sub-datasets hang under AgriStress-500. The gray flask means no experiments yet."
+  },
+  "panel-statistics": {
+    "alt": "The detail panel of a sub-dataset on the Statistics tab, showing feature distributions",
+    "caption": "Statistics: row and column counts, plus a distribution for each numeric feature."
+  },
+  "panel-images": {
+    "alt": "The detail panel on the Images tab showing a grid of 256 by 256 field tiles",
+    "caption": "Images: an evenly spaced sample of the dataset. Click a tile to open it full size."
+  },
+  "panel-annotations": {
+    "alt": "The detail panel on the Annotations tab showing mask coverage",
+    "caption": "Annotations: how much of a sample has segmentation masks, and whether embeddings exist."
+  },
+  "merge": {
+    "alt": "Two datasets selected in the graph and the Merge datasets panel on the right",
+    "caption": "Shift-click two or more datasets, name the result and merge. The union is de-duplicated by image."
+  },
+  "explorer": {
+    "alt": "The Visual Explorer with parallel coordinates, a scatter plot and the results table",
+    "caption": "The Visual Explorer: parallel coordinates on top, the scatter view and results table below, setup on the right."
+  },
+  "preview-image": {
+    "alt": "The image preview showing a field tile",
+    "caption": "Click a point or a table row to preview the tile. Image shows the photograph on its own."
+  },
+  "preview-overlay": {
+    "alt": "The image preview on the Overlay tab with the ground-truth mask drawn over the tile",
+    "caption": "Overlay draws the ground-truth annotation over the image. The caption confirms it is not a model output."
+  },
+  "preview-prediction": {
+    "alt": "The image preview on the Prediction tab with the model's mask drawn over the same tile",
+    "caption": "Prediction shows only what the model produced for the same tile, captioned with its epoch."
+  },
+  "train-dialog": {
+    "alt": "The Train a model dialog with preset, epochs and split settings",
+    "caption": "Train model opens this dialog: choose a preset, adjust a few settings and start."
+  },
+  "run-live": {
+    "alt": "The Visual Explorer header showing a training run in progress",
+    "caption": "While a run trains, its status and progress stay visible in the header."
+  },
+  "experiments": {
+    "alt": "The Experiments view listing training runs with their metrics",
+    "caption": "Experiments: every run, its status and headline metrics. Select runs to compare them."
+  },
+  "run-detail": {
+    "alt": "A run's detail view with loss curves and parameters",
+    "caption": "A run's detail: curves, parameters, tags and artifacts."
+  },
+  "run-overlay": {
+    "alt": "The Visual Explorer with a run overlaid, adding loss columns and an epoch scrubber",
+    "caption": "Overlay a run to add per-image loss columns and scrub through epochs."
+  },
+  "save-selection": {
+    "alt": "The Visual Explorer setup panel with the Save selection as a dataset form",
+    "caption": "Save selection as a dataset turns the rows you are looking at into a new node in the lineage graph."
+  },
+  "workspace-badges": {
+    "alt": "The lineage graph with a yellow experiment badge on a dataset with a running experiment",
+    "caption": "Yellow flask: a run is active. Gray: none. Hover a badge for the counts."
+  },
+  "experiments-filtered": {
+    "alt": "The Experiments view filtered to the runs of one dataset",
+    "caption": "View experiments in a dataset's panel opens this list already filtered to that dataset."
+  },
+  "byod-choose": {
+    "alt": "The Bring Your Own Data dialog offering Load Demo, Prepare From Server Folder and Create New Dataset",
+    "caption": "Add dataset offers three routes. This chapter uses the second and third; the first was chapter 3."
+  },
+  "byod-folder": {
+    "alt": "The Prepare From Server Folder list showing image sets with their image and label counts",
+    "caption": "Prepare From Server Folder lists every folder directly under image_sets/ with its image and label counts. Folders already built show Added."
+  },
+  "byod-upload": {
+    "alt": "The Create New Dataset form with name, images, annotations and embeddings fields",
+    "caption": "Create New Dataset: a name, your images (a folder or files), and optionally COCO annotations and an embeddings file."
+  },
+  "workspace-own": {
+    "alt": "The workspace with the new my-field-survey dataset selected in the lineage graph and its panel open",
+    "caption": "The new dataset appears as its own root in the graph. From here everything in chapters 5 to 8 applies."
+  },
+  "embeddings-view": {
+    "alt": "The Visual Explorer with the Embeddings source selected, showing a 3D map of images and projection and clustering controls",
+    "caption": "With embeddings present, Source \u2192 Embeddings shows each image as a point in 3D. Choose PCA, t-SNE or LLE, and colour by ground-truth cluster or K-means."
+  }
+}

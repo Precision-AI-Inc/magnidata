@@ -87,7 +87,12 @@ def _original_stem(relative_path: str) -> str:
     return os.path.splitext(os.path.basename(relative_path))[0]
 
 
-def stage_images(images: list[UploadedImage], stage_root: str, annotations: list[UploadedImage] | None = None) -> str:
+def stage_images(
+    images: list[UploadedImage],
+    stage_root: str,
+    annotations: list[UploadedImage] | None = None,
+    staged_names: dict[str, str] | None = None,
+) -> str:
     """Write each image under <stage_root>/images/, plus a manifest CSV (<stage_root>/manifest.csv) and a checksums file (<stage_root>/checksums.sha256), and return the manifest CSV path.
 
     If `annotations` is given, each one whose original stem
@@ -98,6 +103,9 @@ def stage_images(images: list[UploadedImage], stage_root: str, annotations: list
     shares the same original stem, an annotation matching that stem is written
     for all of them (there is no other information to disambiguate). Unmatched
     annotations and unmatched images are both fine — annotations are optional.
+
+    If `staged_names` is given it is filled with ``{original relative path: staged file name}`` so callers can re-key
+    data that refers to the original names (see `remap_embeddings`).
 
     `stage_root` is used exactly as given (via os.path.join) — a caller that needs
     DATA_ROOT-relative `image_path` values in the manifest (as every other dataset in
@@ -127,6 +135,8 @@ def stage_images(images: list[UploadedImage], stage_root: str, annotations: list
         )
         checksum_lines.append(f"{digest}  {staged_name}")
 
+        if staged_names is not None:
+            staged_names[img.relative_path] = staged_name
         staged_stem = os.path.splitext(staged_name)[0]
         stem_map.setdefault(_original_stem(img.relative_path), []).append(staged_stem)
 
@@ -154,3 +164,28 @@ def _stage_annotations(annotations: list[UploadedImage], stem_map: dict[str, lis
         os.makedirs(labels_dir, exist_ok=True)
         for staged_stem in staged_stems:
             _write_upload(ann, os.path.join(labels_dir, f"{staged_stem}.json"))
+
+
+def remap_embeddings(embeddings: dict[str, list[float]], staged_names: dict[str, str]) -> dict[str, list[float]]:
+    """Re-key an embeddings mapping from the uploaded image names to their staged file names.
+
+    Staging renames every upload to ``<slug>-<hash>.<ext>``, so an embeddings file keyed by the names the user
+    chose would match nothing. A key matches an upload by its relative path or by its base name; when several
+    uploads share a base name each of them gets the vector (there is nothing else to tell them apart). Keys that
+    are already staged names are kept; keys that match no upload are dropped.
+    """
+    by_path = {path: name for path, name in staged_names.items()}
+    by_base: dict[str, list[str]] = {}
+    for path, name in staged_names.items():
+        by_base.setdefault(os.path.basename(path), []).append(name)
+    staged = set(staged_names.values())
+    result: dict[str, list[float]] = {}
+    for key, vector in embeddings.items():
+        if key in staged:
+            result[key] = vector
+        elif key in by_path:
+            result[by_path[key]] = vector
+        else:
+            for name in by_base.get(os.path.basename(key), []):
+                result[name] = vector
+    return result

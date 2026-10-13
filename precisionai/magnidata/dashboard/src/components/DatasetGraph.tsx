@@ -49,6 +49,7 @@ type DatasetFlowNode = Node<DatasetNodeData, 'dataset'>
 
 const NODE_WIDTH = 210
 const NODE_HEIGHT = 92
+const FRAME_PADDING = 0.25
 // Bottom padding keeps the fitted graph clear of the minimap.
 const FIT_VIEW: FitViewOptions = { padding: { top: '56px', right: '40px', bottom: '130px', left: '40px' }, maxZoom: 1.1 }
 const ARROW_DIRECTIONS: Record<string, GraphDirection> = {
@@ -146,18 +147,25 @@ export function DatasetGraph({ datasets, selection, experiments, onSelect, onOpe
     }
   }), [layout.edges, lineage, selected])
 
+  const framed = useMemo(() => {
+    if (selection.length > 1) return selection
+    if (!selected || !lineage) return []
+    return [selected, ...lineage.ancestors, ...lineage.descendants]
+  }, [lineage, selected, selection])
+
   useEffect(() => {
-    const node = layout.nodes.find(candidate => candidate.dataset.source === selected)
-    if (!node) return
-    // Wait for the detail panel's width transition so the centre is computed on the final viewport size.
+    if (!framed.length) return
+    // Wait for the detail panel's width transition so the framing is computed on the final viewport size.
     const timer = window.setTimeout(() => {
-      void flow.current?.setCenter(node.x + NODE_WIDTH / 2, node.y + NODE_HEIGHT / 2, {
-        zoom: Math.max(flow.current.getZoom(), 0.6),
+      void flow.current?.fitView({
+        nodes: framed.map(id => ({ id })),
+        padding: FRAME_PADDING,
+        maxZoom: 1,
         duration: prefersReducedMotion() ? 0 : 350,
       })
     }, prefersReducedMotion() ? 0 : 320)
     return () => window.clearTimeout(timer)
-  }, [layout.nodes, selected])
+  }, [framed])
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') return onSelect(null, false)

@@ -462,13 +462,12 @@ def commit_partitions() -> ResponseReturnValue:
 def _resolve_emb_source(source: str) -> str | None:
     """Return the dataset path whose <stem>.json holds the embeddings for `source`.
 
-    Confi/root datasets use their own stem; created (child) datasets inherit the parent's.
+    Confi/root datasets use their own stem; created (child) datasets inherit the parent's, and fall back to a
+    ``<stem>.json`` placed beside their own CSV.
     """
     rec = db.get_created_dataset_by_source(source)
     if rec is not None:
-        emb_source = rec.get("emb_source") or None
-        if not emb_source:
-            return None
+        emb_source = rec.get("emb_source") or source
         stem = os.path.splitext(emb_source)[0]
         emb_path = _data_path(stem + ".json")
         return emb_source if os.path.isfile(emb_path) and _lfs_pointer_info(emb_path) is None else None
@@ -671,6 +670,53 @@ def merge_datasets() -> ResponseReturnValue:
             "has_embeddings": bool(rec["emb_source"]),
         }
     ), 201
+
+
+@app.post("/api/datasets/<int:ds_id>/parents")
+def set_dataset_lineage(ds_id: int) -> ResponseReturnValue:
+    """Replace the lineage parents of a registered dataset (used by the partition CLI).
+
+    Body: {parent_sources:[...]}. Every parent must exist on disk, and no dataset may become its
+    own ancestor.
+    """
+    rec = db.get_created_dataset(ds_id)
+    if rec is None:
+        return jsonify({"error": "not found"}), 404
+    try:
+        parents = dataset_curation.parse_parent_sources(request.get_json(silent=True) or {}, rec["source"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not all(os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, parent))) for parent in parents):
+        return jsonify({"error": "parent dataset not found"}), 404
+    parent_map = db.dataset_parent_map()
+    if any(rec["source"] in _ancestors(parent, parent_map) for parent in parents):
+        return jsonify({"error": "that would create a lineage cycle"}), 400
+    db.set_dataset_parents(rec["source"], parents)
+    return jsonify({**_created_dataset_json(db.get_created_dataset(ds_id) or rec), "parent_sources": parents})
+
+
+def _ancestors(source: str, parent_map: dict[str, list[str]]) -> set[str]:
+    seen: set[str] = set()
+    stack = [source]
+    while stack:
+        for parent in parent_map.get(stack.pop(), []):
+            if parent not in seen:
+                seen.add(parent)
+                stack.append(parent)
+    return seen
+
+
+def _created_dataset_json(rec: dict) -> dict:
+    return {
+        "id": rec["id"],
+        "name": rec["name"],
+        "description": rec["description"],
+        "source": rec["source"],
+        "parent_source": rec["parent_source"],
+        "row_count": rec["row_count"],
+        "deletable": rec["source"] != dataset_curation.CLOUD_SOURCE,
+        "has_embeddings": bool(rec["emb_source"]),
+    }
 
 
 def _remove_file(path: str) -> None:

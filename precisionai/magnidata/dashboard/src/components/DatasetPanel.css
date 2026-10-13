@@ -50,3 +50,9 @@
 .dataset-panel__lineage button span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dataset-panel__lineage button:hover { border-color: var(--c-accent); color: var(--c-accent); }
 @media (prefers-reduced-motion: reduce) { .dataset-panel, .dataset-panel__body { animation: none; } }
+.dataset-panel__form { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.dataset-panel__form label { color: var(--c-t3); font-size: 9.5px; font-weight: 600; }
+.dataset-panel__form input { min-height: 34px; padding: 0 10px; border: 1px solid var(--c-border-2); border-radius: 8px; background: var(--c-raised); color: var(--c-t1); font: 11px var(--font); }
+.dataset-panel__form input:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
+.dataset-panel__form button { min-height: 34px; }
+.dataset-panel__error { color: #dc2626; }

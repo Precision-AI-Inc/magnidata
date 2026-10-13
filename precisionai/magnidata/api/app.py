@@ -9,7 +9,6 @@ Also exposes dataset listing and CSV serving from local disk.
 
 import colorsys
 import contextlib
-import csv
 import glob
 import io
 import os
@@ -564,6 +563,18 @@ def _slugify(name: str) -> str:
     return s or "dataset"
 
 
+def _write_child_csv(name: str, columns: list[str], rows: list[dict[str, str]]) -> str:
+    """Write rows to a unique CSV under the writable user-data dir and return its data-relative path."""
+    base_slug = _slugify(name)
+    rel = f"{USER_DATA_REL}/{base_slug}.csv"
+    n = 2
+    while os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, rel))) or db.get_created_dataset_by_source(rel):
+        rel = f"{USER_DATA_REL}/{base_slug}_{n}.csv"
+        n += 1
+    dataset_curation.write_rows(os.path.normpath(os.path.join(DATA_ROOT, rel)), columns, rows)
+    return rel
+
+
 @app.post("/api/datasets")
 def create_dataset() -> ResponseReturnValue:
     """Carve a child dataset from a parent's selection.
@@ -601,18 +612,7 @@ def create_dataset() -> ResponseReturnValue:
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
-    # Unique child path under the writable user-data dir
-    base_slug = _slugify(spec.name)
-    rel = f"{USER_DATA_REL}/{base_slug}.csv"
-    n = 2
-    while os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, rel))) or db.get_created_dataset_by_source(rel):
-        rel = f"{USER_DATA_REL}/{base_slug}_{n}.csv"
-        n += 1
-    out_path = os.path.normpath(os.path.join(DATA_ROOT, rel))
-    with open(out_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=derived.columns)
-        writer.writeheader()
-        writer.writerows(derived.rows)
+    rel = _write_child_csv(spec.name, derived.columns, derived.rows)
 
     emb_source = _resolve_emb_source(spec.parent_source)  # None if the parent has no embeddings
     rec = db.create_dataset_record(spec.name, spec.description, rel, spec.parent_source, emb_source, len(derived.rows))
@@ -627,6 +627,46 @@ def create_dataset() -> ResponseReturnValue:
             "parent_sources": parents,
             "row_count": rec["row_count"],
             "complement_count": derived.complement_count,
+            "deletable": True,
+            "has_embeddings": bool(rec["emb_source"]),
+        }
+    ), 201
+
+
+@app.post("/api/datasets/merge")
+def merge_datasets() -> ResponseReturnValue:
+    """Create a dataset holding the de-duplicated union of two or more datasets.
+
+    Body: {name, description, sources:[...]}. Every source becomes a parent. The new dataset has
+    no runs. It inherits embeddings only when all sources share the same embeddings file.
+    """
+    try:
+        spec = dataset_curation.parse_merge_request(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    paths = [os.path.normpath(os.path.join(DATA_ROOT, source)) for source in spec.sources]
+    if not all(os.path.isfile(path) for path in paths):
+        return jsonify({"error": "dataset not found"}), 404
+    if any(_lfs_pointer_info(path) is not None for path in paths):
+        return jsonify({"error": "a source is a Git LFS pointer"}), 409
+    try:
+        columns, rows = dataset_curation.combine_sources(paths)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rel = _write_child_csv(spec.name, columns, rows)
+    emb_sources = {_resolve_emb_source(source) for source in spec.sources}
+    emb_source = emb_sources.pop() if len(emb_sources) == 1 else None
+    rec = db.create_dataset_record(spec.name, spec.description, rel, spec.sources[0], emb_source, len(rows))
+    db.set_dataset_parents(rec["source"], spec.sources)
+    return jsonify(
+        {
+            "id": rec["id"],
+            "name": rec["name"],
+            "description": rec["description"],
+            "source": rec["source"],
+            "parent_source": rec["parent_source"],
+            "parent_sources": spec.sources,
+            "row_count": rec["row_count"],
             "deletable": True,
             "has_embeddings": bool(rec["emb_source"]),
         }

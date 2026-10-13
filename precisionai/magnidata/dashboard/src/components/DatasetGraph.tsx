@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import type { KeyboardEvent } from 'react'
-import { Cloud, Database, GitBranch, Trash2 } from 'lucide-react'
+import { Cloud, Database, FlaskConical, GitBranch, Trash2 } from 'lucide-react'
 import {
   Background,
   BackgroundVariant,
@@ -19,14 +19,18 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import './DatasetGraph.css'
-import type { DatasetMeta } from '../api'
+import type { DatasetMeta, ExperimentCounts } from '../api'
+import { experimentBadge } from '../lib/experimentBadge'
 import { adjacentDataset, layoutDatasetGraph, lineageOf } from '../lib/datasetGraph'
 import type { GraphDirection } from '../lib/datasetGraph'
 
 interface Props {
   datasets: DatasetMeta[]
-  selected: string | null
-  onSelect: (source: string | null) => void
+  /** One dataset selects it and shows its lineage; several mark a multi-selection (to merge). */
+  selection: string[]
+  experiments: ExperimentCounts
+  /** `additive` is true for Shift/Ctrl/Cmd clicks; `null` clears the selection. */
+  onSelect: (source: string | null, additive: boolean) => void
   onOpen: (source: string) => void
   onDelete?: (id: number) => void
 }
@@ -37,6 +41,7 @@ interface DatasetNodeData extends Record<string, unknown> {
   dataset: DatasetMeta
   datasets: DatasetMeta[]
   emphasis: Emphasis
+  experiments: ExperimentCounts[string] | undefined
   onDelete?: (id: number) => void
 }
 
@@ -55,7 +60,8 @@ function label(source: string, datasets: DatasetMeta[]): string {
 }
 
 function DatasetNodeCard({ data }: NodeProps<DatasetFlowNode>) {
-  const { dataset, datasets, emphasis, onDelete } = data
+  const { dataset, datasets, emphasis, experiments, onDelete } = data
+  const badge = experimentBadge(experiments)
   const isCloud = dataset.name === 'Cloud Dataset'
   const parents = dataset.parent_sources ?? (dataset.parent_source ? [dataset.parent_source] : [])
 
@@ -83,6 +89,9 @@ function DatasetNodeCard({ data }: NodeProps<DatasetFlowNode>) {
           <strong>{dataset.name}</strong>
           <small>{dataset.row_count?.toLocaleString() ?? 'CSV'} samples</small>
         </span>
+        <span className={`dataset-graph__badge dataset-graph__badge--${badge.state}`} title={badge.label} role="img" aria-label={badge.label}>
+          <FlaskConical size={13} />
+        </span>
         {parents.length > 0 && (
           <span className="dataset-graph__parents" title={parents.map(parent => label(parent, datasets)).join(', ')}>
             <GitBranch size={10} /> {parents.length === 1 ? label(parents[0], datasets) : `${parents.length} parents`}
@@ -98,16 +107,18 @@ const nodeTypes = { dataset: DatasetNodeCard }
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
-export function DatasetGraph({ datasets, selected, onSelect, onOpen, onDelete }: Props) {
+export function DatasetGraph({ datasets, selection, experiments, onSelect, onOpen, onDelete }: Props) {
+  const selected = selection.length === 1 ? selection[0] : null
   const layout = useMemo(() => layoutDatasetGraph(datasets), [datasets])
   const lineage = useMemo(() => (selected ? lineageOf(layout.edges, selected) : null), [layout.edges, selected])
   const flow = useRef<ReactFlowInstance<DatasetFlowNode, Edge> | null>(null)
 
   const emphasisOf = useCallback((source: string): Emphasis => {
+    if (selection.length > 1) return selection.includes(source) ? 'selected' : 'idle'
     if (!selected || !lineage) return 'idle'
     if (source === selected) return 'selected'
     return lineage.ancestors.has(source) || lineage.descendants.has(source) ? 'related' : 'dimmed'
-  }, [lineage, selected])
+  }, [lineage, selected, selection])
 
   const nodes = useMemo<DatasetFlowNode[]>(() => layout.nodes.map(({ dataset, x, y }) => ({
     id: dataset.source,
@@ -115,10 +126,10 @@ export function DatasetGraph({ datasets, selected, onSelect, onOpen, onDelete }:
     position: { x, y },
     initialWidth: NODE_WIDTH,
     initialHeight: NODE_HEIGHT,
-    data: { dataset, datasets, emphasis: emphasisOf(dataset.source), onDelete },
+    data: { dataset, datasets, emphasis: emphasisOf(dataset.source), experiments: experiments[dataset.source], onDelete },
     draggable: false,
-    selected: dataset.source === selected,
-  })), [datasets, emphasisOf, layout.nodes, onDelete, selected])
+    selected: selection.includes(dataset.source),
+  })), [datasets, emphasisOf, experiments, layout.nodes, onDelete, selection])
 
   const edges = useMemo<Edge[]>(() => layout.edges.map(edge => {
     const inLineage = !!selected && !!lineage && [edge.parent, edge.child].every(
@@ -149,7 +160,7 @@ export function DatasetGraph({ datasets, selected, onSelect, onOpen, onDelete }:
   }, [layout.nodes, selected])
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') return onSelect(null)
+    if (event.key === 'Escape') return onSelect(null, false)
     if (event.key === 'Enter' && selected) return onOpen(selected)
     const direction = ARROW_DIRECTIONS[event.key]
     if (!direction) return
@@ -157,7 +168,7 @@ export function DatasetGraph({ datasets, selected, onSelect, onOpen, onDelete }:
     const next = selected
       ? adjacentDataset(layout, selected, direction)
       : layout.nodes[0]?.dataset.source ?? null
-    if (next) onSelect(next)
+    if (next) onSelect(next, false)
   }
 
   return (
@@ -173,9 +184,9 @@ export function DatasetGraph({ datasets, selected, onSelect, onOpen, onDelete }:
         edges={edges}
         nodeTypes={nodeTypes}
         onInit={instance => { flow.current = instance }}
-        onNodeClick={(_, node) => onSelect(node.id === selected ? null : node.id)}
+        onNodeClick={(event, node) => onSelect(node.id, event.shiftKey || event.ctrlKey || event.metaKey)}
         onNodeDoubleClick={(_, node) => onOpen(node.id)}
-        onPaneClick={() => onSelect(null)}
+        onPaneClick={() => onSelect(null, false)}
         fitView
         fitViewOptions={FIT_VIEW}
         minZoom={0.15}
@@ -192,14 +203,14 @@ export function DatasetGraph({ datasets, selected, onSelect, onOpen, onDelete }:
         <MiniMap<DatasetFlowNode>
           pannable
           zoomable
-          nodeClassName={node => node.data.dataset.source === selected || node.data.dataset.name === 'Cloud Dataset'
+          nodeClassName={node => selection.includes(node.data.dataset.source) || node.data.dataset.name === 'Cloud Dataset'
             ? 'dataset-graph__mini dataset-graph__mini--accent'
             : 'dataset-graph__mini'}
           maskColor="var(--dataset-minimap-mask)"
           ariaLabel="Dataset lineage minimap"
         />
         <Panel position="top-right" className="dataset-graph__hint">
-          Click to select · double-click to explore · drag to pan · scroll to zoom
+          Click to select · Shift-click to select several · double-click to explore · drag to pan · scroll to zoom
         </Panel>
       </ReactFlow>
     </div>

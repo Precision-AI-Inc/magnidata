@@ -21,7 +21,10 @@ from pathlib import Path
 import mlflow_store
 import numpy as np
 import pytest
+from conftest import seed_run
 from PIL import Image
+
+from precisionai.magnidata.training import contract
 
 
 def _write_feature_csv(path, rows):
@@ -1070,3 +1073,150 @@ def test_confi_datasets_report_row_count(app_client, tmp_path):
     listed = client.get("/api/datasets").get_json()
 
     assert next(d for d in listed if d["source"] == "data_user/c.csv")["row_count"] == 1
+
+
+# ── Dataset merge ──────────────────────────────────────────────────────────────
+
+
+def _merge(client, **body):
+    return client.post("/api/datasets/merge", json=body)
+
+
+def _two_sources(tmp_path):
+    _write_feature_csv(
+        tmp_path / "data_user" / "m1.csv",
+        [
+            {"image_path": "images/a.png", "width": "1", "score": "1"},
+            {"image_path": "images/b.png", "width": "2", "score": "2"},
+        ],
+    )
+    _write_feature_csv(
+        tmp_path / "data_user" / "m2.csv",
+        [
+            {"image_path": "images/b.png", "width": "2", "score": "2"},
+            {"image_path": "images/c.png", "width": "3", "score": "3"},
+        ],
+    )
+    return ["data_user/m1.csv", "data_user/m2.csv"]
+
+
+def test_merge_writes_deduplicated_union_with_every_parent(app_client, tmp_path):
+    client, _ = app_client
+    sources = _two_sources(tmp_path)
+
+    res = _merge(client, name="Both", sources=sources)
+
+    assert res.status_code == 201
+    body = res.get_json()
+    assert body["row_count"] == 3
+    assert body["parent_sources"] == sources
+    assert body["deletable"] is True
+    with open(tmp_path / body["source"]) as handle:
+        names = [row["image_path"] for row in csv.DictReader(handle)]
+    assert names == ["images/a.png", "images/b.png", "images/c.png"]
+    listed = next(d for d in client.get("/api/datasets").get_json() if d["source"] == body["source"])
+    assert listed["parent_sources"] == sources
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "message"),
+    [
+        ({"sources": ["a", "b"]}, 400, "name required"),
+        ({"name": "x", "sources": ["data_user/m1.csv"]}, 400, "at least two"),
+        ({"name": "x", "sources": ["data_user/m1.csv", "data_user/m1.csv"]}, 400, "at least two"),
+        ({"name": "x", "sources": ["data_user/m1.csv", "../etc/passwd"]}, 400, "invalid source"),
+        ({"name": "x", "sources": "data_user/m1.csv"}, 400, "list"),
+        ({"name": "x", "sources": ["data_user/m1.csv", "data_user/missing.csv"]}, 404, "not found"),
+    ],
+)
+def test_merge_rejects_bad_requests(app_client, tmp_path, body, status, message):
+    client, _ = app_client
+    _two_sources(tmp_path)
+
+    res = _merge(client, **body)
+
+    assert res.status_code == status
+    assert message in res.get_json()["error"]
+
+
+def test_merge_rejects_sources_with_different_columns(app_client, tmp_path):
+    client, _ = app_client
+    sources = _two_sources(tmp_path)
+    (tmp_path / "data_user" / "odd.csv").write_text("image_path,other\nimages/z.png,1\n")
+
+    res = _merge(client, name="Odd", sources=[sources[0], "data_user/odd.csv"])
+
+    assert res.status_code == 400
+    assert "same CSV columns" in res.get_json()["error"]
+
+
+def test_merge_name_collisions_get_unique_files(app_client, tmp_path):
+    client, _ = app_client
+    sources = _two_sources(tmp_path)
+
+    first = _merge(client, name="Same", sources=sources).get_json()
+    second = _merge(client, name="Same", sources=sources).get_json()
+
+    assert first["source"] != second["source"]
+
+
+# ── Ground truth and prediction are different sources ──────────────────────────
+
+
+def _solid_png(color, size=(8, 6)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _center_pixel(data):
+    return tuple(int(v) for v in np.asarray(Image.open(io.BytesIO(data)).convert("RGB"))[3, 4])
+
+
+def test_annotation_overlay_and_run_prediction_show_different_masks(app_client, tmp_path, monkeypatch):
+    client, _ = app_client
+    monkeypatch.chdir(tmp_path)  # the annotation endpoints read relative image paths from the working directory
+    dataset = tmp_path / "data_user" / "ds"
+    (dataset / "images").mkdir(parents=True)
+    (dataset / "masks").mkdir()
+    (dataset / "images" / "a.png").write_bytes(_solid_png((10, 120, 10)))
+    (dataset / "masks" / "a.png").write_bytes(_solid_png((0, 0, 255)))  # ground truth: blue
+    (tmp_path / "data_user" / "ds.csv").write_text("image_path\ndata_user/ds/images/a.png\n")
+
+    store = mlflow_store.MlflowStore(f"sqlite:///{tmp_path / 'mlflow.db'}", artifact_root=(tmp_path / "art").as_uri())
+    mlflow_store.set_store(store)
+    try:
+        run_id = seed_run(
+            store,
+            tags={
+                contract.TAG_PER_SAMPLE_SCHEMA: contract.SCHEMA_VERSION,
+                contract.TAG_SCORED_EPOCHS: "1",
+                contract.TAG_DATASET_SOURCE: "data_user/ds.csv",
+            },
+            artifacts={contract.per_sample_path(1): "image_name,split,loss_total\na.png,train,0.5\n"},
+        )
+        prediction = tmp_path / "pred" / "a.png"
+        prediction.parent.mkdir()
+        prediction.write_bytes(_solid_png((255, 0, 0)))  # prediction: red
+        store._client.log_artifact(run_id, str(prediction), "magnidata/predictions/epoch_0001")
+
+        truth = client.get("/api/annotation/overlay?path=data_user/ds/images/a.png&alpha=1")
+        predicted = client.get(f"/api/runs/{run_id}/prediction?image=a.png&epoch=1&alpha=1")
+        truth_mask = client.get("/api/annotation/mask?path=data_user/ds/images/a.png")
+
+        assert truth.status_code == predicted.status_code == truth_mask.status_code == 200
+        blue, red = _center_pixel(truth.data), _center_pixel(predicted.data)
+        assert blue[2] > 200
+        assert blue[0] < 60
+        assert red[0] > 200
+        assert red[2] < 60
+        assert blue != red
+        assert _center_pixel(truth_mask.data) == (0, 0, 255)
+
+        # An image without a saved prediction has none: the prediction endpoint never falls back to the ground truth.
+        (dataset / "images" / "b.png").write_bytes(_solid_png((10, 120, 10)))
+        (dataset / "masks" / "b.png").write_bytes(_solid_png((0, 0, 255)))
+        assert client.get("/api/annotation/overlay?path=data_user/ds/images/b.png&alpha=1").status_code == 200
+        assert client.get(f"/api/runs/{run_id}/prediction?image=b.png&epoch=1&alpha=1").status_code == 404
+    finally:
+        mlflow_store.set_store(None)

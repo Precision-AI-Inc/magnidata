@@ -10,6 +10,8 @@ import { imageNameOf } from '../hooks/usePartitions'
 import type { SampleHistory } from '../api'
 import { LineChart } from './experiments/LineChart'
 import { nearestEarlierPrediction, resolveEpoch } from '../lib/epochs'
+import { previewCaption, previewSource } from '../lib/previewSource'
+import type { PreviewTab } from '../lib/previewSource'
 
 function navBtnStyle(side: 'left' | 'right', enabled: boolean): CSSProperties {
   return {
@@ -49,8 +51,6 @@ const HERO_PRIORITY = [
 ]
 
 const prettify = (s: string) => s.replace(/_/g, ' ')
-
-type PreviewTab = 'image' | 'mask' | 'overlay' | 'prediction'
 
 export function ImageModal({ data, row: initialRow, allRows, onClose, partitionMap, removed, onToggleRemove, added, onToggleAdd, run }: Props) {
   const [row, setRow]           = useState(initialRow)
@@ -181,11 +181,10 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
     }
   }
 
-  const imgSrc = !imgPath ? '' :
-    tab === 'prediction' && run && predictionEpoch != null ? api.runPredictionUrl(run.runId, baseName, predictionEpoch, overlayAlpha) :
-    tab === 'image'   ? api.imageUrl(thumbPath || imgPath, 1280) :
-    tab === 'mask'    ? api.annotationMaskUrl(imgPath, 1280) :
-                        api.annotationOverlayUrl(imgPath, overlayAlpha, 1280)
+  const imgSrc = previewSource({
+    tab, imgPath, thumbPath, baseName, alpha: overlayAlpha, runId: run?.runId, predictionEpoch,
+  })
+  const caption = previewCaption(tab, predictionEpoch)
   const origUrl = imgPath ? api.imageUrl(imgPath, 4096) : ''
 
   return (
@@ -322,7 +321,7 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
                               boxShadow: '0 16px 50px rgba(0,0,0,0.55)', opacity: loading ? 0 : 1, transition: 'opacity .25s ease' }} />
               )}
 
-              {!imgSrc && tab === 'prediction' && (
+              {!imgSrc && tab === 'prediction' && !!imgPath && (
                 <div style={{ textAlign: 'center', zIndex: 4, maxWidth: 420 }}>
                   <p style={{ fontSize: 13, color: '#fff', fontWeight: 600 }}>No saved inference for this sample</p>
                   <p style={{ margin: '6px 0 14px', fontSize: 11.5, color: 'rgba(255,255,255,.5)' }}>
@@ -338,7 +337,7 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
                 </div>
               )}
 
-              {!imgSrc && tab !== 'prediction' && (
+              {!imgSrc && (tab !== 'prediction' || !imgPath) && (
                 <div style={{ textAlign: 'center', zIndex: 4 }}>
                   <p style={{ fontSize: 40, marginBottom: 10, color: 'rgba(255,255,255,0.18)' }}>◻</p>
                   <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>No image path detected</p>
@@ -371,6 +370,14 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
                 </div>
               )}
             </div>
+
+            {caption && imgSrc && (
+              <div role="note" data-preview-source={tab === 'prediction' ? 'prediction' : 'ground-truth'} className="shrink-0"
+                   style={{ fontSize: 11, fontWeight: 600, padding: '4px 16px', color: '#fff',
+                            background: tab === 'prediction' ? 'var(--pai-teal)' : 'rgba(255,255,255,0.12)' }}>
+                {caption}
+              </div>
+            )}
 
             {tab === 'prediction' && predictionNote && predictionEpoch != null && (
               <div role="note" className="px-4 shrink-0" style={{ fontSize: 11, padding: '4px 16px', background: 'var(--pai-navy)', color: 'rgba(255,255,255,0.7)' }}>{predictionNote}</div>

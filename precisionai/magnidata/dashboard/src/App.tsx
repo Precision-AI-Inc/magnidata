@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
-import { Activity, ChevronLeft, ChevronRight, CloudDownload, Columns, Download, FlaskConical, LayoutGrid, Loader2, Plus, Save, Share2, SlidersHorizontal, Table2, Trash2, X, BarChart2 } from 'lucide-react'
+import { Activity, ChevronLeft, ChevronRight, CloudDownload, Columns, Database, Download, FlaskConical, LayoutGrid, Loader2, Plus, Save, Share2, SlidersHorizontal, Table2, Trash2, X, BarChart2 } from 'lucide-react'
+import { rememberWorkspaceSelection } from './lib/workspaceSelection'
 import { api, errorText } from './api'
 import type { DatasetMeta } from './api'
 import { useCSV } from './hooks/useCSV'
@@ -98,6 +99,10 @@ export default function App() {
   const [complementTopK, setComplementTopK] = useState(100)
   const [savingComplement, setSavingComplement] = useState(false)
   const [complementMsg, setComplementMsg] = useState<string | null>(null)
+  const [selectionName, setSelectionName] = useState('')
+  const [savingSelection, setSavingSelection] = useState(false)
+  const [selectionMsg, setSelectionMsg] = useState<string | null>(null)
+  const [savedSelection, setSavedSelection] = useState<DatasetMeta | null>(null)
 
   // Embeddings now live entirely on the API — the browser only needs to know they exist.
   const embeddingsAvailable = useMemo(
@@ -587,6 +592,32 @@ export default function App() {
     }
   }, [datasetSource, data, complementName, liveFilteredRows, removed, complementTopK, reloadDatasets])
 
+  // Register the rows currently shown (filters, brushes and staged removals applied) as a child
+  // dataset, so the selection appears in the workspace lineage graph.
+  const saveSelection = useCallback(async () => {
+    if (!datasetSource || !data?.imagePath || !selectionName.trim() || !liveFilteredRows.length) return
+    setSavingSelection(true); setSelectionMsg(null); setSavedSelection(null)
+    try {
+      const image_names = liveFilteredRows
+        .map(row => String(row[data.imagePath!] ?? ''))
+        .filter(Boolean)
+        .map(path => path.split(/[/\\]/).pop() as string)
+      const created = await api.createDataset({
+        name: selectionName.trim(),
+        description: `${liveFilteredRows.length.toLocaleString()} selected samples from ${data.fileName.replace(/\.csv$/i, '')}`,
+        parent_source: datasetSource,
+        image_names,
+      })
+      await reloadDatasets()
+      setSavedSelection(created)
+      setSelectionName('')
+    } catch (error) {
+      setSelectionMsg(`error: ${errorText(error)}`)
+    } finally {
+      setSavingSelection(false)
+    }
+  }, [datasetSource, data, selectionName, liveFilteredRows, reloadDatasets])
+
   const activeSection: AppSection = data
     ? (tab === 'experiments' ? 'experiments' : 'explorer')
     : tab === 'schema'
@@ -649,6 +680,7 @@ export default function App() {
             onDelete={deleteDataset}
             onOpenByod={() => setShowByod(true)}
             onUploadFile={file => handleLoad(file)}
+            onDatasetsChanged={reloadDatasets}
           />
         )}
 
@@ -1015,6 +1047,31 @@ export default function App() {
                           {exportingSelection ? <Loader2 size={13} style={{ animation: 'spin .7s linear infinite' }} /> : <Download size={13} />}
                           Export selection
                         </button>
+                        {datasetSource && data.imagePath && (
+                          <div className="explorer-config__save">
+                            <label className="explorer-config__field">
+                              <span>Save selection as a dataset</span>
+                              <input value={selectionName} placeholder="Name for the new dataset"
+                                     onChange={event => setSelectionName(event.target.value)}
+                                     onKeyDown={event => { if (event.key === 'Enter') void saveSelection() }} />
+                            </label>
+                            <button className="btn-primary explorer-config__wide"
+                                    disabled={savingSelection || !selectionName.trim() || !liveFilteredRows.length}
+                                    onClick={() => void saveSelection()}>
+                              {savingSelection ? <Loader2 size={13} className="spin" /> : <Database size={13} />}
+                              Save {liveFilteredRows.length.toLocaleString()} samples as dataset
+                            </button>
+                            {selectionMsg && <p className="explorer-config__hint" role="alert">{selectionMsg}</p>}
+                            {savedSelection && (
+                              <p className="explorer-config__hint" role="status">
+                                Created “{savedSelection.name}”.{' '}
+                                <button className="explorer-config__link" onClick={() => { rememberWorkspaceSelection(savedSelection.source); goHome() }}>
+                                  View in workspace
+                                </button>
+                              </p>
+                            )}
+                          </div>
+                        )}
                         {!!data.runColumns?.length && (
                           <button className="btn-ghost explorer-config__wide" onClick={() => void exportRelabelQueue()}>
                             <Download size={13} /> Export relabel queue

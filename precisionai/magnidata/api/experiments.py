@@ -226,6 +226,48 @@ def list_runs() -> ResponseReturnValue:
     return jsonify({"runs": [run_summary(r) for r in page["items"]], "next_page_token": page["next_page_token"]})
 
 
+ACTIVE_STATUSES = ("RUNNING", "SCHEDULED")
+COUNT_PAGE_SIZE = 200
+COUNT_MAX_RUNS = 2000
+
+
+def count_runs_by_dataset(runs: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Group runs by their linked dataset source into ``{source: {total, active}}``; unlinked runs are skipped."""
+    counts: dict[str, dict[str, int]] = {}
+    for run in runs:
+        source = run["tags"].get(contract.TAG_DATASET_SOURCE)
+        if not source:
+            continue
+        entry = counts.setdefault(source, {"total": 0, "active": 0})
+        entry["total"] += 1
+        entry["active"] += run["status"] in ACTIVE_STATUSES
+    return counts
+
+
+def _all_runs(store: mlflow_store.MlflowStore) -> list[dict[str, Any]]:
+    experiment_ids = [e["experiment_id"] for e in store.search_experiments(1000)]
+    runs: list[dict[str, Any]] = []
+    token = None
+    while experiment_ids and len(runs) < COUNT_MAX_RUNS:
+        page = store.search_runs_page(experiment_ids, "", COUNT_PAGE_SIZE, None, token)
+        runs.extend(page["items"])
+        token = page["next_page_token"]
+        if not token:
+            break
+    return runs
+
+
+@bp.get("/api/datasets/experiment-counts")
+def dataset_experiment_counts() -> ResponseReturnValue:
+    """Return ``{source: {total, active}}`` run counts per dataset; ``{}`` while MLflow is unreachable."""
+    store = mlflow_store.get_store()
+    try:
+        counts = _cached(("experiment-counts", id(store)), lambda: count_runs_by_dataset(_all_runs(store)))
+    except MlflowUnavailableError:
+        counts = {}
+    return jsonify(counts)
+
+
 @bp.get("/api/runs/<run_id>")
 def get_run(run_id: str) -> ResponseReturnValue:
     """Return one run in full: params, tags, latest metrics, scored epochs and top-level artifacts."""

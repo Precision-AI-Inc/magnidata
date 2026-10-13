@@ -15,6 +15,7 @@ import numpy as np
 
 CLOUD_NAME = "Cloud Dataset"
 CLOUD_SOURCE = "data_user/cloud-dataset.csv"
+MAX_MERGE_SOURCES = 20
 MINI_SOURCES = ("data_user/agristress500-mini1.csv", "data_user/agristress500-mini2.csv")
 
 
@@ -64,6 +65,33 @@ def parse_create_request(body: dict[str, Any]) -> CreateRequest:
     if os.path.isabs(cloud) or ".." in cloud:
         raise ValueError("invalid cloud_source")
     return CreateRequest(name, str(body.get("description") or "").strip(), parent, images, query, cloud, top_k)
+
+
+@dataclass(frozen=True)
+class MergeRequest:
+    """Validated request to merge several datasets into a new one."""
+
+    name: str
+    description: str
+    sources: list[str]
+
+
+def parse_merge_request(body: dict[str, Any]) -> MergeRequest:
+    """Validate and normalize a dataset-merge request body."""
+    name = str(body.get("name") or "").strip()
+    raw = body.get("sources")
+    if not name:
+        raise ValueError("name required")
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise ValueError("sources must be a list of dataset sources")
+    sources = list(dict.fromkeys(item.strip() for item in raw if item.strip()))
+    if len(sources) < 2:
+        raise ValueError("at least two distinct sources required")
+    if len(sources) > MAX_MERGE_SOURCES:
+        raise ValueError(f"at most {MAX_MERGE_SOURCES} sources can be merged")
+    if any(os.path.isabs(source) or ".." in source for source in sources):
+        raise ValueError("invalid source")
+    return MergeRequest(name=name, description=str(body.get("description") or "").strip(), sources=sources)
 
 
 def read_rows(path: str | Path) -> tuple[list[str], list[dict[str, str]]]:

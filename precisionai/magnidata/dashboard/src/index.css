@@ -161,3 +161,5 @@ input[type=range] { accent-color: var(--c-accent); }
   justify-content: center; flex-shrink: 0; transition: background .15s, transform .1s;
 }
 .play-btn:hover { background: var(--c-accent); color: #fff; transform: scale(1.1); }
+.explorer-config__save { display: flex; flex-direction: column; gap: 8px; }
+.explorer-config__link { padding: 0; border: 0; background: none; color: var(--c-accent); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }

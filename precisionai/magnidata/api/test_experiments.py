@@ -561,3 +561,41 @@ def test_compare_samples_epoch_and_errors(client, mlflow_store):
     assert client.get(f"/api/runs/compare-samples?a={a}&b={plain}").status_code == 409
     assert client.get(f"/api/runs/compare-samples?a=nope&b={b}").status_code == 400
     assert client.get(f"/api/runs/compare-samples?a={a}").status_code == 400
+
+
+# ── Per-dataset experiment counts ──────────────────────────────────────────────
+
+
+def _run(status, source=None):
+    return {"status": status, "tags": {contract.TAG_DATASET_SOURCE: source} if source else {}}
+
+
+def test_count_runs_by_dataset_separates_active_from_finished_and_skips_unlinked():
+    counts = experiments.count_runs_by_dataset(
+        [
+            _run("RUNNING", "data_user/a.csv"),
+            _run("SCHEDULED", "data_user/a.csv"),
+            _run("FINISHED", "data_user/a.csv"),
+            _run("FAILED", "data_user/b.csv"),
+            _run("RUNNING"),
+        ]
+    )
+
+    assert counts == {"data_user/a.csv": {"total": 3, "active": 2}, "data_user/b.csv": {"total": 1, "active": 0}}
+
+
+def test_experiment_counts_endpoint_reads_mlflow_runs(client, seeded, monkeypatch):
+    monkeypatch.setattr(experiments, "RUNS_CACHE_TTL_S", 0)
+
+    counts = client.get("/api/datasets/experiment-counts").get_json()
+
+    assert counts == {"data_user/a.csv": {"total": 3, "active": 0}, "data_user/b.csv": {"total": 3, "active": 0}}
+
+
+def test_experiment_counts_is_empty_when_mlflow_is_down(client):
+    store_module.set_store(MlflowStore("http://127.0.0.1:1"))
+
+    resp = client.get("/api/datasets/experiment-counts")
+
+    assert resp.status_code == 200
+    assert resp.get_json() == {}

@@ -108,6 +108,15 @@ export interface DatasetSummary {
   truncated: boolean
 }
 
+export interface MergeDatasetPayload {
+  name: string
+  description?: string
+  sources: string[]
+}
+
+/** Run counts per dataset source from MLflow; datasets with no runs are absent. */
+export type ExperimentCounts = Record<string, { total: number; active: number }>
+
 /** { embeddings: { "<file_path>": number[] } } */
 export interface EmbeddingsFile {
   embeddings: Record<string, number[]>
@@ -359,6 +368,9 @@ export const api = {
     `${BASE}/annotation/overlay?path=${encodeURIComponent(path)}&alpha=${alpha}&max_size=${maxSize}`,
 
   // ── Cluster partitions (cluster_id, persisted per dataset by image filename) ──
+  mergeDatasets: (payload: MergeDatasetPayload) =>
+    mutate<DatasetMeta>('POST', `${BASE}/datasets/merge`, payload),
+  datasetExperimentCounts: () => get<ExperimentCounts>(`${BASE}/datasets/experiment-counts`),
   datasetSummary: (source: string) =>
     get<DatasetSummary>(`${BASE}/datasets/summary?source=${encodeURIComponent(source)}`),
   getPartitions: (source: string) =>

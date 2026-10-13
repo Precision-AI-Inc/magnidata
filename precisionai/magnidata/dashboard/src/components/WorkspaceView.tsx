@@ -3,11 +3,12 @@ import { Activity, CheckCircle2, Database, FlaskConical, Loader2, Plus, Sparkles
 import { api } from '../api'
 import type { DatasetMeta, MlflowStatus, RunSummary, TrainingPresets } from '../api'
 import { formatBytes } from '../lib/datasetPanel'
+import { nextSelection, readWorkspaceSelection, rememberWorkspaceSelection } from '../lib/workspaceSelection'
+import { useExperimentCounts } from '../hooks/useExperimentCounts'
 import { DatasetGraph } from './DatasetGraph'
 import { DatasetPanel } from './DatasetPanel'
+import { MergePanel } from './MergePanel'
 import './WorkspaceView.css'
-
-const SELECTED_KEY = 'magnidata.workspace.selected'
 
 interface Props {
   datasets: DatasetMeta[]
@@ -16,6 +17,8 @@ interface Props {
   onDelete: (id: number) => void
   onOpenByod: () => void
   onUploadFile: (file: File) => void
+  /** Reload the dataset catalogue after a merge created a new dataset. */
+  onDatasetsChanged: () => Promise<unknown> | void
 }
 
 interface ServiceState {
@@ -23,17 +26,6 @@ interface ServiceState {
   mlflow: MlflowStatus | null
   presets: TrainingPresets | null
   loading: boolean
-}
-
-function readSelected(): string | null {
-  try { return localStorage.getItem(SELECTED_KEY) } catch { return null }
-}
-
-function writeSelected(source: string | null) {
-  try {
-    if (source) localStorage.setItem(SELECTED_KEY, source)
-    else localStorage.removeItem(SELECTED_KEY)
-  } catch { /* storage unavailable: selection just won't survive a reload */ }
 }
 
 function useServices(): ServiceState {
@@ -61,17 +53,31 @@ function useServices(): ServiceState {
   return state
 }
 
-export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDelete, onOpenByod, onUploadFile }: Props) {
+export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDelete, onOpenByod, onUploadFile, onDatasetsChanged }: Props) {
   const services = useServices()
   const upload = useRef<HTMLInputElement>(null)
-  const [selected, setSelectedState] = useState<string | null>(readSelected)
+  const experiments = useExperimentCounts()
+  const [selection, setSelectionState] = useState<string[]>(() => {
+    const remembered = readWorkspaceSelection()
+    return remembered ? [remembered] : []
+  })
 
-  const setSelected = useCallback((source: string | null) => {
-    setSelectedState(source)
-    writeSelected(source)
+  const setSelection = useCallback((next: string[]) => {
+    setSelectionState(next)
+    rememberWorkspaceSelection(next.length === 1 ? next[0] : null)
   }, [])
+  const select = useCallback((source: string | null, additive: boolean) => {
+    setSelection(source === null ? [] : nextSelection(selection, source, additive))
+  }, [selection, setSelection])
 
-  const dataset = useMemo(() => datasets.find(d => d.source === selected) ?? null, [datasets, selected])
+  const known = useMemo(() => selection.filter(source => datasets.some(d => d.source === source)), [datasets, selection])
+  const dataset = useMemo(
+    () => (known.length === 1 ? datasets.find(d => d.source === known[0]) ?? null : null),
+    [datasets, known],
+  )
+  const merging = known.length > 1
+  const panelOpen = dataset !== null || merging
+
   const totals = useMemo(() => ({
     samples: datasets.reduce((sum, d) => sum + (d.row_count ?? 0), 0),
     bytes: datasets.reduce((sum, d) => sum + (d.file_size_bytes ?? 0), 0),
@@ -113,11 +119,11 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
         </div>
       </div>
 
-      <div className="workspace-stage" data-panel={dataset ? 'open' : 'closed'}>
+      <div className="workspace-stage" data-panel={panelOpen ? 'open' : 'closed'}>
         <div className="workspace-stage__graph">
           {datasets.length > 0
-            ? <DatasetGraph datasets={datasets} selected={dataset?.source ?? null} onSelect={setSelected}
-                            onOpen={onOpenDataset} onDelete={id => { setSelected(null); onDelete(id) }} />
+            ? <DatasetGraph datasets={datasets} selection={known} experiments={experiments} onSelect={select}
+                            onOpen={onOpenDataset} onDelete={id => { setSelection([]); onDelete(id) }} />
             : (
               <button className="workspace-empty" onClick={onOpenByod}>
                 <UploadCloud size={22} />
@@ -125,17 +131,29 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
               </button>
             )}
         </div>
-        {dataset && (
+        {panelOpen && (
           <div className="workspace-stage__panel">
-            <DatasetPanel
-              dataset={dataset}
-              datasets={datasets}
-              onOpenExplorer={() => onOpenDataset(dataset.source)}
-              onViewExperiments={() => onViewExperiments(dataset.source)}
-              onDelete={id => { setSelected(null); onDelete(id) }}
-              onSelect={setSelected}
-              onClose={() => setSelected(null)}
-            />
+            {dataset ? (
+              <DatasetPanel
+                dataset={dataset}
+                datasets={datasets}
+                onOpenExplorer={() => onOpenDataset(dataset.source)}
+                onViewExperiments={() => onViewExperiments(dataset.source)}
+                onDelete={id => { setSelection([]); onDelete(id) }}
+                onSelect={source => setSelection([source])}
+                onClose={() => setSelection([])}
+              />
+            ) : (
+              <MergePanel
+                datasets={datasets}
+                selection={known}
+                onClear={() => setSelection([])}
+                onMerged={async created => {
+                  await onDatasetsChanged()
+                  setSelection([created.source])
+                }}
+              />
+            )}
           </div>
         )}
       </div>

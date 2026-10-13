@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Datasets can now be created from the Visual Explorer's current selection (**Save as dataset**, next to Export
+  selection) and by merging datasets in the workspace: Shift/Ctrl/Cmd-click several lineage cards, name the result,
+  and `POST /api/datasets/merge` writes the de-duplicated union with every source as a parent. Both appear in the
+  lineage graph with no experiments.
+- Lineage cards carry an experiment badge beside the dataset icon: yellow (pulsing) while a run is queued or
+  training, gray otherwise, with run counts in its tooltip. `GET /api/datasets/experiment-counts` aggregates MLflow
+  runs per dataset in one request and returns `{}` while MLflow is unreachable.
 - The Workspace and Datasets pages are now one lineage workspace: a storage-wide summary strip, the interactive
   lineage graph, and a detail panel for the selected dataset with statistics, sample images, annotation coverage,
   recent runs, and lineage links. The panel's **Open in Visual Explorer** and **View experiments** actions open the
@@ -147,6 +154,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The image preview's **Prediction** tab showed the dataset's ground-truth overlay whenever the run had no saved
+  prediction for that image, so ground truth could be mistaken for model output. Each tab now maps to its own
+  source with no fallback (a missing prediction shows "No saved inference" and the Run inference button), and the
+  Mask, Overlay and Prediction views carry a caption naming their source.
 - Dataset cards in the lineage graph could not be clicked, so datasets could neither be opened in the Visual
   Explorer nor deleted: React Flow disabled pointer events on its non-interactive nodes.
 

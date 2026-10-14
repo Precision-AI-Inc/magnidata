@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Enable it by cloning AgriTune beside this repository and adding `docker-compose.agritune.yml` to `COMPOSE_FILE`; the
   default build is unchanged. The Train dialog adapts to the selected engine and becomes a phone-width bottom sheet. A
   new User Guide chapter, **Train with AgriTune**, covers setup, the offline fake encoder, the hosted encoder,
-  the settings and troubleshooting, with screenshots from a real run.
+  the settings and troubleshooting, with screenshots from a real run. AgriTune reports every metric once per epoch
+  (including the loss and learning rate) instead of once per optimizer step, so MLflow stays small.
 - The API rejects training settings the chosen engine cannot honour (for example `loss_terms` or `split_mode: column` on
   an AgriTune preset, or `feature_provider` on a reference preset) instead of silently ignoring them, and refuses
   on-demand inference for AgriTune runs with an explanation.

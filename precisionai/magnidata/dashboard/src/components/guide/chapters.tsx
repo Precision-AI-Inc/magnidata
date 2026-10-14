@@ -806,7 +806,8 @@ function AgriTune() {
       <Cmd id="agrituneEncoder" />
       <h3>Good to know</h3>
       <ul>
-        <li><strong>Scoring</strong> runs an unaugmented pass over every image every <em>Score every N</em> epochs and writes the per-image files.</li>
+        <li><strong>Metrics are written once per epoch.</strong> The loss, learning rate and every validation metric each get one point per epoch (the loss is the mean over that epoch&apos;s steps), which keeps MLflow small even for long runs.</li>
+        <li><strong>Scoring</strong> runs an unaugmented pass over every image every <em>Score every N</em> epochs and writes the per-image files and the component-loss points (<code>cce</code>, <code>dice</code>, <code>bce</code>) for that epoch.</li>
         <li><strong>Cancel</strong> stops the run at the end of the current epoch. It becomes <strong>KILLED</strong> and keeps the artifacts already written.</li>
         <li><strong>Checkpoint and provenance</strong>: the last checkpoint, AgriTune&apos;s resolved configuration, dataset and encoder fingerprints and environment details are attached to the run.</li>
         <li><strong>No on-demand inference.</strong> The Prediction view exists for the hardest samples AgriTune saved; <em>Run inference</em> for other images is available only for the reference trainer, and the portal says so.</li>

@@ -31,7 +31,10 @@ Run statuses: `SCHEDULED`, `RUNNING`, `FINISHED`, `FAILED`, `KILLED`.
 ## Metric keys
 
 These match pai-seed's `Trainer`. Step is the epoch, except `Learning_rate/lr` which uses
-the global step.
+the global step. Runs trained through the AgriTune engine log **every** metric once per epoch, including
+the learning rate (its last value of the epoch) and `train_loss/loss` (the mean over the epoch's steps), so a
+run costs a few dozen MLflow points instead of thousands. The loss components (`train_loss/<term>`,
+`val_loss/<term>`) are added on the epochs that are scored.
 
 - `train_loss/loss`, `train_loss/<term>`
 - `val_loss/loss`, `val_loss/<term>`

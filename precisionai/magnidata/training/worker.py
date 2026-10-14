@@ -173,6 +173,21 @@ def trainer_argv(run_id: str, data_root: Path, tracking_uri: str) -> list[str]:
     ]
 
 
+def agritune_argv(run_id: str, data_root: Path, tracking_uri: str) -> list[str]:
+    """Return the command that trains one MagniData run with the AgriTune engine."""
+    return [
+        sys.executable,
+        "-m",
+        "precisionai.magnidata.training.agritune",
+        "--run-id",
+        run_id,
+        "--data-root",
+        str(data_root),
+        "--tracking-uri",
+        tracking_uri,
+    ]
+
+
 def inference_argv(run_id: str, image_name: str, data_root: Path, tracking_uri: str) -> list[str]:
     """Return the command that generates one persisted prediction mask."""
     return [
@@ -235,7 +250,15 @@ def run_one(
         return None
     log = data_root / "data_user" / LOG_DIRNAME / run_id / "trainer.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    command = list(argv) if argv else trainer_argv(run_id, data_root, client.tracking_uri)
+    if argv:
+        command = list(argv)
+    else:
+        engine = client.get_run(run_id).data.tags.get(contract.TAG_ENGINE, "reference")
+        command = (
+            agritune_argv(run_id, data_root, client.tracking_uri)
+            if engine == "agritune"
+            else trainer_argv(run_id, data_root, client.tracking_uri)
+        )
     with open(log, "w") as out:
         child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
         interrupted = _watch(child, client, run_id, log, lambda: touch_heartbeat(data_root), log_upload_s)

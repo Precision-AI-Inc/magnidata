@@ -43,6 +43,8 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
   const [serverErrors, setServerErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const selectedPreset = presets.presets.find(p => p.key === preset) ?? startPreset
+  const isAgriTune = selectedPreset.engine === 'agritune'
 
   const clientErrors = useMemo(() => validateParams(params, presets.bounds), [params, presets.bounds])
   const errors = { ...serverErrors, ...clientErrors }
@@ -96,12 +98,16 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
           </div>
           <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Preset
             <select value={preset} onChange={e => choosePreset(e.target.value)} className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
-              {presets.presets.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+              {presets.presets.map(p => <option key={p.key} value={p.key}>{p.engine === 'agritune' ? 'AgriTune · ' : ''}{p.label}</option>)}
             </select>
-            <span className="block mt-1" style={{ color: 'var(--c-t3)' }}>{presets.presets.find(p => p.key === preset)?.description}</span>
+            <span className="block mt-1" style={{ color: 'var(--c-t3)' }}>{selectedPreset.description}</span>
           </label>
 
-          <div className="grid gap-x-3 gap-y-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          {isAgriTune && <div className="byod-hint" style={{ padding: '9px 10px', borderRadius: 8, background: 'var(--c-raised)' }}>
+            AgriTune freezes the image encoder and trains only the selected decoder. With no encoder URL configured, the stack uses its deterministic fake encoder so the complete workflow remains testable offline.
+          </div>}
+
+          <div className="grid gap-x-3 gap-y-2 train-dialog-grid">
             {FIELDS.map(f => {
               const b = presets.bounds[f.key]
               return (
@@ -117,15 +123,15 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
             })}
           </div>
 
-          <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Split
+          {!isAgriTune && <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Split
             <select value={params.split_mode} onChange={e => set('split_mode', e.target.value)} className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
               <option value="random">Random (by image name)</option>
               <option value="column">Use the dataset's split column</option>
             </select>
             {errors.split_mode && <span role="alert" style={{ color: 'var(--color-danger)' }}>{errors.split_mode}</span>}
-          </label>
+          </label>}
 
-          <fieldset className="text-xs" style={{ color: 'var(--c-t2)' }}>
+          {!isAgriTune && <fieldset className="text-xs" style={{ color: 'var(--c-t2)' }}>
             <legend>Loss terms and weights</legend>
             <div className="flex gap-4 flex-wrap mt-1">
               {presets.loss_terms.map(t => (
@@ -138,24 +144,56 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
               ))}
             </div>
             {(errors.loss_terms || errors.loss_weights) && <span role="alert" style={{ color: 'var(--color-danger)' }}>{errors.loss_terms ?? errors.loss_weights}</span>}
-          </fieldset>
+          </fieldset>}
 
-          <div className="grid gap-x-3 gap-y-2" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Loader processes (blank = automatic)
+          {isAgriTune && <div className="grid gap-x-3 gap-y-2 train-dialog-grid">
+            <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Feature provider
+              <select value={params.feature_provider ?? 'hybrid'} onChange={e => set('feature_provider', e.target.value as TrainParams['feature_provider'])}
+                      className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
+                <option value="hybrid">Hybrid cache (recommended)</option>
+                <option value="online">Online every time</option>
+              </select>
+            </label>
+            <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Image augmentation
+              <select value={params.augmentation_mode ?? 'none'} onChange={e => set('augmentation_mode', e.target.value as TrainParams['augmentation_mode'])}
+                      className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
+                <option value="none">None</option>
+                <option value="offline">Fixed augmented samples</option>
+                <option value="online">Fresh every epoch</option>
+                <option value="hybrid">Hybrid</option>
+              </select>
+            </label>
+            <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Loss objective
+              <select value={params.agritune_loss ?? 'ce_dice'} onChange={e => set('agritune_loss', e.target.value as TrainParams['agritune_loss'])}
+                      className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
+                <option value="ce">Cross entropy</option>
+                <option value="bce">Binary cross entropy</option>
+                <option value="dice">Dice</option>
+                <option value="ce_dice">Cross entropy + Dice</option>
+                <option value="bce_dice">Binary cross entropy + Dice</option>
+              </select>
+            </label>
+            <div className="text-xs" style={{ color: 'var(--c-t3)', alignSelf: 'end', paddingBottom: 5 }}>
+              Total and component losses are saved per image and appear automatically as Explorer axes.
+            </div>
+          </div>}
+
+          <div className="grid gap-x-3 gap-y-2 train-dialog-grid">
+            {!isAgriTune && <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Loader processes (blank = automatic)
               <input type="number" min={presets.bounds.num_workers?.min} max={presets.bounds.num_workers?.max as number | undefined} step={1}
                      value={params.num_workers ?? ''} aria-invalid={!!errors.num_workers}
                      onChange={e => set('num_workers', e.target.value === '' ? undefined : Number(e.target.value))}
                      className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={{ ...inputStyle, borderColor: errors.num_workers ? 'var(--color-danger)' : 'var(--c-border)' }} />
               {errors.num_workers && <span role="alert" className="block mt-0.5" style={{ color: 'var(--color-danger)' }}>{errors.num_workers}</span>}
-            </label>
+            </label>}
             <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--c-t2)' }}>
               <input type="checkbox" checked={params.amp ?? true} onChange={e => set('amp', e.target.checked)} /> Mixed precision (GPU only)
             </label>
           </div>
 
-          <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--c-t2)' }}>
+          {!isAgriTune && <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--c-t2)' }}>
             <input type="checkbox" checked={params.pretrained} onChange={e => set('pretrained', e.target.checked)} /> Start from ImageNet-pretrained weights (where the preset has a backbone)
-          </label>
+          </label>}
 
           {formError && <div role="alert" className="byod-error">{formError}</div>}
           <div className="flex justify-end gap-2">

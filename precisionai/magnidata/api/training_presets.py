@@ -33,7 +33,21 @@ BOUNDS: dict[str, dict[str, Any]] = {
     "pretrained": {"type": "bool"},
     "amp": {"type": "bool"},
     "num_workers": {"type": "int", "min": 0, "max": 16},
+    "feature_provider": {"type": "choice", "choices": ["hybrid", "online"]},
+    "augmentation_mode": {"type": "choice", "choices": ["none", "offline", "online", "hybrid"]},
+    "agritune_loss": {"type": "choice", "choices": ["ce", "bce", "dice", "ce_dice", "bce_dice"]},
 }
+
+AGRITUNE_FIELDS = ("feature_provider", "augmentation_mode", "agritune_loss")
+AGRITUNE_LOSS_TERMS: dict[str, list[str]] = {
+    "ce": ["cce"],
+    "bce": ["bce"],
+    "dice": ["dice"],
+    "ce_dice": ["cce", "dice"],
+    "bce_dice": ["bce", "dice"],
+}
+# Settings of the reference trainer that AgriTune presets cannot honour; rejected rather than silently ignored.
+REFERENCE_ONLY_FIELDS = ("loss_terms", "num_workers")
 
 COMMON_DEFAULTS: dict[str, Any] = {
     "score_every": 1,
@@ -48,6 +62,7 @@ COMMON_DEFAULTS: dict[str, Any] = {
 
 PRESETS: dict[str, dict[str, Any]] = {
     "tiny_unet": {
+        "engine": "reference",
         "label": "Tiny UNet",
         "description": "Small U-Net trained from scratch. CPU-friendly; good for smoke tests.",
         "defaults": {
@@ -60,6 +75,7 @@ PRESETS: dict[str, dict[str, Any]] = {
         },
     },
     "lraspp_mobilenet": {
+        "engine": "reference",
         "label": "LR-ASPP MobileNetV3",
         "description": "MobileNetV3 backbone with an LR-ASPP head, ImageNet-pretrained. GPU recommended.",
         "defaults": {
@@ -69,6 +85,38 @@ PRESETS: dict[str, dict[str, Any]] = {
             "image_size": 256,
             "lr": 3e-4,
             "pretrained": True,
+        },
+    },
+    "agritune_mlp_probe": {
+        "engine": "agritune",
+        "label": "AgriTune MLP Probe",
+        "description": "Fast decoder trained on frozen encoder patch features. Works offline with the fake encoder.",
+        "defaults": {
+            **COMMON_DEFAULTS,
+            "epochs": 10,
+            "batch_size": 4,
+            "image_size": 256,
+            "lr": 3e-4,
+            "pretrained": False,
+            "feature_provider": "hybrid",
+            "augmentation_mode": "none",
+            "agritune_loss": "ce_dice",
+        },
+    },
+    "agritune_token_fpn": {
+        "engine": "agritune",
+        "label": "AgriTune TokenFPN",
+        "description": "Multi-scale decoder over frozen ViT features. A hosted encoder and GPU are recommended.",
+        "defaults": {
+            **COMMON_DEFAULTS,
+            "epochs": 20,
+            "batch_size": 4,
+            "image_size": 256,
+            "lr": 3e-4,
+            "pretrained": False,
+            "feature_provider": "hybrid",
+            "augmentation_mode": "none",
+            "agritune_loss": "ce_dice",
         },
     },
 }
@@ -81,6 +129,7 @@ class LaunchSpec:
     name: str
     dataset_source: str
     preset: str
+    engine: str
     params: dict[str, str]
     loss_terms: list[str]
     parent_run_id: str | None = None
@@ -135,11 +184,39 @@ def _loss_weights(value: Any, terms: list[str]) -> dict[str, float]:
     return out
 
 
+def _check_engine_fields(engine: str, overrides: dict[str, Any]) -> None:
+    """Reject overrides that the preset's engine would ignore."""
+    if engine == "reference":
+        for field in AGRITUNE_FIELDS:
+            if field in overrides:
+                raise ValueError(f"params.{field}: only available for AgriTune presets")
+        return
+    if "loss_terms" in overrides:
+        raise ValueError("params.loss_terms: AgriTune presets take an agritune_loss instead")
+    if "num_workers" in overrides:
+        raise ValueError("params.num_workers: not used by AgriTune presets")
+    if overrides.get("split_mode", "random") != "random":
+        raise ValueError("params.split_mode: AgriTune presets split randomly by validation fraction")
+    if overrides.get("pretrained", False) is not False:
+        raise ValueError("params.pretrained: AgriTune presets use a frozen encoder, not ImageNet weights")
+
+
 def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(overrides) - set(BOUNDS))
     if unknown:
         raise ValueError(f"params: unknown parameter(s) {', '.join(unknown)}")
+    engine = PRESETS[preset]["engine"]
+    _check_engine_fields(engine, overrides)
     p = {**PRESETS[preset]["defaults"], **overrides}
+    choices: dict[str, str] = {}
+    for field in AGRITUNE_FIELDS:
+        if field in p:
+            allowed = BOUNDS[field]["choices"]
+            if p[field] not in allowed:
+                raise ValueError(f"params.{field}: must be one of {', '.join(allowed)}")
+            choices[field] = p[field]
+    # An AgriTune objective fixes which loss terms exist, so weights are checked against those, not the reference defaults.
+    terms = AGRITUNE_LOSS_TERMS[choices["agritune_loss"]] if engine == "agritune" else _loss_terms(p["loss_terms"])
     out: dict[str, Any] = {
         "epochs": _integer("params.epochs", p["epochs"], 1, 200),
         "batch_size": _integer("params.batch_size", p["batch_size"], 1, 64),
@@ -148,7 +225,7 @@ def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
         "val_fraction": _number("params.val_fraction", p["val_fraction"], 0.05, 0.5),
         "seed": _integer("params.seed", p["seed"], 0, 2**31 - 1),
         "top_k_predictions": _integer("params.top_k_predictions", p["top_k_predictions"], 0, 200),
-        "loss_terms": _loss_terms(p["loss_terms"]),
+        "loss_terms": terms,
     }
     out["score_every"] = _integer("params.score_every", p["score_every"], 1, out["epochs"])
     out["loss_weights"] = _loss_weights(p["loss_weights"], out["loss_terms"])
@@ -163,6 +240,7 @@ def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     out["amp"] = p["amp"]
     if "num_workers" in p:
         out["num_workers"] = _integer("params.num_workers", p["num_workers"], 0, 16)
+    out.update(choices)
     return out
 
 
@@ -210,5 +288,8 @@ def validate_launch(body: Any) -> LaunchSpec:
     if parent is not None and (not isinstance(parent, str) or not RUN_ID_RE.match(parent)):
         raise ValueError("parent_run_id: must be a run id")
 
+    engine = PRESETS[preset]["engine"]
     resolved = _resolve(preset, overrides)
-    return LaunchSpec(name, source, preset, _flat({"preset": preset, **resolved}), resolved["loss_terms"], parent)
+    return LaunchSpec(
+        name, source, preset, engine, _flat({"preset": preset, **resolved}), resolved["loss_terms"], parent
+    )

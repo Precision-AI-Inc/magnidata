@@ -114,5 +114,21 @@
   "extend-external": {
     "alt": "A run logged by an external trainer, showing val_metric/miou and a custom seconds_per_image chart",
     "caption": "A run logged with plain MLflow appears in Experiments with its metrics, including ones the portal has never heard of."
+  },
+  "agritune-train-dialog": {
+    "alt": "The Train a model dialog with the AgriTune MLP Probe preset showing feature provider, augmentation and loss objective controls",
+    "caption": "Choosing an AgriTune preset swaps the loss-term checkboxes for the settings that engine understands."
+  },
+  "agritune-train-dialog-phone": {
+    "alt": "The same Train dialog on a phone-width screen as a single-column bottom sheet",
+    "caption": "On a phone the dialog becomes a bottom sheet with one column, so every setting stays reachable."
+  },
+  "agritune-axes": {
+    "alt": "The Visual Explorer field picker filtered to the AgriTune dice loss axes",
+    "caption": "AgriTune's component losses become Explorer axes automatically, here filtered with the field search."
+  },
+  "agritune-prediction": {
+    "alt": "The image preview on the Prediction tab showing an AgriTune model mask",
+    "caption": "A saved AgriTune prediction, captioned with its epoch. This run used the offline fake encoder, so the mask is not meaningful; the workflow is what is being shown."
   }
 }

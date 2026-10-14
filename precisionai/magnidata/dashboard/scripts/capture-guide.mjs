@@ -28,6 +28,11 @@ const SOURCE_URL = process.env.GUIDE_SOURCE_URL ?? 'http://127.0.0.1:5176'
 const EMPTY_URL = process.env.GUIDE_EMPTY_URL ?? 'http://127.0.0.1:5177'
 const PART_1 = 'AgriStress-500 tiles part 1'
 const PART_2 = 'AgriStress-500 tiles part 2'
+const AGRITUNE_URL = process.env.GUIDE_AGRITUNE_URL ?? 'http://127.0.0.1:25175'
+const AGRITUNE_TITLE = 'Field survey fixture'
+const AGRITUNE_SOURCE = 'data_user/my-field-survey.csv'
+// A tile the fixture run saved a prediction for (it is one of that run's hardest).
+const AGRITUNE_TILE = 'pai-dpyusSdy_x02304_y00000.png'
 const PART_1_SOURCE = 'data_user/agristress-500_tiles-part1.csv'
 // A tile whose mask has three well-represented classes, so previews show something worth looking at.
 const SAMPLE = 'pai-FdHBsOXP_x01280_y03584.png'
@@ -73,12 +78,12 @@ const openExplorer = async (title = PART_1) => {
 }
 
 /** Open the preview modal on the tile named `name` by stepping through the table with the arrow keys. */
-const openPreview = async (name = SAMPLE) => {
+const openPreview = async (name = SAMPLE, datasetSource = PART_1_SOURCE) => {
   const index = await page.evaluate(async ({ source, tile }) => {
     const text = await (await fetch(`/api/dataset/csv?source=${encodeURIComponent(source)}`)).text()
     return text.split('\n').slice(1).findIndex(line => line.includes(tile))
-  }, { source: PART_1_SOURCE, tile: name })
-  if (index < 0) throw new Error(`tile ${name} not found in ${PART_1_SOURCE}`)
+  }, { source: datasetSource, tile: name })
+  if (index < 0) throw new Error(`tile ${name} not found in ${datasetSource}`)
   await page.locator('tbody tr button').first().click()
   await page.locator('.modal-box').waitFor()
   for (let step = 0; step < index; step += 1) await page.keyboard.press('ArrowRight')
@@ -344,6 +349,47 @@ const stages = {
     await page.getByText('seconds_per_image').first().scrollIntoViewIfNeeded()
     await settle(1200)
     await shot('extend-external')
+  },
+
+  /**
+   * Needs a stack built with the opt-in AgriTune override (docker-compose.agritune.yml), the fixture dataset registered
+   * as "Field survey fixture", and one finished run named `agritune-smoke` of the `agritune_mlp_probe` preset on it.
+   */
+  async agritune() {
+    await home(AGRITUNE_URL)
+    await node(AGRITUNE_TITLE).dblclick()
+    await page.getByRole('heading', { name: 'Visual Explorer' }).waitFor()
+    await page.locator('tbody tr').first().waitFor({ timeout: 60000 })
+    await settle(2500)
+    await page.getByRole('button', { name: 'Train model' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Train a model' })
+    await dialog.waitFor()
+    await dialog.locator('select').first().selectOption('agritune_mlp_probe')
+    await settle(800)
+    await shot('agritune-train-dialog', dialog)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await settle(800)
+    await shot('agritune-train-dialog-phone')
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+    const { runs } = await (await page.request.get(`${AGRITUNE_URL}/api/runs?max_results=50`)).json()
+    const smoke = runs.find(candidate => candidate.name === 'agritune-smoke')
+    await setupPanel().getByLabel('Training run overlay').selectOption(smoke.run_id)
+    await settle(5000)
+    await page.getByRole('button', { name: 'Choose visible fields' }).click()
+    await page.getByPlaceholder(/Search fields/).fill('dice')
+    await settle(1500)
+    await shot('agritune-axes')
+    await page.getByRole('button', { name: 'Close field selection' }).click()
+    await settle(800)
+    await openPreview(AGRITUNE_TILE, AGRITUNE_SOURCE)
+    await imagesLoaded()
+    await tab('prediction').click()
+    await imagesLoaded()
+    await settle(800)
+    await shot('agritune-prediction', page.locator('.modal-box'))
+    await page.keyboard.press('Escape')
   },
 
   async overlay() {

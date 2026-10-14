@@ -90,6 +90,9 @@ function Install() {
       <Cmd id="up" />
       <Cmd id="gpuCheck" />
       <p>The last command should print <code>True</code>. Run details show a GPU or CPU badge and an ETA.</p>
+      <Note tone="tip" title="Optional: the AgriTune engine">
+        The trainer can also train AgriTune decoders on frozen encoder features. It is off by default and needs a sibling checkout; chapter 11 shows how to turn it on.
+      </Note>
       <h3>Stop, restart and reset</h3>
       <Cmd id="stop" note="Stop everything. Your datasets and runs are kept." />
       <Cmd id="reset" note="Also delete the stored runs and notes (the MLflow and database volumes). Datasets on disk stay." />
@@ -556,8 +559,9 @@ function Extend() {
         return TinyUNet(num_classes, widths=(32, 64, 128))`}</Snippet></li>
         <li>Add its key to the list of known presets:
           <Snippet file="training/contract.py">{`MODEL_PRESETS = ("tiny_unet", "tiny_unet_wide", "lraspp_mobilenet")`}</Snippet></li>
-        <li>Describe it for the Train dialog, with its default settings:
+        <li>Describe it for the Train dialog, with its default settings. The <code>engine</code> says which trainer runs it: <code>"reference"</code> for a model built in <code>models.py</code> (the other engine, AgriTune, is chapter 11):
           <Snippet file="api/training_presets.py  (in PRESETS)">{`    "tiny_unet_wide": {
+        "engine": "reference",
         "label": "Tiny UNet (wide)",
         "description": "Same U-Net with twice the channels per level. Still trains from scratch.",
         "defaults": {
@@ -738,6 +742,90 @@ function Reference() {
   )
 }
 
+function AgriTune() {
+  return (
+    <>
+      <Goal>Train an AgriTune decoder from the portal and use its aggregate and per-image losses in the same feedback loop.</Goal>
+      <p>
+        AgriTune trains lightweight segmentation decoders on frozen ViT patch features. MagniData owns the
+        queue and UI; AgriTune owns feature retrieval, decoder training and evaluation. They share one MLflow
+        run, so Experiments, comparisons, the epoch scrubber and Explorer loss axes work the way they do for
+        the built-in reference trainer. AgriTune is optional: without it the stack builds and runs exactly as before.
+      </p>
+      <h3>Turn it on</h3>
+      <Steps>
+        <li>Clone AgriTune <strong>next to</strong> the MagniData folder, so <code>../agritune</code> exists.<Cmd id="agrituneClone" /></li>
+        <li>Tell Compose to include the AgriTune file and rebuild the trainer. This writes the setting to the git-ignored <code>.env</code>:<Cmd id="agrituneEnable" /></li>
+      </Steps>
+      <Note title="What this does">
+        <code>docker-compose.agritune.yml</code> passes the AgriTune checkout into the trainer image as a named build context and installs it there.
+        It combines with the GPU file: list all three in <code>COMPOSE_FILE</code>, separated by colons.
+        If an AgriTune run fails at once with <em>AgriTune is required for this preset</em>, the trainer image was built without it: repeat the steps above.
+      </Note>
+      <h3>Run it offline first</h3>
+      <Steps>
+        <li>Open a dataset with masks and press <strong>Train model</strong>.</li>
+        <li>Choose <strong>AgriTune · AgriTune MLP Probe</strong>. Leave <strong>Hybrid cache</strong>,
+          <strong> None</strong> augmentation and <strong>Cross entropy + Dice</strong> selected.</li>
+        <li>For a quick check, use 2 epochs, batch size 4, score every epoch and 2 hard predictions.</li>
+        <li>Start training. With no encoder URL configured, AgriTune deliberately uses its deterministic
+          fake encoder. This validates the integration; it is not a meaningful agronomic model.</li>
+      </Steps>
+      <Shot name="agritune-train-dialog" />
+      <Shot name="agritune-train-dialog-phone" />
+      <Expect>
+        <p>The live run banner advances through AgriTune epochs and scoring. Run detail shows
+          <code> train_loss/loss</code>, <code>val_loss/loss</code>, the component losses, mIoU, per-class IoU and
+          learning rate. Overlay the finished run: <code>loss_total</code>, <code>loss_cce</code>,
+          <code>loss_dice</code>, <code>iou</code> and <code>confidence</code> become Explorer fields, with the usual
+          mean, delta, slope and rank across epochs. The hardest saved samples have a Prediction view, separate from
+          their ground-truth Mask and Overlay views.</p>
+      </Expect>
+      <Shot name="agritune-axes" />
+      <Shot name="agritune-prediction" />
+      <h3>The settings</h3>
+      <table className="guide-table">
+        <thead><tr><th>Setting</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Preset</td><td><strong>MLP Probe</strong> is the fast, lightweight decoder. <strong>TokenFPN</strong> is the multi-scale one and normally benefits from a GPU.</td></tr>
+          <tr><td>Feature provider</td><td><strong>Hybrid cache</strong> asks the encoder only for images it has not seen and reuses the local feature store afterwards. <strong>Online</strong> asks it every time.</td></tr>
+          <tr><td>Image augmentation</td><td>None, fixed augmented samples, fresh every epoch, or hybrid. Augmentation creates new image content and therefore new features, so it costs extra encoder calls.</td></tr>
+          <tr><td>Loss objective</td><td>Cross entropy, binary cross entropy, Dice, or a combination. It decides which component losses (<code>cce</code>, <code>bce</code>, <code>dice</code>) are recorded.</td></tr>
+          <tr><td>Epochs, batch size, image size, learning rate, validation fraction, seed, score every N, hardest predictions</td><td>Same meaning as for the reference trainer. Validation images are chosen at random by the validation fraction.</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Settings that only the reference trainer understands (loss-term checkboxes, loader processes, pretrained weights, the dataset&apos;s split column) are hidden for AgriTune presets,
+        and the API refuses them rather than ignoring them.
+      </p>
+      <h3>Use the hosted encoder</h3>
+      <p>
+        Put the encoder connection in the root <code>.env</code>; the browser never receives or stores the API
+        key, and MLflow parameters do not contain it. Replace the example values, then rebuild the trainer:
+      </p>
+      <Cmd id="agrituneEncoder" />
+      <h3>Good to know</h3>
+      <ul>
+        <li><strong>Scoring</strong> runs an unaugmented pass over every image every <em>Score every N</em> epochs and writes the per-image files.</li>
+        <li><strong>Cancel</strong> stops the run at the end of the current epoch. It becomes <strong>KILLED</strong> and keeps the artifacts already written.</li>
+        <li><strong>Checkpoint and provenance</strong>: the last checkpoint, AgriTune&apos;s resolved configuration, dataset and encoder fingerprints and environment details are attached to the run.</li>
+        <li><strong>No on-demand inference.</strong> The Prediction view exists for the hardest samples AgriTune saved; <em>Run inference</em> for other images is available only for the reference trainer, and the portal says so.</li>
+      </ul>
+      <h3>Troubleshooting</h3>
+      <table className="guide-table">
+        <thead><tr><th>You see</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr><td>The run fails at once with <em>AgriTune is required for this preset</em></td><td>The trainer was built without AgriTune. Follow <em>Turn it on</em> and rebuild.</td></tr>
+          <tr><td>The trainer build says the <code>agritune</code> context is missing</td><td>You enabled the AgriTune file but <code>../agritune/pyproject.toml</code> does not exist. Clone it there, or remove <code>docker-compose.agritune.yml</code> from <code>COMPOSE_FILE</code>.</td></tr>
+          <tr><td>The run fails while encoding</td><td>Check <code>docker compose logs trainer</code>, the URL and key, and the encoder&apos;s rate limits. To go back to the fake encoder remove the three variables and rebuild.</td></tr>
+          <tr><td>The API rejects a setting</td><td>It names the field. For example, <code>loss_terms</code> and <code>num_workers</code> are reference-trainer settings; use the loss objective instead.</td></tr>
+          <tr><td>No loss axes yet</td><td>Wait for the first scoring pass to finish; the live run stays visible while it is produced.</td></tr>
+        </tbody>
+      </table>
+    </>
+  )
+}
+
 export const CHAPTERS: readonly Chapter[] = [
   { id: 'overview', title: 'How the pieces fit', summary: 'Services, data flow and vocabulary', minutes: 4, Body: Overview },
   { id: 'install', title: 'Install and start', summary: 'Docker Compose, ports, GPU, reset', minutes: 5, Body: Install },
@@ -749,6 +837,7 @@ export const CHAPTERS: readonly Chapter[] = [
   { id: 'loop', title: 'Close the loop', summary: 'Curate hard images and retrain', minutes: 6, Body: Loop },
   { id: 'own-data', title: 'Bring your own data', summary: 'Folder, upload or CSV', minutes: 6, Body: OwnData },
   { id: 'embeddings', title: 'Add embeddings', summary: 'Enable the 3D embeddings view', minutes: 5, Body: Embeddings },
+  { id: 'agritune', title: 'Train with AgriTune', summary: 'Frozen features, decoders and per-image losses', minutes: 7, Body: AgriTune },
   { id: 'extend', title: 'Add a model or a metric', summary: 'Extend training; see it in the UI', minutes: 9, Body: Extend },
   { id: 'reference', title: 'Reference and troubleshooting', summary: 'Formats, ports, fixes', minutes: 4, Body: Reference },
 ]

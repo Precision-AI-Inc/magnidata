@@ -599,3 +599,12 @@ def test_experiment_counts_is_empty_when_mlflow_is_down(client):
 
     assert resp.status_code == 200
     assert resp.get_json() == {}
+
+
+def test_on_demand_inference_is_refused_for_agritune_runs(client, predicted_run, mlflow_store):
+    mlflow_store.set_tag(predicted_run, contract.TAG_ENGINE, "agritune")
+
+    resp = client.post(f"/api/runs/{predicted_run}/inference", json={"image": "b.png"})
+
+    assert resp.status_code == 409
+    assert "AgriTune" in resp.get_json()["error"]

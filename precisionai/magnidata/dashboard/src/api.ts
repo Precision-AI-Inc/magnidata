@@ -247,7 +247,7 @@ export interface RunDetailData extends RunSummary {
 }
 
 export interface TrainingPresets {
-  presets: { key: string; label: string; description: string; defaults: Record<string, unknown> }[]
+  presets: { key: string; label: string; description: string; engine: 'reference' | 'agritune'; defaults: Record<string, unknown> }[]
   bounds: Record<string, import('./lib/train').Bound>
   loss_terms: string[]
   backend: { available: boolean; reason: string | null; worker_heartbeat: number | null }

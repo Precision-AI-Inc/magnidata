@@ -24,6 +24,9 @@ export interface TrainParams {
   amp: boolean
   /** Data-loader processes; unset lets the trainer choose from its CPU count. */
   num_workers?: number
+  feature_provider?: 'hybrid' | 'online'
+  augmentation_mode?: 'none' | 'offline' | 'online' | 'hybrid'
+  agritune_loss?: 'ce' | 'bce' | 'dice' | 'ce_dice' | 'bce_dice'
 }
 
 export type FieldErrors = Partial<Record<keyof TrainParams, string>>
@@ -67,6 +70,11 @@ export function validateParams(params: TrainParams, bounds: Record<string, Bound
     if (!Number.isFinite(weight) || weight < (weights?.min ?? 0) || weight > Number(weights?.max ?? 10)) {
       errors.loss_weights = `weights must be between ${weights?.min ?? 0} and ${weights?.max ?? 10}`
     }
+  }
+  for (const field of ['feature_provider', 'augmentation_mode', 'agritune_loss'] as const) {
+    const value = params[field]
+    const choices = bounds[field]?.choices
+    if (value !== undefined && choices && !choices.includes(value)) errors[field] = `must be one of ${choices.join(', ')}`
   }
   return errors
 }
@@ -128,6 +136,9 @@ export function paramsFromRun(params: Record<string, string>): Partial<TrainPara
   if (params.pretrained) out.pretrained = params.pretrained === 'true'
   if (params.amp) out.amp = params.amp === 'true'
   if (params.num_workers !== undefined && Number.isInteger(Number(params.num_workers))) out.num_workers = Number(params.num_workers)
+  if (params.feature_provider === 'hybrid' || params.feature_provider === 'online') out.feature_provider = params.feature_provider
+  if (params.augmentation_mode && ['none', 'offline', 'online', 'hybrid'].includes(params.augmentation_mode)) out.augmentation_mode = params.augmentation_mode as TrainParams['augmentation_mode']
+  if (params.agritune_loss && ['ce', 'bce', 'dice', 'ce_dice', 'bce_dice'].includes(params.agritune_loss)) out.agritune_loss = params.agritune_loss as TrainParams['agritune_loss']
   if (params.loss_terms) {
     out.loss_terms = params.loss_terms.split(',').filter(Boolean)
     out.loss_weights = Object.fromEntries(

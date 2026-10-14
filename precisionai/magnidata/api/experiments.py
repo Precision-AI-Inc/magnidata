@@ -649,6 +649,10 @@ def run_inference(run_id: str) -> ResponseReturnValue:
     if status in {"queued", "running"} and queued_image != name:
         raise Conflict(f"inference is already {status} for {queued_image}")
     _dataset_image_path(run, name)
+    if tags.get(contract.TAG_ENGINE) == "agritune":
+        raise Conflict(
+            "on-demand inference is not available for AgriTune runs; predictions are saved for the hardest samples"
+        )
     checkpoint_names = {os.path.basename(item["path"]) for item in store.list_artifacts(run_id, "checkpoints")}
     if os.path.basename(contract.CHECKPOINT_ARTIFACT) not in checkpoint_names:
         raise Conflict("the run has no checkpoint for on-demand inference")

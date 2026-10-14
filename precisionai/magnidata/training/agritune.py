@@ -1,0 +1,171 @@
+# Copyright 2026 Precision AI
+# SPDX-License-Identifier: Apache-2.0
+
+"""Adapt a queued MagniData dataset/run into AgriTune's training service."""
+
+import argparse
+import csv
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from PIL import Image
+
+from precisionai.magnidata.training import data
+
+try:
+    import mlflow
+    import torch
+
+    from precisionai.agritune.augmentations.image.pipeline import AugmentationMode, GeometricConfig
+    from precisionai.agritune.features.keys import EncoderFingerprint
+    from precisionai.agritune.features.store import DirectoryFeatureStore
+    from precisionai.agritune.integrations.magnidata import MagniDataOptions, run_magnidata_training
+    from precisionai.agritune.optimization.optimizers import OptimizerConfig
+    from precisionai.agritune.services.training_service import AugmentationSelection, TrainingRunConfig
+    from precisionai.agritune.tasks.segmentation.losses import SegmentationLossConfig
+    from precisionai.agritune.training.precision import PrecisionConfig
+    from precisionai.agritune.training.trainer import TrainerConfig
+except ImportError:
+    raise ImportError(
+        "AgriTune is required for this preset; build the trainer with the sibling agritune checkout"
+    ) from None
+
+DEFAULT_TRACKING_URI = "http://localhost:5052"
+PRESET_DECODERS = {
+    "agritune_mlp_probe": "mlp_probe",
+    "agritune_token_fpn": "token_fpn",
+}
+
+
+def _integer(params: dict[str, str], key: str, default: int) -> int:
+    return int(params.get(key, default))
+
+
+def _number(params: dict[str, str], key: str, default: float) -> float:
+    return float(params.get(key, default))
+
+
+def _primary_term(params: dict[str, str]) -> str:
+    """Return the MagniData loss term AgriTune's ``ce_weight`` scales: BCE for the ``bce*`` objectives, else CE."""
+    return "bce" if params.get("agritune_loss", "ce_dice").startswith("bce") else "cce"
+
+
+def _boolean(params: dict[str, str], key: str, default: bool) -> bool:
+    return params.get(key, str(default)).lower() == "true"
+
+
+def _prepare_manifest(run_id: str, dataset_source: str, data_root: Path, image_size: int) -> tuple[Path, data.Palette]:
+    source = data_root / dataset_source
+    samples, report = data.resolve_samples(source, data_root)
+    if not samples:
+        raise ValueError(
+            f"dataset has no trainable image/mask pairs ({report.total_rows} rows, "
+            f"{len(report.missing_image)} missing images, {len(report.missing_mask)} missing masks)"
+        )
+    palette = data.build_palette([sample.mask_path for sample in samples])
+    root = data_root / "data_user" / ".agritune" / run_id
+    images = root / "images"
+    masks = root / "masks"
+    images.mkdir(parents=True, exist_ok=True)
+    masks.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for sample in samples:
+        image_path = images / f"{Path(sample.image_name).stem}.png"
+        mask_path = masks / f"{Path(sample.image_name).stem}.png"
+        with Image.open(sample.image_path) as image:
+            image.convert("RGB").resize((image_size, image_size), Image.Resampling.BILINEAR).save(image_path)
+        with Image.open(sample.mask_path) as mask:
+            rgb = np.asarray(mask.convert("RGB").resize((image_size, image_size), Image.Resampling.NEAREST))
+        Image.fromarray(data.decode_mask(rgb, palette).astype(np.uint8), mode="L").save(mask_path)
+        rows.append((sample.image_name, image_path, mask_path, sample.csv_split or ""))
+    manifest = root / "manifest.csv"
+    with manifest.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["sample_id", "image_path", "mask_path", "source_split"])
+        writer.writerows(rows)
+    return manifest, palette
+
+
+def _config(run: Any, data_root: Path, manifest: Path, palette: data.Palette) -> TrainingRunConfig:
+    params = dict(run.data.params)
+    preset = run.data.tags.get("magnidata.preset", params.get("preset", ""))
+    decoder = PRESET_DECODERS.get(preset)
+    if decoder is None:
+        raise ValueError(f"unsupported AgriTune preset: {preset}")
+    base_url = os.environ.get("AGRITUNE_ENCODER_BASE_URL") or None
+    model = os.environ.get("AGRITUNE_ENCODER_MODEL", "pai-embedding" if base_url else "fake-encoder")
+    revision = None if base_url else "fake-v1"
+    augmentation_mode = AugmentationMode(params.get("augmentation_mode", "none"))
+    augmentation = AugmentationSelection(mode=augmentation_mode)
+    if augmentation_mode is not AugmentationMode.NONE:
+        augmentation.geometric = GeometricConfig(horizontal_flip_probability=0.5)
+    return TrainingRunConfig(
+        manifest_path=str(manifest),
+        feature_store_dir=str(data_root / "data_user" / ".agritune" / "features" / model.replace("/", "_")),
+        run_root=str(data_root / "data_user" / ".agritune" / "runs"),
+        run_id=run.info.run_id,
+        num_classes=palette.num_classes,
+        encoder_fingerprint=EncoderFingerprint(model=model, revision=revision, preprocessing="magnidata-square-v1"),
+        feature_provider=params.get("feature_provider", "hybrid"),
+        encoder_base_url=base_url,
+        encoder_api_key=os.environ.get("AGRITUNE_ENCODER_API_KEY"),
+        augmentation=augmentation,
+        decoder_name=decoder,
+        batch_size=_integer(params, "batch_size", 4),
+        val_fraction=_number(params, "val_fraction", 0.2),
+        seed=_integer(params, "seed", 0),
+        optimizer=OptimizerConfig(lr=_number(params, "lr", 3e-4)),
+        trainer=TrainerConfig(
+            max_epochs=_integer(params, "epochs", 10),
+            precision=PrecisionConfig(
+                mode="fp16" if _boolean(params, "amp", True) and torch.cuda.is_available() else "fp32"
+            ),
+            seed=_integer(params, "seed", 0),
+        ),
+        loss=SegmentationLossConfig(
+            name=params.get("agritune_loss", "ce_dice"),
+            ignore_index=data.IGNORE_INDEX,
+            ce_weight=_number(params, f"weight_{_primary_term(params)}", 1.0),
+            dice_weight=_number(params, "weight_dice", 1.0),
+        ),
+    )
+
+
+def run(run_id: str, tracking_uri: str, data_root: Path) -> int:
+    """Train one existing MagniData MLflow run through AgriTune."""
+    client = mlflow.MlflowClient(tracking_uri=tracking_uri)
+    queued = client.get_run(run_id)
+    dataset_source = queued.data.tags.get("magnidata.dataset_source", "")
+    image_size = _integer(dict(queued.data.params), "image_size", 256)
+    manifest, palette = _prepare_manifest(run_id, dataset_source, data_root, image_size)
+    config = _config(queued, data_root, manifest, palette)
+    palette_colors = ((0, 0, 0), *palette.colors)
+    result = run_magnidata_training(
+        config,
+        store=DirectoryFeatureStore(config.feature_store_dir),
+        run_id=run_id,
+        tracking_uri=tracking_uri,
+        options=MagniDataOptions(
+            score_every=_integer(dict(queued.data.params), "score_every", 1),
+            top_k_predictions=_integer(dict(queued.data.params), "top_k_predictions", 50),
+            palette=palette_colors,
+        ),
+    )
+    return 0 if result is not None else 1
+
+
+def main() -> None:
+    """Run the command-line adapter."""
+    parser = argparse.ArgumentParser(description="Train a queued MagniData run with AgriTune.")
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--data-root", type=Path, default=Path(os.environ.get("DATA_ROOT", ".")))
+    parser.add_argument("--tracking-uri", default=os.environ.get("MLFLOW_TRACKING_URI", DEFAULT_TRACKING_URI))
+    args = parser.parse_args()
+    sys.exit(run(args.run_id, args.tracking_uri, args.data_root))
+
+
+if __name__ == "__main__":
+    main()

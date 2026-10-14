@@ -15,6 +15,7 @@ Schema version: `magnidata-training/1.0.0`.
 | `magnidata.dataset_name` | Display name |
 | `magnidata.origin` | `ui` (launched from MagniData) or `external` |
 | `magnidata.preset` | Preset key |
+| `magnidata.engine` | `reference` (the bundled trainer) or `agritune`; absent means `reference`. Selects the trainer the worker starts |
 | `magnidata.loss_terms` | Comma-separated term names |
 | `magnidata.per_sample_schema` | Schema version; presence means per-sample artifacts exist |
 | `magnidata.scored_epochs` | Comma-separated epochs whose per-sample file is logged |

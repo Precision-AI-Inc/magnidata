@@ -21,6 +21,7 @@ TAG_DATASET_SOURCE = "magnidata.dataset_source"
 TAG_DATASET_NAME = "magnidata.dataset_name"
 TAG_ORIGIN = "magnidata.origin"
 TAG_PRESET = "magnidata.preset"
+TAG_ENGINE = "magnidata.engine"
 TAG_LOSS_TERMS = "magnidata.loss_terms"
 TAG_PER_SAMPLE_SCHEMA = "magnidata.per_sample_schema"
 TAG_SCORED_EPOCHS = "magnidata.scored_epochs"
@@ -52,6 +53,8 @@ EPOCH_SECONDS_METRIC = "perf/epoch_seconds"
 SAMPLES_PER_SEC_METRIC = "perf/samples_per_sec"
 
 SEGMENTATION_LOSS_TERMS = ("dice", "cce", "bce")
+# Presets implemented by MagniData's bundled reference trainer. External engines
+# publish through this contract, but own and validate their model names themselves.
 MODEL_PRESETS = ("tiny_unet", "lraspp_mobilenet")
 
 REQUIRED_COLUMNS = ("image_name", "split", "loss_total")

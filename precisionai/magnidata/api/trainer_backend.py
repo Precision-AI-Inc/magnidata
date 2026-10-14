@@ -107,6 +107,7 @@ class MlflowQueueBackend:
                 contract.TAG_DATASET_SOURCE: spec.dataset_source,
                 contract.TAG_DATASET_NAME: stem,
                 contract.TAG_PRESET: spec.preset,
+                contract.TAG_ENGINE: spec.engine,
                 contract.TAG_LOSS_TERMS: ",".join(spec.loss_terms),
             }
             if spec.parent_run_id:

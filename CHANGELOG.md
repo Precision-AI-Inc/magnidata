@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- AgriTune is now an optional portal training engine. Presets carry an `engine` (`reference` or `agritune`); the new
+  MLP Probe and TokenFPN presets expose a frozen-feature provider, augmentation and loss objective, and the existing
+  worker dispatches the same MLflow queue to the engine named by the run's `magnidata.engine` tag, so progress, losses,
+  split and per-image files, hard-sample predictions, checkpoints and provenance all arrive through the usual contract.
+  Enable it by cloning AgriTune beside this repository and adding `docker-compose.agritune.yml` to `COMPOSE_FILE`; the
+  default build is unchanged. The Train dialog adapts to the selected engine and becomes a phone-width bottom sheet. A
+  new User Guide chapter, **Train with AgriTune**, covers setup, the offline fake encoder, the hosted encoder,
+  the settings and troubleshooting, with screenshots from a real run.
+- The API rejects training settings the chosen engine cannot honour (for example `loss_terms` or `split_mode: column` on
+  an AgriTune preset, or `feature_provider` on a reference preset) instead of silently ignoring them, and refuses
+  on-demand inference for AgriTune runs with an explanation.
 - The User Guide gained a chapter, **Add a model or a metric**, explaining how extensions reach the UI: registering a model
   preset and a per-image loss term (which become Train dialog options and Explorer axes), logging an epoch metric (which
   becomes a chart and a column choice), and logging runs from a trainer of your own with plain MLflow. Each worked example

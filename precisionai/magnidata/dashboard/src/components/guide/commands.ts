@@ -26,6 +26,10 @@ export const COMMANDS = {
     'python -m precisionai.magnidata.tools.embeddings \\\n  --input precisionai/magnidata/data_user/my-field-survey.csv \\\n  --output precisionai/magnidata/data_user/my-field-survey_resnet18.json \\\n  --model resnet18 --device cpu',
   trainerTests: 'python -m pytest precisionai/magnidata/training -q',
   mlflowEnv: 'export MLFLOW_TRACKING_URI=http://localhost:5052',
+  agrituneClone: 'git clone git@github.com:Precision-AI-Inc/agritune.git ../agritune',
+  agrituneEnable: 'echo "COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml" >> .env\ndocker compose up -d --build',
+  agrituneEncoder:
+    'cat >> .env <<\'EOF\'\nAGRITUNE_ENCODER_BASE_URL=https://embeddings.precision.ai/v1\nAGRITUNE_ENCODER_API_KEY=replace-me\nAGRITUNE_ENCODER_MODEL=pai-embedding\nEOF\ndocker compose up -d --build trainer',
   features:
     'python -m precisionai.magnidata.tools.features --input images.csv --output features.csv --skip-nima',
 } as const

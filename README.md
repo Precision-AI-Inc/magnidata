@@ -52,6 +52,8 @@ docker compose up --build
 **New here?** Open **User Guide** in the portal. It is a self-contained, illustrated guide that takes you from
 `docker compose up` through loading AgriStress-500, partitioning it into sub-datasets from the command line,
 exploring, training and curating a better dataset, with every command and screenshot included.
+Its **Train with AgriTune** chapter explains the optional frozen-feature decoder presets, hosted encoder
+configuration, the offline fake-encoder smoke test, and how component losses become Explorer axes.
 
 The API container also prints those local access URLs during startup. The stack has four
 services:
@@ -69,8 +71,13 @@ To train on an NVIDIA GPU (needs the NVIDIA container toolkit), put
 `docker compose exec trainer python -c "import torch; print(torch.cuda.is_available())"`. The trainer's
 log (first line `device=…`) is uploaded to the run's `logs/` artifacts while it trains.
 
-To run the trainer outside Docker: `pip install -e ".[training]"`, then
+To run the reference trainer outside Docker: `pip install -e ".[training]"`, then
 `python -m precisionai.magnidata.training.train --dataset data_user/<name>.csv --data-root precisionai/magnidata`.
+The AgriTune presets are optional. To build them into the trainer image, clone
+`git@github.com:Precision-AI-Inc/agritune.git` next to this repository (so `../agritune` exists) and add
+`docker-compose.agritune.yml` to `COMPOSE_FILE` in the git-ignored `.env`
+(`COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml`, plus the GPU file if you use it), then run
+`docker compose up --build`. Without it the stack builds and runs as before.
 
 The dataset catalog (`precisionai/magnidata/confi.yaml`) ships empty. From the portal's
 "Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or

@@ -54,7 +54,13 @@ def _heartbeat(root, age_s=0.0):
 
 def test_presets_endpoint_reports_worker_availability(client, root):
     body = client.get("/api/training/presets").get_json()
-    assert [p["key"] for p in body["presets"]] == ["tiny_unet", "lraspp_mobilenet"]
+    assert [p["key"] for p in body["presets"]] == [
+        "tiny_unet",
+        "lraspp_mobilenet",
+        "agritune_mlp_probe",
+        "agritune_token_fpn",
+    ]
+    assert [p["engine"] for p in body["presets"]] == ["reference", "reference", "agritune", "agritune"]
     assert body["bounds"]["epochs"] == {"type": "int", "min": 1, "max": 200}
     assert body["loss_terms"] == ["dice", "cce", "bce"]
     assert body["mlflow"]["reachable"] is True
@@ -85,10 +91,29 @@ def test_valid_launch_creates_scheduled_run(client, mlflow_store):
     assert tags[contract.TAG_DATASET_SOURCE] == "data_user/syn.csv"
     assert tags[contract.TAG_DATASET_NAME] == "syn"
     assert tags[contract.TAG_PRESET] == "tiny_unet"
+    assert tags[contract.TAG_ENGINE] == "reference"
     assert tags[contract.TAG_LOSS_TERMS] == "dice,cce"
     assert [e["name"] for e in mlflow_store.search_experiments() if e["name"].startswith("magnidata/")] == [
         "magnidata/syn"
     ]
+
+
+def test_agritune_launch_records_engine_and_component_losses(client, mlflow_store):
+    response = client.post(
+        "/api/training/runs",
+        json={
+            "dataset_source": "data_user/syn.csv",
+            "preset": "agritune_mlp_probe",
+            "params": {"epochs": 2, "agritune_loss": "bce_dice", "feature_provider": "online"},
+        },
+    )
+
+    assert response.status_code == 201
+    run = mlflow_store.get_run(response.get_json()["run_id"])
+    assert run["tags"][contract.TAG_ENGINE] == "agritune"
+    assert run["tags"][contract.TAG_LOSS_TERMS] == "bce,dice"
+    assert run["params"]["loss_terms"] == "bce,dice"
+    assert run["params"]["feature_provider"] == "online"
 
 
 def test_launch_records_parent_and_weights(client, mlflow_store):
@@ -263,3 +288,40 @@ def test_launch_and_cancel_are_visible_immediately_despite_the_runs_cache(client
     assert listed[0]["status"] == "SCHEDULED"
     client.post(f"/api/runs/{run_id}/cancel")
     assert client.get(url).get_json()["runs"][0]["status"] == "KILLED"
+
+
+@pytest.mark.parametrize(
+    ("preset", "params", "field"),
+    [
+        ("tiny_unet", {"feature_provider": "online"}, "params.feature_provider"),
+        ("tiny_unet", {"augmentation_mode": "online"}, "params.augmentation_mode"),
+        ("lraspp_mobilenet", {"agritune_loss": "dice"}, "params.agritune_loss"),
+        ("agritune_mlp_probe", {"loss_terms": ["dice"]}, "params.loss_terms"),
+        ("agritune_mlp_probe", {"num_workers": 2}, "params.num_workers"),
+        ("agritune_mlp_probe", {"split_mode": "column"}, "params.split_mode"),
+        ("agritune_token_fpn", {"pretrained": True}, "params.pretrained"),
+        ("agritune_mlp_probe", {"feature_provider": "cached"}, "params.feature_provider"),
+        ("agritune_mlp_probe", {"agritune_loss": "focal"}, "params.agritune_loss"),
+    ],
+)
+def test_engine_specific_settings_are_rejected_for_the_wrong_engine(client, preset, params, field):
+    resp = client.post("/api/training/runs", json={**VALID, "preset": preset, "params": params})
+
+    assert resp.status_code == 400
+    assert field in resp.get_json()["error"]
+
+
+def test_agritune_loss_weights_follow_the_chosen_objective(client, mlflow_store):
+    resp = client.post(
+        "/api/training/runs",
+        json={
+            **VALID,
+            "preset": "agritune_mlp_probe",
+            "params": {"agritune_loss": "bce_dice", "loss_weights": {"bce": 2, "dice": 0.5}},
+        },
+    )
+
+    run = mlflow_store.get_run(resp.get_json()["run_id"])
+    assert run["params"]["weight_bce"] == "2.0"
+    assert run["params"]["weight_dice"] == "0.5"
+    assert run["tags"][contract.TAG_LOSS_TERMS] == "bce,dice"

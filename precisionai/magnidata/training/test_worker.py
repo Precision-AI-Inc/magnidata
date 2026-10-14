@@ -99,6 +99,12 @@ def test_trainer_argv_passes_device_from_env(monkeypatch, tmp_path):
     assert argv[argv.index("--device") + 1] == "auto"
 
 
+def test_agritune_argv_uses_product_adapter(tmp_path):
+    argv = worker.agritune_argv("abc", tmp_path, "http://mlflow:5000")
+    assert argv[2:4] == ["precisionai.magnidata.training.agritune", "--run-id"]
+    assert argv[argv.index("--run-id") + 1] == "abc"
+
+
 def test_inference_argv_passes_image_and_device(monkeypatch, tmp_path):
     monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
     argv = worker.inference_argv("abc", "sample.png", tmp_path, "sqlite:///mlflow.db")

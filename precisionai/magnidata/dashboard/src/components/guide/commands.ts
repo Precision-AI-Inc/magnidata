@@ -24,6 +24,8 @@ export const COMMANDS = {
     'python -m precisionai.magnidata.tools.embeddings \\\n  --input precisionai/magnidata/data_user/my-field-survey.csv \\\n  --output precisionai/magnidata/data_user/my-field-survey.json \\\n  --model dinov2 --device cpu',
   embeddingsVariant:
     'python -m precisionai.magnidata.tools.embeddings \\\n  --input precisionai/magnidata/data_user/my-field-survey.csv \\\n  --output precisionai/magnidata/data_user/my-field-survey_resnet18.json \\\n  --model resnet18 --device cpu',
+  trainerTests: 'python -m pytest precisionai/magnidata/training -q',
+  mlflowEnv: 'export MLFLOW_TRACKING_URI=http://localhost:5052',
   features:
     'python -m precisionai.magnidata.tools.features --input images.csv --output features.csv --skip-nima',
 } as const

@@ -300,6 +300,52 @@ const stages = {
     await shot('embeddings-view')
   },
 
+  /**
+   * Needs a trainer built from the guide's worked example (a `tiny_unet_wide` preset, a `jaccard` loss term and a
+   * `val_metric/pixel_accuracy` metric), one finished run of it named `extend-demo` on part 1, and an external run
+   * named `segformer-b0-v1` logged with plain MLflow (the guide's custom-trainer snippet).
+   */
+  async extend() {
+    await openExplorer()
+    await page.getByRole('button', { name: 'Train model' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Train a model' })
+    await dialog.waitFor()
+    await dialog.locator('select').first().selectOption('tiny_unet_wide')
+    await dialog.locator('label', { hasText: 'jaccard' }).locator('input[type=checkbox]').check()
+    await settle(600)
+    await shot('extend-train-dialog', dialog)
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+
+    await page.getByRole('button', { name: 'Experiments' }).first().click()
+    await page.locator('tbody tr').filter({ hasText: 'extend-demo' }).first().waitFor()
+    await page.locator('tbody tr').filter({ hasText: 'extend-demo' }).first().click()
+    await settle(2500)
+    await page.getByText('pixel_accuracy').first().scrollIntoViewIfNeeded()
+    await settle(1500)
+    await shot('extend-run-metrics')
+    await page.getByRole('button', { name: 'Columns' }).first().click()
+    await settle(1000)
+    await shot('extend-columns')
+
+    await openExplorer()
+    const { runs } = await (await page.request.get(`${URL}/api/runs?max_results=50`)).json()
+    const demo = runs.find(candidate => candidate.name === 'extend-demo')
+    await setupPanel().getByLabel('Training run overlay').selectOption(demo.run_id)
+    await settle(5000)
+    await page.getByRole('button', { name: 'Choose visible fields' }).click()
+    await page.getByPlaceholder(/Search fields/).fill('jaccard')
+    await settle(1500)
+    await shot('extend-axes')
+
+    // A run logged by a trainer of your own (see the guide), with metrics the portal has never heard of.
+    await page.getByRole('button', { name: 'Experiments' }).first().click()
+    await page.locator('tbody tr').filter({ hasText: 'segformer-b0-v1' }).first().click()
+    await settle(2500)
+    await page.getByText('seconds_per_image').first().scrollIntoViewIfNeeded()
+    await settle(1200)
+    await shot('extend-external')
+  },
+
   async overlay() {
     await openExplorer()
     const run = await finishedRun()

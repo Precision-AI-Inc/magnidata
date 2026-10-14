@@ -94,5 +94,25 @@
   "embeddings-view": {
     "alt": "The Visual Explorer with the Embeddings source selected, showing a 3D map of images and projection and clustering controls",
     "caption": "With embeddings present, Source \u2192 Embeddings shows each image as a point in 3D. Choose PCA, t-SNE or LLE, and colour by ground-truth cluster or K-means."
+  },
+  "extend-train-dialog": {
+    "alt": "The Train a model dialog with a Tiny UNet (wide) preset selected and a jaccard loss term ticked",
+    "caption": "After registering them, the new preset and the new loss term show up in the Train dialog with no portal code changed."
+  },
+  "extend-run-metrics": {
+    "alt": "A run's detail view with charts for val_metric/miou and the new val_metric/pixel_accuracy",
+    "caption": "A new epoch metric appears as its own chart in the run's detail, under Validation metrics because of its key prefix."
+  },
+  "extend-columns": {
+    "alt": "The Columns picker in Experiments listing train_loss/jaccard, val_loss/jaccard and the other logged metrics",
+    "caption": "Every logged metric key is offered in the Columns picker, including train_loss/jaccard and val_loss/jaccard."
+  },
+  "extend-axes": {
+    "alt": "The Visual Explorer field picker filtered to the loss_jaccard axes",
+    "caption": "A new per-image loss term becomes explorer axes: loss_jaccard plus its mean, delta, slope and rank across epochs (filtered here with the field search)."
+  },
+  "extend-external": {
+    "alt": "A run logged by an external trainer, showing val_metric/miou and a custom seconds_per_image chart",
+    "caption": "A run logged with plain MLflow appears in Experiments with its metrics, including ones the portal has never heard of."
   }
 }

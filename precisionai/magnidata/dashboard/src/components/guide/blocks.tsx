@@ -27,6 +27,22 @@ export function Cmd({ id, note }: { id: CommandKey; note?: string }) {
   )
 }
 
+/** A code excerpt with the file it belongs to and a copy button. `+` lines are additions; the text is copied as shown. */
+export function Snippet({ file, children }: { file: string; children: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    const done = () => { setCopied(true); window.setTimeout(() => setCopied(false), 1500) }
+    if (navigator.clipboard) navigator.clipboard.writeText(children).then(done, () => undefined)
+  }
+  return (
+    <div className="guide-snippet">
+      <div className="guide-snippet__file"><code>{file}</code></div>
+      <pre><code>{children}</code></pre>
+      <button onClick={copy} aria-label={`Copy code for ${file}`} title="Copy">{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+    </div>
+  )
+}
+
 /** Terminal output the reader should expect (not copyable, not a command). */
 export function Output({ children }: { children: string }) {
   return <pre className="guide-output"><code>{children}</code></pre>

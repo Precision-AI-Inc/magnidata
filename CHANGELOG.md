@@ -9,10 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The User Guide gained a chapter, **Add a model or a metric**, explaining how extensions reach the UI: registering a model
+  preset and a per-image loss term (which become Train dialog options and Explorer axes), logging an epoch metric (which
+  becomes a chart and a column choice), and logging runs from a trainer of your own with plain MLflow. Each worked example
+  was run through the real trainer, with screenshots from the portal, and the chapter lists the limits and troubleshooting.
 - The guide gained two chapters: **Bring your own data** (a folder of images and masks via Prepare From Server Folder, the
   browser upload and its limits, an existing CSV, and a permanent catalog entry) and **Add embeddings** (what they enable,
   computing them with the embeddings tool, the file format, ways to attach them, inheritance, and comparing models).
-- **Help & Setup** is now a self-contained, chaptered guide from `docker compose up` to a curated, retrained dataset
+- **Help & Setup** is now the **User Guide**: a self-contained, chaptered guide from `docker compose up` to a curated, retrained dataset
   on AgriStress-500: how the services and data fit together, installing and resetting the stack, loading the demo,
   partitioning from the command line, the workspace, the Visual Explorer, training, and closing the loop, plus a
   reference and troubleshooting chapter. It has copyable commands, an inline architecture diagram, "what you should

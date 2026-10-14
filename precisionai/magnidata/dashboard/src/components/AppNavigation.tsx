@@ -1,8 +1,8 @@
 import {
   Activity,
+  BookOpen,
   BarChart2,
   BarChart3,
-  CircleHelp,
   FlaskConical,
   LayoutDashboard,
   ScanSearch,
@@ -96,7 +96,7 @@ export function AppNavigation(props: Props) {
         )}
         <button className="app-navigation__item" data-active={props.active === 'help'}
                 aria-current={props.active === 'help' ? 'page' : undefined} onClick={props.onHelp}>
-          <CircleHelp size={18} strokeWidth={1.8} /><span>Help & Setup</span>
+          <BookOpen size={18} strokeWidth={1.8} /><span>User Guide</span>
         </button>
       </nav>
 

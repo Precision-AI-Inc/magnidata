@@ -636,7 +636,7 @@ export default function App() {
     explorer: ['Visual Explorer', data ? `Explore ${data.fileName} across features, embeddings, and samples` : 'Explore high-dimensional data and inspect samples'],
     experiments: ['Experiments', 'Track, compare, and analyze model training runs'],
     schema: ['Data Schema', 'Understand the fields available to every visualization'],
-    help: ['Help & Setup', 'A guided path from AgriStress-500 to a curated, retrained dataset'],
+    help: ['User Guide', 'A guided path from AgriStress-500 to a curated, retrained dataset'],
   }
   const datasetPageCopy: Partial<Record<TabId, [string, string]>> = {
     'visual-explorer': ['Visual Explorer', 'Explore relationships, embeddings, and individual samples'],

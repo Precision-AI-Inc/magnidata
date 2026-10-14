@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import { Architecture } from './Architecture'
-import { Cmd, Expect, Goal, Note, Output, Shot, Steps, Term } from './blocks'
+import { Cmd, Expect, Goal, Note, Output, Shot, Snippet, Steps, Term } from './blocks'
 
 export interface Chapter {
   id: string
@@ -508,6 +508,192 @@ function Embeddings() {
   )
 }
 
+function Extend() {
+  return (
+    <>
+      <Goal>Add your own model, per-image loss or metric, and see it in the portal without writing any portal code.</Goal>
+      <h3>How it works</h3>
+      <p>
+        The portal contains no training logic. The <strong>trainer</strong> trains and writes everything it measures to <strong>MLflow</strong>; the <strong>API</strong> reads
+        MLflow; the portal shows whatever is there. So there are two kinds of extension:
+      </p>
+      <ul>
+        <li><strong>Registries</strong> (models and loss terms): a short list of names the API offers in the Train dialog and the trainer knows how to build. You add an entry in a few Python files.</li>
+        <li><strong>Metrics</strong>: nothing to register. Log a number to MLflow under a key and it appears. The key&apos;s prefix decides where.</li>
+      </ul>
+      <table className="guide-table">
+        <thead><tr><th>You add</th><th>Where (all under <code>precisionai/magnidata/</code>)</th><th>It then shows up by itself</th></tr></thead>
+        <tbody>
+          <tr><td>A model preset</td><td><code>training/models.py</code>, <code>training/contract.py</code>, <code>api/training_presets.py</code></td><td>The Train dialog&apos;s preset list, the run&apos;s preset tag, on-demand inference</td></tr>
+          <tr><td>A per-image loss term</td><td><code>training/losses.py</code>, <code>training/contract.py</code></td><td>A Train dialog checkbox, train/validation curves, and Explorer axes <code>loss_&lt;term&gt;</code> plus its mean, delta, slope and rank</td></tr>
+          <tr><td>An epoch metric</td><td><code>training/train.py</code> (<code>log_epoch_metrics</code>)</td><td>A chart in the run, a column choice in Experiments, comparison, sorting and filtering</td></tr>
+          <tr><td>A trainer of your own</td><td>Nothing in this repository: log to MLflow</td><td>The run in Experiments with all its metrics</td></tr>
+        </tbody>
+      </table>
+      <p>Metrics are grouped in a run by the start of their key:</p>
+      <table className="guide-table">
+        <thead><tr><th>Key starts with</th><th>Shown as</th></tr></thead>
+        <tbody>
+          <tr><td><code>train_loss/</code></td><td>Training loss (paired with <code>val_loss/</code> of the same name)</td></tr>
+          <tr><td><code>val_loss/</code></td><td>Validation loss</td></tr>
+          <tr><td><code>val_metric/</code></td><td>Validation metrics</td></tr>
+          <tr><td><code>Learning_rate/</code></td><td>Learning rate</td></tr>
+          <tr><td>anything else, such as <code>custom/…</code></td><td>Other</td></tr>
+        </tbody>
+      </table>
+      <Note title="The examples below are not part of the product">
+        Each example was added to a copy of the code and run through the real trainer, so the screenshots are genuine. Your portal will not list them until you make the same changes.
+      </Note>
+
+      <h3>1. Add a model</h3>
+      <p>
+        A model is any <code>torch.nn.Module</code> that maps images <code>[B, 3, H, W]</code> to class scores <code>[B, C, H, W]</code> at the same height and width. This example registers a
+        wider version of the built-in Tiny UNet.
+      </p>
+      <Steps>
+        <li>Teach the trainer to build it:
+          <Snippet file="training/models.py  (in build_model)">{`    if preset == "tiny_unet_wide":
+        return TinyUNet(num_classes, widths=(32, 64, 128))`}</Snippet></li>
+        <li>Add its key to the list of known presets:
+          <Snippet file="training/contract.py">{`MODEL_PRESETS = ("tiny_unet", "tiny_unet_wide", "lraspp_mobilenet")`}</Snippet></li>
+        <li>Describe it for the Train dialog, with its default settings:
+          <Snippet file="api/training_presets.py  (in PRESETS)">{`    "tiny_unet_wide": {
+        "label": "Tiny UNet (wide)",
+        "description": "Same U-Net with twice the channels per level. Still trains from scratch.",
+        "defaults": {
+            **COMMON_DEFAULTS,
+            "epochs": 10,
+            "batch_size": 8,
+            "image_size": 128,
+            "lr": 1e-3,
+            "pretrained": False,
+        },
+    },`}</Snippet></li>
+        <li>Rebuild so both the API (which lists presets) and the trainer (which builds them) have the change.<Cmd id="up" /></li>
+      </Steps>
+      <Expect>
+        <p>In the Visual Explorer press <strong>Train model</strong>. <strong>Tiny UNet (wide)</strong> is in the <em>Preset</em> list with your description underneath. Start a run: its detail page shows the preset, and
+          the image preview&apos;s <em>Run inference</em> works with it too, because inference rebuilds the model from the same registry.</p>
+      </Expect>
+      <Shot name="extend-train-dialog" />
+      <Note title="Where the settings come from">
+        <code>defaults</code> pre-fill the dialog, and the allowed ranges (epochs 1–200, image size a multiple of 32 up to 1024, and so on) are enforced by the API for every preset.
+        If your model needs a download (pretrained weights), do it inside <code>build_model</code> when <code>pretrained</code> is true, as the MobileNet preset does.
+      </Note>
+
+      <h3>2. Add a per-image loss term</h3>
+      <p>
+        A loss term returns <strong>one number per image</strong>, not one for the batch. That is what lets the portal rank images by difficulty. This example adds a soft Jaccard (IoU) loss.
+      </p>
+      <Steps>
+        <li>Write the function and register it:
+          <Snippet file="training/losses.py">{`def jaccard_per_sample(
+    logits: torch.Tensor, target: torch.Tensor, ignore_index: int = IGNORE_INDEX, eps: float = 1e-6
+) -> torch.Tensor:
+    """Return each image's soft Jaccard loss, 1 - mean IoU over the classes present in its target."""
+    classes = logits.shape[1]
+    valid = _valid_mask(target, ignore_index)
+    mask = valid.unsqueeze(1)
+    probs = logits.softmax(1) * mask
+    onehot = functional.one_hot(target.masked_fill(~valid, 0), classes).permute(0, 3, 1, 2).to(probs.dtype) * mask
+    inter = (probs * onehot).flatten(2).sum(2)
+    union = (probs + onehot - probs * onehot).flatten(2).sum(2)
+    present = onehot.flatten(2).sum(2) > 0
+    n_present = present.sum(1)
+    loss = 1 - (((inter + eps) / (union + eps)) * present).sum(1) / n_present.clamp(min=1)
+    return torch.where(n_present > 0, loss, torch.zeros_like(loss))
+
+
+LOSS_REGISTRY = {
+    ...,
+    "jaccard": jaccard_per_sample,
+}`}</Snippet></li>
+        <li>Allow the name in the shared contract (lower case letters, digits and underscores, up to 32 characters):
+          <Snippet file="training/contract.py">{`SEGMENTATION_LOSS_TERMS = ("dice", "cce", "bce", "jaccard")`}</Snippet></li>
+        <li>Rebuild.<Cmd id="up" /></li>
+      </Steps>
+      <p>
+        The function receives <code>logits</code> <code>[B, C, H, W]</code> and <code>target</code> <code>[B, H, W]</code> (pixels equal to <code>ignore_index</code> must be left out) and must return a tensor of shape <code>[B]</code>.
+        Give every extra argument a default, and return 0 rather than NaN for an image with nothing to score.
+      </p>
+      <Expect>
+        <p>The Train dialog shows a <strong>jaccard</strong> checkbox with a weight next to it. Tick it, train, and the run has <code>train_loss/jaccard</code> and <code>val_loss/jaccard</code> curves.
+          Overlay the run in the Visual Explorer and open <em>Choose visible fields</em>: search for <em>jaccard</em> to find <code>loss_jaccard</code>, <code>loss_jaccard_mean</code>, <code>_delta</code>, <code>_slope</code> and <code>_rank</code>.
+          They behave like every other axis: brush them, colour by them, save a selection.</p>
+      </Expect>
+      <Shot name="extend-axes" />
+      <Shot name="extend-columns" />
+
+      <h3>3. Add a metric</h3>
+      <p>
+        An epoch metric is one number per epoch for the whole validation set. The trainer already computes a confusion matrix, so this example adds pixel accuracy from it.
+      </p>
+      <Snippet file="training/train.py  (in log_epoch_metrics, after the mIoU line)">{`        buffer.add("val_metric/pixel_accuracy", float(confusion.diag().sum() / confusion.sum().clamp(min=1)), epoch)`}</Snippet>
+      <Cmd id="up" note="Rebuild, then train something." />
+      <Expect>
+        <p>Open the run in <strong>Experiments</strong>: a <code>val_metric/pixel_accuracy</code> chart sits beside <code>val_metric/miou</code>. <strong>Columns</strong> now lists the key, so you can add it to the table, sort by it and compare runs on it.</p>
+      </Expect>
+      <Shot name="extend-run-metrics" />
+      <Note tone="tip" title="Show it by default">
+        The Columns choice is remembered by your browser. To make a metric part of everyone&apos;s default table, add its key to <code>DEFAULT_METRICS</code> in
+        <code> dashboard/src/lib/experiments.ts</code> and rebuild the portal.
+      </Note>
+      <Note title="What the Explorer can and cannot show per image">
+        Per-image values in the Explorer come from the per-sample files, which carry <code>loss_&lt;term&gt;</code> columns plus the optional <code>iou</code> and <code>confidence</code>.
+        A new <em>per-image</em> number therefore has to be a loss term (section 2). A new <em>aggregate</em> metric (this section) shows in Experiments, not as an Explorer axis.
+      </Note>
+
+      <h3>4. Use a trainer of your own</h3>
+      <p>
+        You do not have to change this repository at all. Any program can log a run to the stack&apos;s MLflow; if it follows the contract the run appears in <strong>Experiments</strong>, tied to its dataset.
+        Point it at the stack (the Docker stack publishes MLflow on port 5052):
+      </p>
+      <Cmd id="mlflowEnv" />
+      <Snippet file="my_trainer.py">{`import mlflow
+
+mlflow.set_experiment("my-own-trainer")
+with mlflow.start_run(run_name="segformer-b0-v1"):
+    mlflow.set_tags({
+        "magnidata.dataset_source": "data_user/agristress-500_tiles-part1.csv",  # ties the run to a dataset
+        "magnidata.origin": "external",
+    })
+    mlflow.log_param("lr", 6e-5)
+    for epoch in range(1, 6):
+        ...  # train and validate
+        mlflow.log_metric("val_metric/miou", miou, step=epoch)
+        mlflow.log_metric("val_metric/f1_crop", f1, step=epoch)             # your metric
+        mlflow.log_metric("custom/seconds_per_image", seconds, step=epoch)  # lands under "Other"`}</Snippet>
+      <Expect>
+        <p>The run appears in Experiments with its parameters and every metric curve, including keys the portal has never seen. A run without the <code>magnidata.dataset_source</code> tag still shows up;
+          use <strong>Link to current dataset</strong> in its detail to attach it to the dataset you have open.</p>
+      </Expect>
+      <Shot name="extend-external" />
+      <p>
+        To also get per-image axes and the epoch scrubber from your own trainer, write the per-sample files with the same helper the built-in trainer uses
+        (<code>LossRecorder</code>, or the <code>attach</code> command for a run that already exists). The file layout, columns and examples are in
+        <code> precisionai/magnidata/docs/training-contract.md</code>.
+      </p>
+
+      <h3>Test your change</h3>
+      <Steps>
+        <li>Run the trainer&apos;s tests (install the development extras once with <code>pip install -e ".[dev,training]"</code>). They take about three minutes.<Cmd id="trainerTests" /></li>
+        <li>Rebuild, then start a short run (2 epochs) on a small dataset from the Train dialog.</li>
+        <li>Check that the run finishes and that your preset, loss term or metric is where the tables above say it should be.</li>
+      </Steps>
+      <table className="guide-table">
+        <thead><tr><th>You see</th><th>Why, and what to do</th></tr></thead>
+        <tbody>
+          <tr><td>The new preset is missing from the dropdown</td><td>The API image still has the old list. Rebuild (<code>docker compose up --build</code>), then reload the portal.</td></tr>
+          <tr><td>The run fails with <em>unknown preset</em></td><td>The trainer image is older than the API. Both must contain the new key, so rebuild everything together.</td></tr>
+          <tr><td>The loss term is rejected</td><td>Its name must match <code>[a-z][a-z0-9_]*</code> (up to 32 characters) and be in <code>SEGMENTATION_LOSS_TERMS</code> <em>and</em> <code>LOSS_REGISTRY</code>.</td></tr>
+          <tr><td>The metric chart is empty or missing</td><td>Check the key in the MLflow UI (port 5052). The value must be a finite number and the key must be logged with a <code>step</code>.</td></tr>
+          <tr><td><em>Overlay on dataset</em> has no new axes</td><td>Only <code>loss_&lt;term&gt;</code>, <code>iou</code> and <code>confidence</code> are read from per-sample files.</td></tr>
+        </tbody>
+      </table>
+    </>
+  )
+}
+
 function Reference() {
   return (
     <>
@@ -563,5 +749,6 @@ export const CHAPTERS: readonly Chapter[] = [
   { id: 'loop', title: 'Close the loop', summary: 'Curate hard images and retrain', minutes: 6, Body: Loop },
   { id: 'own-data', title: 'Bring your own data', summary: 'Folder, upload or CSV', minutes: 6, Body: OwnData },
   { id: 'embeddings', title: 'Add embeddings', summary: 'Enable the 3D embeddings view', minutes: 5, Body: Embeddings },
+  { id: 'extend', title: 'Add a model or a metric', summary: 'Extend training; see it in the UI', minutes: 9, Body: Extend },
   { id: 'reference', title: 'Reference and troubleshooting', summary: 'Formats, ports, fixes', minutes: 4, Body: Reference },
 ]

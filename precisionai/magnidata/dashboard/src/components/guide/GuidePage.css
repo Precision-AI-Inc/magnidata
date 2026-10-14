@@ -80,3 +80,12 @@
   .guide-page { padding: 18px 14px 60px; }
   .guide-glossary { grid-template-columns: 1fr; }
 }
+
+.guide-snippet { position: relative; margin: 10px 0; border-radius: 10px; overflow: hidden; background: #0b1f2e; }
+.guide-snippet__file { padding: 6px 14px; border-bottom: 1px solid rgba(255, 255, 255, .08); background: rgba(255, 255, 255, .05); }
+.guide-snippet__file code { padding: 0; background: none; color: #9fd9cf; font: 11px 'JetBrains Mono', monospace; }
+.guide-snippet pre { margin: 0; padding: 11px 44px 11px 14px; overflow-x: auto; color: #d6f5ee; font: 12px/1.55 'JetBrains Mono', monospace; }
+.guide-snippet pre code { padding: 0; background: none; color: inherit; font: inherit; }
+.guide-snippet button { position: absolute; right: 8px; top: 38px; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: rgba(255, 255, 255, .1); color: #d6f5ee; cursor: pointer; }
+.guide-snippet button:hover { background: rgba(255, 255, 255, .2); }
+.guide-table th code { text-transform: none; letter-spacing: 0; }

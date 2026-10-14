@@ -79,6 +79,16 @@ export function validateParams(params: TrainParams, bounds: Record<string, Bound
   return errors
 }
 
+/** Settings the AgriTune engine does not use; the API rejects them, so they are never sent for its presets. */
+const REFERENCE_ONLY: (keyof TrainParams)[] = ['loss_terms', 'num_workers', 'split_mode', 'pretrained']
+
+/** The parameters to POST for a launch: the dialog state minus anything the preset's engine would reject. */
+export function launchParams(params: TrainParams, engine: string): Partial<TrainParams> {
+  const out: Partial<TrainParams> = { ...params }
+  if (engine === 'agritune') for (const key of REFERENCE_ONLY) delete out[key]
+  return out
+}
+
 export function isActive(status: string | null | undefined): boolean {
   return status === 'SCHEDULED' || status === 'RUNNING'
 }

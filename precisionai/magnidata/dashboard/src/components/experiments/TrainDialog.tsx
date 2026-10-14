@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import { api, errorText } from '../../api'
 import type { TrainingPresets } from '../../api'
-import { validateParams } from '../../lib/train'
+import { launchParams, validateParams } from '../../lib/train'
 import type { FieldErrors, TrainParams } from '../../lib/train'
 import '../ByodDialog.css'
 
@@ -68,7 +68,7 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
     try {
       const run = await api.launchTraining({
         name: name.trim() || undefined, dataset_source: datasetSource, preset,
-        params: { ...params }, parent_run_id: parentRunId,
+        params: launchParams(params, selectedPreset.engine), parent_run_id: parentRunId,
       })
       onLaunched(run.run_id)
     } catch (e) {

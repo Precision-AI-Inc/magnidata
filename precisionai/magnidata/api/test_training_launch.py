@@ -116,6 +116,22 @@ def test_agritune_launch_records_engine_and_component_losses(client, mlflow_stor
     assert run["params"]["feature_provider"] == "online"
 
 
+@pytest.mark.parametrize("preset", ["agritune_mlp_probe", "agritune_token_fpn"])
+def test_agritune_presets_launch_with_their_served_defaults(client, mlflow_store, preset):
+    served = next(p for p in client.get("/api/training/presets").get_json()["presets"] if p["key"] == preset)
+    params = {
+        k: v
+        for k, v in served["defaults"].items()
+        if k not in {"loss_terms", "num_workers", "split_mode", "pretrained"}
+    }
+
+    response = client.post(
+        "/api/training/runs", json={"dataset_source": "data_user/syn.csv", "preset": preset, "params": params}
+    )
+
+    assert response.status_code == 201
+
+
 def test_launch_records_parent_and_weights(client, mlflow_store):
     parent = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
     client.post(f"/api/runs/{parent}/cancel")

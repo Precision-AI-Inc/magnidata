@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isActive, paramsFromRun, progressLabel, trainDisabledReason, validateParams } from './train'
+import { isActive, launchParams, paramsFromRun, progressLabel, trainDisabledReason, validateParams } from './train'
 import type { Bound, TrainParams } from './train'
 
 const bounds: Record<string, Bound> = {
@@ -120,5 +120,20 @@ describe('paramsFromRun', () => {
   it('skips missing and non-numeric values', () => {
     expect(paramsFromRun({ epochs: 'many' })).toEqual({})
     expect(paramsFromRun({})).toEqual({})
+  })
+})
+
+describe('launchParams', () => {
+  const full = { ...valid, num_workers: 2, feature_provider: 'hybrid', agritune_loss: 'ce_dice' } as TrainParams
+
+  it('drops the reference-only settings for AgriTune presets', () => {
+    const sent = launchParams(full, 'agritune')
+    for (const key of ['loss_terms', 'num_workers', 'split_mode', 'pretrained']) expect(sent).not.toHaveProperty(key)
+    expect(sent.agritune_loss).toBe('ce_dice')
+    expect(sent.epochs).toBe(full.epochs)
+  })
+
+  it('sends everything for reference presets', () => {
+    expect(launchParams(full, 'reference')).toEqual(full)
   })
 })

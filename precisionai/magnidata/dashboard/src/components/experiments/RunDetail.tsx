@@ -173,11 +173,11 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
           {LIVE.has(run.status) && run.magnidata['magnidata.origin'] === 'ui' && (
             <div className="mt-2 text-xs flex items-center gap-2" style={{ color: 'var(--c-t2)' }}>
               {!confirmCancel ? (
-                <button className="btn-ghost px-2.5 py-1 text-xs" onClick={() => setConfirmCancel(true)}>Cancel run</button>
+                <button className="btn-danger px-2.5 py-1 text-xs" onClick={() => setConfirmCancel(true)}>Cancel run</button>
               ) : (
                 <>
                   Stop this training run?
-                  <button className="btn-primary px-2.5 py-1 text-xs" onClick={() => void cancel()}>Yes, cancel it</button>
+                  <button className="btn-danger px-2.5 py-1 text-xs" onClick={() => void cancel()}>Yes, cancel it</button>
                   <button className="underline" onClick={() => setConfirmCancel(false)}>Keep running</button>
                 </>
               )}

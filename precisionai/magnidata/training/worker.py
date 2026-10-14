@@ -38,6 +38,7 @@ HEARTBEAT_FILENAME = ".trainer_heartbeat"
 LOG_DIRNAME = ".trainer_logs"
 POLL_S = 5.0
 LOG_UPLOAD_S = 30.0
+CANCEL_CHECK_S = 2.0
 TERM_GRACE_S = 30.0
 ERROR_TAG = "magnidata.error"
 TERMINAL = {s.value for s in (contract.RunStatus.FINISHED, contract.RunStatus.FAILED, contract.RunStatus.KILLED)}
@@ -217,15 +218,31 @@ def _stop_child(child: subprocess.Popen) -> None:
 
 
 def _watch(
-    child: subprocess.Popen, client: Any, run_id: str, log: Path, beat: Callable[[], None], upload_every: float
+    child: subprocess.Popen,
+    client: Any,
+    run_id: str,
+    log: Path,
+    beat: Callable[[], None],
+    upload_every: float,
+    cancel_check_s: float | None = None,
 ) -> bool:
-    """Wait for the child while keeping the heartbeat and log fresh; True if it was stopped by a signal."""
+    """Wait for the child while keeping the heartbeat and log fresh; True if it was stopped early.
+
+    With ``cancel_check_s`` the run's cancel tag is polled that often and the child is stopped as soon as
+    it is set. The AgriTune trainer only looks at the tag between epochs, which can be minutes apart.
+    """
     last_upload = time.monotonic()
+    last_cancel_check = last_upload
     while child.poll() is None:
         beat()
         if stop_requested.is_set():
             _stop_child(child)
             return True
+        if cancel_check_s is not None and time.monotonic() - last_cancel_check >= cancel_check_s:
+            last_cancel_check = time.monotonic()
+            if client.get_run(run_id).data.tags.get(contract.TAG_CANCEL_REQUESTED) == "true":
+                _stop_child(child)
+                return True
         if time.monotonic() - last_upload >= upload_every:
             _upload_log(client, run_id, log)
             last_upload = time.monotonic()
@@ -250,10 +267,10 @@ def run_one(
         return None
     log = data_root / "data_user" / LOG_DIRNAME / run_id / "trainer.log"
     log.parent.mkdir(parents=True, exist_ok=True)
+    engine = client.get_run(run_id).data.tags.get(contract.TAG_ENGINE, "reference")
     if argv:
         command = list(argv)
     else:
-        engine = client.get_run(run_id).data.tags.get(contract.TAG_ENGINE, "reference")
         command = (
             agritune_argv(run_id, data_root, client.tracking_uri)
             if engine == "agritune"
@@ -261,7 +278,15 @@ def run_one(
         )
     with open(log, "w") as out:
         child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
-        interrupted = _watch(child, client, run_id, log, lambda: touch_heartbeat(data_root), log_upload_s)
+        interrupted = _watch(
+            child,
+            client,
+            run_id,
+            log,
+            lambda: touch_heartbeat(data_root),
+            log_upload_s,
+            cancel_check_s=CANCEL_CHECK_S if engine == "agritune" else None,
+        )
     status = client.get_run(run_id).info.status
     if status not in TERMINAL:
         if interrupted:

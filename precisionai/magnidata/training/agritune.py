@@ -14,10 +14,10 @@ import numpy as np
 from PIL import Image
 
 from precisionai.magnidata.training import data
+from precisionai.magnidata.training.train import describe_device, log, resolve_device
 
 try:
     import mlflow
-    import torch
 
     from precisionai.agritune.augmentations.image.pipeline import AugmentationMode, GeometricConfig
     from precisionai.agritune.features.keys import EncoderFingerprint
@@ -102,6 +102,8 @@ def _config(run: Any, data_root: Path, manifest: Path, palette: data.Palette) ->
     augmentation = AugmentationSelection(mode=augmentation_mode)
     if augmentation_mode is not AugmentationMode.NONE:
         augmentation.geometric = GeometricConfig(horizontal_flip_probability=0.5)
+    device = resolve_device(os.environ.get("MAGNIDATA_TRAIN_DEVICE", "auto"))
+    log(f"training on {describe_device(device)}")
     return TrainingRunConfig(
         manifest_path=str(manifest),
         feature_store_dir=str(data_root / "data_user" / ".agritune" / "features" / model.replace("/", "_")),
@@ -114,6 +116,7 @@ def _config(run: Any, data_root: Path, manifest: Path, palette: data.Palette) ->
         encoder_api_key=os.environ.get("AGRITUNE_ENCODER_API_KEY"),
         augmentation=augmentation,
         decoder_name=decoder,
+        device=device.type,
         batch_size=_integer(params, "batch_size", 4),
         val_fraction=_number(params, "val_fraction", 0.2),
         seed=_integer(params, "seed", 0),
@@ -121,7 +124,7 @@ def _config(run: Any, data_root: Path, manifest: Path, palette: data.Palette) ->
         trainer=TrainerConfig(
             max_epochs=_integer(params, "epochs", 10),
             precision=PrecisionConfig(
-                mode="fp16" if _boolean(params, "amp", True) and torch.cuda.is_available() else "fp32"
+                mode="fp16" if _boolean(params, "amp", True) and device.type == "cuda" else "fp32"
             ),
             seed=_integer(params, "seed", 0),
         ),

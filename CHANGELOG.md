@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- AgriTune runs now train on the device named by `MAGNIDATA_TRAIN_DEVICE` (default `auto`, so the GPU when one is
+  available) instead of always using the CPU, and fail with a clear message when `cuda` is requested without a GPU.
+- The Train dialog no longer sends reference-only settings for AgriTune presets, which the API rejected with a 400.
+- Cancelling an AgriTune run stops it within seconds instead of at the end of the current epoch.
+
 ### Added
 
 - AgriTune is now an optional portal training engine. Presets carry an `engine` (`reference` or `agritune`); the new

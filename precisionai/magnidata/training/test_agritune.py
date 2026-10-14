@@ -5,7 +5,7 @@
 
 import importlib
 import importlib.util
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -34,3 +34,29 @@ def test_missing_objective_defaults_to_cross_entropy(agritune):
 
 def test_every_agritune_preset_maps_to_a_decoder(agritune):
     assert set(agritune.PRESET_DECODERS) == {"agritune_mlp_probe", "agritune_token_fpn"}
+
+
+def _run(preset="agritune_mlp_probe"):
+    return SimpleNamespace(info=SimpleNamespace(run_id="r1"), data=SimpleNamespace(params={"preset": preset}, tags={}))
+
+
+def _palette(agritune):
+    return SimpleNamespace(num_classes=2)
+
+
+def test_cpu_is_used_when_requested(agritune, monkeypatch, tmp_path):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+
+    config = agritune._config(_run(), tmp_path, tmp_path / "m.csv", _palette(agritune))
+
+    assert config.device == "cpu"
+    assert config.trainer.precision.mode == "fp32"
+
+
+def test_requesting_cuda_without_a_gpu_fails_clearly(agritune, monkeypatch, tmp_path):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cuda")
+    torch = importlib.import_module("torch")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    with pytest.raises(RuntimeError, match="CUDA requested but not available"):
+        agritune._config(_run(), tmp_path, tmp_path / "m.csv", _palette(agritune))

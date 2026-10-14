@@ -5,6 +5,7 @@
 
 import os
 import sys
+import time
 
 import pytest
 
@@ -212,3 +213,15 @@ def test_stop_request_kills_child(env, tmp_path, monkeypatch):
     finally:
         worker.stop_requested.clear()
     assert status == "KILLED"
+
+
+def test_agritune_run_is_stopped_as_soon_as_cancel_is_requested(env, tmp_path, monkeypatch):
+    _, client, exp = env
+    monkeypatch.setattr(worker, "CANCEL_CHECK_S", 0.1)
+    run_id = _run(client, exp, {contract.TAG_ENGINE: "agritune", contract.TAG_CANCEL_REQUESTED: "true"})
+
+    started = time.monotonic()
+    status = worker.run_one(client, run_id, tmp_path, argv=[sys.executable, "-c", "import time; time.sleep(60)"])
+
+    assert status == "KILLED"
+    assert time.monotonic() - started < 30

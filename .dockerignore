@@ -13,6 +13,5 @@ precisionai/magnidata/api/.venv
 # Datasets are bind-mounted at run time, never baked into an image.
 data
 image_sets
-tasks
 precisionai/magnidata/data_user
 precisionai/magnidata/dashboard

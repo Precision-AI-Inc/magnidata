@@ -18,19 +18,24 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib
 import io
 import math
+import multiprocessing
 import os
 import sys
 from collections.abc import Iterable, Iterator
-from typing import TypeVar
+from concurrent.futures import ProcessPoolExecutor
+from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
 from PIL import Image
 
 from . import coco_labels, image_source, instance_features, metadata_join, pixel_features, provenance, quality_features
-from .nima import NimaScorer
 from .schema import CLUSTER, FEATURE_SCHEMA_VERSION, OUTPUT_COLUMNS, blank_row
+
+if TYPE_CHECKING:
+    from .nima import NimaScorer
 
 try:
     from tqdm import tqdm
@@ -264,6 +269,17 @@ def process_row(image_path: str, scorer: NimaScorer | None = None, image_mode: s
     return out, "; ".join(errors)
 
 
+def _process_rows(paths: list[str], scorer: NimaScorer | None, image_mode: str, workers: int) -> list[tuple[dict, str]]:
+    """Compute rows for every path in input order, across processes when that is safe."""
+    if workers > 1 and scorer is None and len(paths) > 1:
+        # spawn, not fork: the API server calls this from a multi-threaded process, where fork can deadlock.
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=min(workers, len(paths)), mp_context=context) as pool:
+            results = pool.map(process_row, paths, [None] * len(paths), [image_mode] * len(paths), chunksize=1)
+            return list(_progress(results, len(paths)))
+    return [process_row(path, scorer, image_mode) for path in _progress(paths, len(paths))]
+
+
 def run(
     input_csv: str,
     output_csv: str,
@@ -271,6 +287,7 @@ def run(
     limit: int | None = None,
     skip_nima: bool = False,
     image_mode: str = "auto",
+    workers: int = 1,
 ) -> int:
     """Extract features for every image listed in `input_csv` and write `output_csv`.
 
@@ -292,6 +309,10 @@ def run(
     image_mode : str, default "auto"
         Image resolution strategy: "auto" (full-res then thumbnail fallback),
         "fullres", or "thumbnail".
+    workers : int, default 1
+        Number of worker processes. Rows are independent and results keep input order, so the
+        output is identical to a serial run. Ignored (serial) when the learned IQA scorer is
+        enabled, since its models are not shared across processes.
 
     Returns
     -------
@@ -313,12 +334,15 @@ def run(
     scorer = None
     if not skip_nima:
         print(f"Loading learned IQA models (NIMA/NIQE/BRISQUE) on {device} ...", file=sys.stderr)
-        scorer = NimaScorer(device=device)
+        # Imported here, not at module level: pyiqa pulls in torch (~5 s, ~0.5 GB), and every
+        # parallel worker imports this module even though only this branch needs it.
+        scorer = importlib.import_module(".nima", __package__).NimaScorer(device=device)
+
+    paths = [(r.get(path_col) or "").strip() for r in rows]
+    computed = _process_rows(paths, scorer, image_mode, workers)
 
     out_rows, errored = [], []
-    for r in _progress(rows, len(rows)):
-        image_path = (r.get(path_col) or "").strip()
-        row, err = process_row(image_path, scorer, image_mode)
+    for r, image_path, (row, err) in zip(rows, paths, computed, strict=True):
         for c in cluster_cols:  # passthrough cluster labels (verbatim)
             row[c] = r.get(c) or ""
         out_rows.append(row)
@@ -356,6 +380,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--output", required=True, help="output CSV path")
     ap.add_argument("--device", default="cpu", help="torch device for NIMA (cpu/cuda)")
     ap.add_argument("--limit", type=int, default=None, help="process only the first N rows")
+    ap.add_argument("--workers", type=int, default=1, help="worker processes (only without NIMA/IQA models)")
     ap.add_argument(
         "--skip-nima", action="store_true", help="skip all learned IQA models (NIMA/NIQE/BRISQUE); pixel/COCO/meta only"
     )
@@ -368,7 +393,7 @@ def main(argv: list[str] | None = None) -> None:
         "image-derived features won't match full-res.",
     )
     args = ap.parse_args(argv)
-    run(args.input, args.output, args.device, args.limit, args.skip_nima, args.image_source)
+    run(args.input, args.output, args.device, args.limit, args.skip_nima, args.image_source, args.workers)
 
 
 if __name__ == "__main__":

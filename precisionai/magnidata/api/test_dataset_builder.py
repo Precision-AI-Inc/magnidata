@@ -17,6 +17,7 @@ import io
 import json
 import os
 import time
+from pathlib import Path
 
 import dataset_builder
 import db
@@ -374,9 +375,13 @@ def _tiny_png_bytes(color=(200, 50, 50)):
 class _FakeResponse:
     def __init__(self, data):
         self._data = data
+        self._pos = 0
 
-    def read(self):
-        return self._data
+    def read(self, size=-1):
+        end = len(self._data) if size is None or size < 0 else self._pos + size
+        chunk = self._data[self._pos : end]
+        self._pos += len(chunk)
+        return chunk
 
     def __enter__(self):
         return self
@@ -674,3 +679,26 @@ def test_upload_build_rejects_embeddings_that_match_no_image(monkeypatch):
 
     assert job["status"] == "error"
     assert "match the uploaded images" in job["error"]
+
+
+def test_agristress_build_reuses_staged_files_on_retry(monkeypatch):
+    _fake_urlopen_agristress(monkeypatch)
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    first = dataset_builder._agristress_file_pairs()
+    stage = Path(dataset_builder.DATA_ROOT) / dataset_builder.USER_DATA_REL / "retry_images"
+    images_dir, masks_dir, thumbs_dir = (stage / d for d in ("images", "masks", "thumbnails"))
+    for d in (images_dir, masks_dir, thumbs_dir):
+        d.mkdir(parents=True)
+    basename, image_rel, mask_rel = first[0]
+    dataset_builder._download_agristress_pair(images_dir, masks_dir, thumbs_dir, "retry", image_rel, mask_rel, basename)
+
+    def no_network(url, timeout=None):
+        raise AssertionError("staged files must not be downloaded again")
+
+    monkeypatch.setattr(dataset_builder.urllib.request, "urlopen", no_network)
+    row = dataset_builder._download_agristress_pair(
+        images_dir, masks_dir, thumbs_dir, "retry", image_rel, mask_rel, basename
+    )
+
+    assert row["cluster"] == "L0"
+    assert not list(stage.rglob("*.part"))

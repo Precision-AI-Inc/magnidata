@@ -17,6 +17,8 @@ CLOUD_NAME = "Cloud Dataset"
 CLOUD_SOURCE = "data_user/cloud-dataset.csv"
 MAX_MERGE_SOURCES = 20
 MINI_SOURCES = ("data_user/agristress500-mini1.csv", "data_user/agristress500-mini2.csv")
+TILE_SOURCES = ("data_user/agristress-500_tiles-part1.csv", "data_user/agristress-500_tiles-part2.csv")
+CLOUD_MEMBER_SETS = (MINI_SOURCES, TILE_SOURCES)
 
 
 @dataclass(frozen=True)
@@ -160,15 +162,27 @@ def combine_sources(paths: Sequence[str | Path]) -> tuple[list[str], list[dict[s
     return columns, combined
 
 
+def _cloud_members(data_root: str) -> tuple[str, ...] | None:
+    """Return the first member set whose files all exist under ``data_root``."""
+    return next(
+        (members for members in CLOUD_MEMBER_SETS if all((Path(data_root) / source).is_file() for source in members)),
+        None,
+    )
+
+
 def ensure_cloud_dataset(data_root: str, database: Any) -> dict[str, Any] | None:
-    """Create the AgriStress cloud union and lineage edges when both mini datasets exist."""
-    member_paths = [Path(data_root) / source for source in MINI_SOURCES]
-    if not all(path.is_file() for path in member_paths):
+    """Create the AgriStress cloud union and lineage edges when both member datasets exist.
+
+    The members are the two mini datasets or, on installs built from tiles, the two tile
+    parts. Members keep any parent they already have and gain the cloud as another.
+    """
+    members = _cloud_members(data_root)
+    if members is None:
         return None
     cloud_path = Path(data_root) / CLOUD_SOURCE
     record = database.get_created_dataset_by_source(CLOUD_SOURCE)
     if record is None or not cloud_path.is_file():
-        columns, rows = combine_sources(member_paths)
+        columns, rows = combine_sources([Path(data_root) / source for source in members])
         write_rows(cloud_path, columns, rows)
         if record is None:
             record = database.create_dataset_record(
@@ -179,9 +193,10 @@ def ensure_cloud_dataset(data_root: str, database: Any) -> dict[str, Any] | None
                 None,
                 len(rows),
             )
-    for source in MINI_SOURCES:
+    parent_map = database.dataset_parent_map()
+    for source in members:
         if database.get_created_dataset_by_source(source) is not None:
-            database.set_dataset_parents(source, [CLOUD_SOURCE])
+            database.set_dataset_parents(source, [*parent_map.get(source, []), CLOUD_SOURCE])
     return record
 
 

@@ -40,6 +40,8 @@ import './components/WorkspaceDashboard.css'
 
 type LandingView = 'landing' | 'help' | 'experiments'
 
+const CLOUD_DATASET_SOURCE = 'data_user/cloud-dataset.csv'
+
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'visual-explorer', label: 'Visual Explorer', icon: <Share2 size={13} /> },
   { id: 'charts',          label: 'Charts',          icon: <BarChart2 size={13} /> },
@@ -322,6 +324,16 @@ export default function App() {
       setTab('visual-explorer')
       return
     }
+    // Nothing loaded: open the last dataset used, else the Cloud Dataset, else the first usable one.
+    const usable = datasetMeta.filter(d => !d.is_lfs_pointer)
+    const target = rememberedDataset(usable, readLastDatasetSource())
+      ?? usable.find(d => d.source === CLOUD_DATASET_SOURCE)
+      ?? usable[0]
+    if (target) {
+      setLandingView('landing')
+      void loadDatasetBySource(target.source)
+      return
+    }
     goToMagniData()
   }
 
@@ -581,7 +593,7 @@ export default function App() {
         image_names: kept,
         query_image_names: query,
         complement_top_k: complementTopK,
-        cloud_source: 'data_user/cloud-dataset.csv',
+        cloud_source: CLOUD_DATASET_SOURCE,
       })
       await reloadDatasets()
       setCreatedDataset(created)
@@ -1100,12 +1112,12 @@ export default function App() {
                                    onChange={event => setComplementTopK(Math.max(1, Math.min(5000, Number(event.target.value) || 1)))} />
                           </label>
                           <button className="btn-primary explorer-config__wide"
-                                  disabled={savingComplement || !complementName.trim() || !liveFilteredRows.length || datasetSource === 'data_user/cloud-dataset.csv'}
+                                  disabled={savingComplement || !complementName.trim() || !liveFilteredRows.length || datasetSource === CLOUD_DATASET_SOURCE}
                                   onClick={() => void createComplement()}>
                             {savingComplement ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />}
                             {savingComplement ? 'Finding complement…' : 'Create complemented dataset'}
                           </button>
-                          {datasetSource === 'data_user/cloud-dataset.csv' && <p className="explorer-config__hint">Cloud Dataset already contains the full complement pool.</p>}
+                          {datasetSource === CLOUD_DATASET_SOURCE && <p className="explorer-config__hint">Cloud Dataset already contains the full complement pool.</p>}
                           {complementMsg && <p className="explorer-config__hint" role="status">{complementMsg}</p>}
                         </section>
                       )}

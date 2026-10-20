@@ -1291,3 +1291,23 @@ def test_created_dataset_picks_up_an_embeddings_file_placed_beside_its_csv(app_c
     listed = next(d for d in client.get("/api/datasets").get_json() if d["source"] == merged["source"])
     assert listed["has_embeddings"] is True
     assert client.get(f"/api/dataset/embeddings?source={merged['source']}").status_code == 200
+
+
+def test_cloud_union_is_built_from_tile_parts_and_keeps_their_parent(app_client):
+    client, app_module = app_client
+    root = Path(app_module.DATA_ROOT)
+    curation = app_module.dataset_curation
+    full = "data_user/agristress500.csv"
+    part1, part2 = curation.TILE_SOURCES
+    _write_feature_csv(root / full, [{"image_path": "images/a.png", "width": "256", "score": "0"}])
+    _write_feature_csv(root / part1, [{"image_path": "images/a.png", "width": "256", "score": "0"}])
+    _write_feature_csv(root / part2, [{"image_path": "images/b.png", "width": "256", "score": "5"}])
+    app_module.db.create_dataset_record("Full", "", full, None, None, 1)
+    app_module.db.create_dataset_record("Part 1", "", part1, full, None, 1)
+    app_module.db.create_dataset_record("Part 2", "", part2, full, None, 1)
+
+    by_source = {dataset["source"]: dataset for dataset in client.get("/api/datasets").get_json()}
+
+    assert by_source[curation.CLOUD_SOURCE]["row_count"] == 2
+    assert by_source[part1]["parent_sources"] == [full, curation.CLOUD_SOURCE]
+    assert by_source[part2]["parent_sources"] == [full, curation.CLOUD_SOURCE]

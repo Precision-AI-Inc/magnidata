@@ -148,6 +148,25 @@ def test_upload_build_end_to_end_without_embeddings(monkeypatch):
     assert not os.path.isfile(rec["source"].replace(".csv", ".json"))
 
 
+def _recording_features_run(calls):
+    def run(input_csv, output_csv, **kwargs):
+        calls.append(kwargs)
+        _fake_features_run(input_csv, output_csv, **kwargs)
+
+    return run
+
+
+def test_upload_build_extracts_features_in_parallel(monkeypatch):
+    calls = []
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _recording_features_run(calls))
+    monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 5)
+
+    job = _wait_for_job(dataset_builder.start_upload_build([UploadedImage("a.png", b"AAAA")], [], None, "Set", ""))
+
+    assert job["status"] == "done"
+    assert calls[0]["workers"] == 5
+
+
 def _wait_for_build_slot(timeout=2.0):
     # A job reports "done" before its worker's `finally` cleans up and frees the slot.
     deadline = time.monotonic() + timeout
@@ -565,6 +584,18 @@ def test_local_build_defaults_dataset_name_to_folder_name(tmp_path, monkeypatch)
     job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "  ", ""))
 
     assert job["dataset"]["name"] == "MMDE-POC"
+
+
+def test_local_build_extracts_features_in_parallel(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _recording_features_run(calls))
+    monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 5)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+
+    job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
+
+    assert job["status"] == "done"
+    assert calls[0]["workers"] == 5
 
 
 def test_local_build_manifest_points_at_image_sets_without_copying(tmp_path, monkeypatch):

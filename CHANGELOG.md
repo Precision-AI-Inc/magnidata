@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Building a dataset from a server folder or a browser upload now extracts features with the same worker pool as the
+  AgriStress-500 build (up to 6 processes, bounded by CPU and memory) instead of a single process, so large folders
+  build several times faster.
 - A dataset build no longer shows *Lost track of the build — Failed to fetch* after one dropped status request while
   it keeps running on the server: the portal retries with backoff for about three minutes, keeping the last progress,
   and says plainly when an API restart has lost the build.

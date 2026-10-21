@@ -452,7 +452,14 @@ def _run_upload_build(
 
         _update_job(job_id, status="extracting_features", percent=60, message="Extracting features…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
-        features_mod.run(manifest_path, feature_csv_rel, device="cpu", skip_nima=True, image_mode="fullres")
+        features_mod.run(
+            manifest_path,
+            feature_csv_rel,
+            device="cpu",
+            skip_nima=True,
+            image_mode="fullres",
+            workers=_feature_workers(),
+        )
 
         emb_json_rel = None
         if embeddings_file is not None:
@@ -629,7 +636,14 @@ def _run_local_build(
 
         _update_job(job_id, status="extracting_features", percent=30, message="Extracting features…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
-        features_mod.run(manifest_rel, feature_csv_rel, device="cpu", skip_nima=True, image_mode="fullres")
+        features_mod.run(
+            manifest_rel,
+            feature_csv_rel,
+            device="cpu",
+            skip_nima=True,
+            image_mode="fullres",
+            workers=_feature_workers(),
+        )
 
         _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
         row_count = _count_csv_rows(feature_csv_rel)

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A dataset build no longer shows *Lost track of the build — Failed to fetch* after one dropped status request while
+  it keeps running on the server: the portal retries with backoff for about three minutes, keeping the last progress,
+  and says plainly when an API restart has lost the build.
 - The User Guide's AgriTune setup now clones AgriTune's `feature/magnidata-integration` branch (its `main` lacks the
   MagniData integration, so runs failed with *AgriTune is required for this preset*) and adds the AgriTune file to an
   existing `COMPOSE_FILE` instead of appending a second line that silently dropped the GPU file. The trainer's error

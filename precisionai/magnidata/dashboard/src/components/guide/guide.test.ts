@@ -1,4 +1,6 @@
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { CHAPTERS } from './chapters'
@@ -55,6 +57,29 @@ describe('guide commands', () => {
     const referenced = new Set(used(/<Cmd id="([^"]+)"/g))
     for (const id of referenced) expect(Object.keys(COMMANDS)).toContain(id)
     for (const id of Object.keys(COMMANDS)) expect(referenced, `command ${id} is never shown`).toContain(id)
+  })
+
+  describe('agrituneEnable', () => {
+    // Run only the .env edit, not the rebuild, in a scratch directory.
+    const enable = (env: string | null) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'guide-env-'))
+      if (env !== null) fs.writeFileSync(path.join(dir, '.env'), env)
+      const script = COMMANDS.agrituneEnable.replace(/\ndocker compose .*$/, '')
+      execFileSync('bash', ['-c', script], { cwd: dir })
+      execFileSync('bash', ['-c', script], { cwd: dir })
+      return fs.readFileSync(path.join(dir, '.env'), 'utf8')
+    }
+
+    it('creates COMPOSE_FILE when .env has none', () => {
+      expect(enable(null)).toBe('COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml\n')
+    })
+
+    it('extends an existing COMPOSE_FILE once, keeping the GPU file and other settings', () => {
+      const env = enable('COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml\nMAGNIDATA_TRAIN_GPU=2\n')
+      expect(env).toBe(
+        'COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.agritune.yml\nMAGNIDATA_TRAIN_GPU=2\n',
+      )
+    })
   })
 
   it('runs repository tools from the repository root with module paths that exist', () => {

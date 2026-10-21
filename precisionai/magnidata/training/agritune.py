@@ -28,10 +28,12 @@ try:
     from precisionai.agritune.tasks.segmentation.losses import SegmentationLossConfig
     from precisionai.agritune.training.precision import PrecisionConfig
     from precisionai.agritune.training.trainer import TrainerConfig
-except ImportError:
+except ImportError as err:
+    # An AgriTune checkout without the MagniData integration (e.g. its main branch) imports partly, so name what is missing.
     raise ImportError(
-        "AgriTune is required for this preset; build the trainer with the sibling agritune checkout"
-    ) from None
+        f"AgriTune is required for this preset ({err}); build the trainer with the sibling agritune checkout "
+        "on its feature/magnidata-integration branch"
+    ) from err
 
 DEFAULT_TRACKING_URI = "http://localhost:5052"
 PRESET_DECODERS = {

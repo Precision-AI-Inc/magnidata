@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The User Guide's AgriTune setup now clones AgriTune's `feature/magnidata-integration` branch (its `main` lacks the
+  MagniData integration, so runs failed with *AgriTune is required for this preset*) and adds the AgriTune file to an
+  existing `COMPOSE_FILE` instead of appending a second line that silently dropped the GPU file. The trainer's error
+  now names the missing AgriTune module and the branch to build from.
 - AgriTune runs now train on the device named by `MAGNIDATA_TRAIN_DEVICE` (default `auto`, so the GPU when one is
   available) instead of always using the CPU, and fail with a clear message when `cuda` is requested without a GPU.
 - The Train dialog no longer sends reference-only settings for AgriTune presets, which the API rejected with a 400.

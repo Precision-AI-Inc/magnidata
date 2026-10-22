@@ -762,14 +762,30 @@ function AgriTune() {
         It combines with the GPU file: list all three in <code>COMPOSE_FILE</code>, separated by colons.
         If an AgriTune run fails at once with <em>AgriTune is required for this preset</em>, the trainer image was built without it: repeat the steps above.
       </Note>
-      <h3>Run it offline first</h3>
+      <h3>Connect the encoder</h3>
+      <p>
+        AgriTune trains on patch features from the hosted encoder at <code>https://embeddings.precision.ai/v1</code>,
+        which <code>docker-compose.agritune.yml</code> uses by default. Its API key is read from AgriTune&apos;s own
+        <code> ../agritune/.env</code> (<code>AGRITUNE_ENCODER_API_KEY</code>, the file AgriTune&apos;s command line
+        reads too), so it is never copied into this repository; the browser never receives it and MLflow parameters do not
+        contain it. Put your key there once and rebuild the trainer:
+      </p>
+      <Cmd id="agrituneEncoder" />
+      <p>
+        Without a network or a key you can still check the wiring offline with AgriTune&apos;s deterministic fake encoder.
+        Its features say nothing about the image, so the decoder only learns the most common class: use it to test the
+        workflow, never to judge a model.
+      </p>
+      <Cmd id="agrituneOffline" />
+      <h3>Run it</h3>
       <Steps>
         <li>Open a dataset with masks and press <strong>Train model</strong>.</li>
-        <li>Choose <strong>AgriTune · AgriTune MLP Probe</strong>. Leave <strong>Hybrid cache</strong>,
-          <strong> None</strong> augmentation and <strong>Cross entropy + Dice</strong> selected.</li>
+        <li>Choose <strong>AgriTune · AgriTune MLP Probe</strong>. Leave <strong>Encode once, then train from the
+          store</strong>, <strong>Into RAM</strong> preload, <strong>None</strong> augmentation and
+          <strong> Cross entropy + Dice</strong> selected.</li>
         <li>For a quick check, use 2 epochs, batch size 4, score every epoch and 2 hard predictions.</li>
-        <li>Start training. With no encoder URL configured, AgriTune deliberately uses its deterministic
-          fake encoder. This validates the integration; it is not a meaningful agronomic model.</li>
+        <li>Start training. The run log first shows <em>encoding features n/N</em> while every image is sent to the encoder
+          once; the next run on the same images, encoder and image size skips this step.</li>
       </Steps>
       <Shot name="agritune-train-dialog" />
       <Shot name="agritune-train-dialog-phone" />
@@ -788,8 +804,9 @@ function AgriTune() {
         <thead><tr><th>Setting</th><th>Meaning</th></tr></thead>
         <tbody>
           <tr><td>Preset</td><td><strong>MLP Probe</strong> is the fast, lightweight decoder. <strong>TokenFPN</strong> is the multi-scale one and normally benefits from a GPU.</td></tr>
-          <tr><td>Feature provider</td><td><strong>Hybrid cache</strong> asks the encoder only for images it has not seen and reuses the local feature store afterwards. <strong>Online</strong> asks it every time.</td></tr>
-          <tr><td>Image augmentation</td><td>None, fixed augmented samples, fresh every epoch, or hybrid. Augmentation creates new image content and therefore new features, so it costs extra encoder calls.</td></tr>
+          <tr><td>Feature provider</td><td><strong>Encode once, then train from the store</strong> (the default) encodes every image before training and then reads only the local feature store, which is the fastest and the only provider that can preload. <strong>Hybrid cache</strong> asks the encoder during training for images it has not seen yet; it is needed for augmentation. <strong>Online</strong> asks it every time.</td></tr>
+          <tr><td>Preload features</td><td>With the store provider, load every image&apos;s features and mask once before training (features in half precision), then shuffle them each epoch. <strong>Into RAM</strong> fits most machines; <strong>Into GPU memory</strong> is faster still but must fit beside the model: about 250 KB per image at 256&nbsp;px with the hosted encoder, so 150,000 images need about 38&nbsp;GB plus 10&nbsp;GB of masks. <strong>No</strong> reads the store each epoch.</td></tr>
+          <tr><td>Image augmentation</td><td>None, fixed augmented samples, fresh every epoch, or hybrid. Augmentation creates new image content and therefore new features, so it costs extra encoder calls and needs the hybrid or online provider.</td></tr>
           <tr><td>Loss objective</td><td>Cross entropy, binary cross entropy, Dice, or a combination. It decides which component losses (<code>cce</code>, <code>bce</code>, <code>dice</code>) are recorded.</td></tr>
           <tr><td>Epochs, batch size, image size, learning rate, validation fraction, seed, score every N, hardest predictions</td><td>Same meaning as for the reference trainer. Validation images are chosen at random by the validation fraction.</td></tr>
         </tbody>
@@ -798,12 +815,6 @@ function AgriTune() {
         Settings that only the reference trainer understands (loss-term checkboxes, loader processes, pretrained weights, the dataset&apos;s split column) are hidden for AgriTune presets,
         and the API refuses them rather than ignoring them.
       </p>
-      <h3>Use the hosted encoder</h3>
-      <p>
-        Put the encoder connection in the root <code>.env</code>; the browser never receives or stores the API
-        key, and MLflow parameters do not contain it. Replace the example values, then rebuild the trainer:
-      </p>
-      <Cmd id="agrituneEncoder" />
       <h3>Good to know</h3>
       <ul>
         <li><strong>Metrics are written once per epoch.</strong> The loss, learning rate and every validation metric each get one point per epoch (the loss is the mean over that epoch&apos;s steps), which keeps MLflow small even for long runs.</li>
@@ -819,7 +830,9 @@ function AgriTune() {
           <tr><td>The run fails at once with <em>AgriTune is required for this preset</em></td><td>The trainer was built without AgriTune. Follow <em>Turn it on</em> and rebuild.</td></tr>
           <tr><td>AgriTune runs train on the CPU although the GPU file is enabled</td><td><code>.env</code> has more than one <code>COMPOSE_FILE</code> line and the last one wins. Keep a single line listing all three files, then rebuild.</td></tr>
           <tr><td>The trainer build says the <code>agritune</code> context is missing</td><td>You enabled the AgriTune file but <code>../agritune/pyproject.toml</code> does not exist. Clone it there, or remove <code>docker-compose.agritune.yml</code> from <code>COMPOSE_FILE</code>.</td></tr>
-          <tr><td>The run fails while encoding</td><td>Check <code>docker compose logs trainer</code>, the URL and key, and the encoder&apos;s rate limits. To go back to the fake encoder remove the three variables and rebuild.</td></tr>
+          <tr><td>The run fails while encoding</td><td>The run log names how many images failed. Check the key in <code>../agritune/.env</code>, that the trainer can reach the encoder URL, and the encoder&apos;s rate limits. Images already encoded stay in the store, so a new run continues where this one stopped.</td></tr>
+          <tr><td>The run log says <em>offline fake encoder</em></td><td><code>AGRITUNE_ENCODER_BASE_URL</code> is set but empty in <code>.env</code>. Remove that line and rebuild the trainer to use the hosted encoder.</td></tr>
+          <tr><td>Preloading into GPU memory fails with <em>out of memory</em></td><td>The features do not fit beside the model and other GPU users. Choose <strong>Into RAM</strong>; it is nearly as fast.</td></tr>
           <tr><td>The API rejects a setting</td><td>It names the field. For example, <code>loss_terms</code> and <code>num_workers</code> are reference-trainer settings; use the loss objective instead.</td></tr>
           <tr><td>No loss axes yet</td><td>Wait for the first scoring pass to finish; the live run stays visible while it is produced.</td></tr>
         </tbody>

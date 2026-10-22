@@ -121,6 +121,26 @@ describe('paramsFromRun', () => {
     expect(paramsFromRun({ epochs: 'many' })).toEqual({})
     expect(paramsFromRun({})).toEqual({})
   })
+  it('restores the AgriTune provider and preload, ignoring unknown values', () => {
+    expect(paramsFromRun({ feature_provider: 'cached', feature_preload: 'device' }))
+      .toEqual({ feature_provider: 'cached', feature_preload: 'device' })
+    expect(paramsFromRun({ feature_provider: 'disk', feature_preload: 'ssd' })).toEqual({})
+  })
+})
+
+describe('validateParams for AgriTune providers', () => {
+  const agritune = {
+    feature_provider: { type: 'choice' as const, choices: ['cached', 'hybrid', 'online'] },
+    feature_preload: { type: 'choice' as const, choices: ['none', 'host', 'device'] },
+  }
+
+  it('accepts cached features with preload and no augmentation', () => {
+    expect(validateParams({ ...valid, feature_provider: 'cached', feature_preload: 'host', augmentation_mode: 'none' }, agritune)).toEqual({})
+  })
+  it('rejects augmentation with cached features and unknown preload targets', () => {
+    expect(validateParams({ ...valid, feature_provider: 'cached', augmentation_mode: 'online' }, agritune).augmentation_mode).toMatch(/hybrid/)
+    expect(validateParams({ ...valid, feature_preload: 'disk' as TrainParams['feature_preload'] }, agritune).feature_preload).toMatch(/one of/)
+  })
 })
 
 describe('launchParams', () => {
@@ -135,5 +155,10 @@ describe('launchParams', () => {
 
   it('sends everything for reference presets', () => {
     expect(launchParams(full, 'reference')).toEqual(full)
+  })
+
+  it('sends preload only with cached features', () => {
+    expect(launchParams({ ...full, feature_provider: 'cached', feature_preload: 'host' }, 'agritune').feature_preload).toBe('host')
+    expect(launchParams({ ...full, feature_provider: 'hybrid', feature_preload: 'host' }, 'agritune')).not.toHaveProperty('feature_preload')
   })
 })

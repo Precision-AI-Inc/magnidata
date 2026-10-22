@@ -24,7 +24,9 @@ export interface TrainParams {
   amp: boolean
   /** Data-loader processes; unset lets the trainer choose from its CPU count. */
   num_workers?: number
-  feature_provider?: 'hybrid' | 'online'
+  feature_provider?: 'cached' | 'hybrid' | 'online'
+  /** Where cached features and masks are loaded once before training; only with the cached provider. */
+  feature_preload?: 'none' | 'host' | 'device'
   augmentation_mode?: 'none' | 'offline' | 'online' | 'hybrid'
   agritune_loss?: 'ce' | 'bce' | 'dice' | 'ce_dice' | 'bce_dice'
 }
@@ -71,10 +73,13 @@ export function validateParams(params: TrainParams, bounds: Record<string, Bound
       errors.loss_weights = `weights must be between ${weights?.min ?? 0} and ${weights?.max ?? 10}`
     }
   }
-  for (const field of ['feature_provider', 'augmentation_mode', 'agritune_loss'] as const) {
+  for (const field of ['feature_provider', 'feature_preload', 'augmentation_mode', 'agritune_loss'] as const) {
     const value = params[field]
     const choices = bounds[field]?.choices
     if (value !== undefined && choices && !choices.includes(value)) errors[field] = `must be one of ${choices.join(', ')}`
+  }
+  if (params.feature_provider === 'cached' && params.augmentation_mode && params.augmentation_mode !== 'none') {
+    errors.augmentation_mode = 'cached features are unaugmented; choose the hybrid provider to augment'
   }
   return errors
 }
@@ -86,6 +91,8 @@ const REFERENCE_ONLY: (keyof TrainParams)[] = ['loss_terms', 'num_workers', 'spl
 export function launchParams(params: TrainParams, engine: string): Partial<TrainParams> {
   const out: Partial<TrainParams> = { ...params }
   if (engine === 'agritune') for (const key of REFERENCE_ONLY) delete out[key]
+  // Only cached features can be preloaded; left out, the API turns preload off for the other providers.
+  if (engine !== 'agritune' || out.feature_provider !== 'cached') delete out.feature_preload
   return out
 }
 
@@ -146,7 +153,8 @@ export function paramsFromRun(params: Record<string, string>): Partial<TrainPara
   if (params.pretrained) out.pretrained = params.pretrained === 'true'
   if (params.amp) out.amp = params.amp === 'true'
   if (params.num_workers !== undefined && Number.isInteger(Number(params.num_workers))) out.num_workers = Number(params.num_workers)
-  if (params.feature_provider === 'hybrid' || params.feature_provider === 'online') out.feature_provider = params.feature_provider
+  if (params.feature_provider && ['cached', 'hybrid', 'online'].includes(params.feature_provider)) out.feature_provider = params.feature_provider as TrainParams['feature_provider']
+  if (params.feature_preload && ['none', 'host', 'device'].includes(params.feature_preload)) out.feature_preload = params.feature_preload as TrainParams['feature_preload']
   if (params.augmentation_mode && ['none', 'offline', 'online', 'hybrid'].includes(params.augmentation_mode)) out.augmentation_mode = params.augmentation_mode as TrainParams['augmentation_mode']
   if (params.agritune_loss && ['ce', 'bce', 'dice', 'ce_dice', 'bce_dice'].includes(params.agritune_loss)) out.agritune_loss = params.agritune_loss as TrainParams['agritune_loss']
   if (params.loss_terms) {

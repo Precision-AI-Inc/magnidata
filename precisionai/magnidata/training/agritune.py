@@ -4,6 +4,7 @@
 """Adapt a queued MagniData dataset/run into AgriTune's training service."""
 
 import argparse
+import asyncio
 import csv
 import multiprocessing
 import os
@@ -23,9 +24,12 @@ try:
 
     from precisionai.agritune.augmentations.image.pipeline import AugmentationMode, GeometricConfig
     from precisionai.agritune.features.keys import EncoderFingerprint
+    from precisionai.agritune.features.precompute import PrecomputeStats
     from precisionai.agritune.features.store import DirectoryFeatureStore
     from precisionai.agritune.integrations.magnidata import MagniDataOptions, run_magnidata_training
     from precisionai.agritune.optimization.optimizers import OptimizerConfig
+    from precisionai.agritune.services.encoder_selection import build_encoder
+    from precisionai.agritune.services.feature_service import build_features
     from precisionai.agritune.services.training_service import AugmentationSelection, TrainingRunConfig
     from precisionai.agritune.tasks.segmentation.losses import SegmentationLossConfig
     from precisionai.agritune.training.precision import PrecisionConfig
@@ -37,6 +41,8 @@ except ImportError as err:
     ) from err
 
 DEFAULT_TRACKING_URI = "http://localhost:5052"
+# Preloaded patch tokens are stored in half precision: half the memory (SEEDPLANT: ~38 GB instead of ~75 GB).
+PRELOAD_DTYPE = "float16"
 PRESET_DECODERS = {
     "agritune_mlp_probe": "mlp_probe",
     "agritune_token_fpn": "token_fpn",
@@ -141,6 +147,8 @@ def _config(run: Any, data_root: Path, manifest: Path, palette: data.Palette) ->
         augmentation.geometric = GeometricConfig(horizontal_flip_probability=0.5)
     device = resolve_device(os.environ.get("MAGNIDATA_TRAIN_DEVICE", "auto"))
     log(f"training on {describe_device(device)}")
+    preload = params.get("feature_preload", "none")
+    log(f"encoder: {'hosted ' + model if base_url else 'offline fake encoder (no AGRITUNE_ENCODER_BASE_URL)'}")
     return TrainingRunConfig(
         manifest_path=str(manifest),
         feature_store_dir=str(data_root / "data_user" / ".agritune" / "features" / model.replace("/", "_")),
@@ -149,6 +157,10 @@ def _config(run: Any, data_root: Path, manifest: Path, palette: data.Palette) ->
         num_classes=palette.num_classes,
         encoder_fingerprint=EncoderFingerprint(model=model, revision=revision, preprocessing="magnidata-square-v1"),
         feature_provider=params.get("feature_provider", "hybrid"),
+        feature_preload=preload,
+        feature_preload_dtype=PRELOAD_DTYPE if preload != "none" else None,
+        # Preloaded features can be gathered in any order; without preload AgriTune keeps manifest order.
+        shuffle=preload != "none",
         encoder_base_url=base_url,
         encoder_api_key=os.environ.get("AGRITUNE_ENCODER_API_KEY"),
         augmentation=augmentation,
@@ -174,6 +186,41 @@ def _config(run: Any, data_root: Path, manifest: Path, palette: data.Palette) ->
     )
 
 
+def _encode_dataset(config: TrainingRunConfig, store: DirectoryFeatureStore) -> None:
+    """Encode every staged sample missing from the feature store, so the cached provider finds them all.
+
+    Samples already in the store (from an earlier run on the same images, encoder and image size) are skipped,
+    so only the first run on a dataset pays for encoding.
+    """
+    encoder, _ = build_encoder(
+        base_url=config.encoder_base_url,
+        api_key=config.encoder_api_key,
+        model=config.encoder_fingerprint.model,
+        preprocessing=config.encoder_fingerprint.preprocessing,
+    )
+    log("encoding images into the feature store (already stored ones are skipped)")
+
+    def progress(stats: PrecomputeStats) -> None:
+        done = stats.computed + stats.skipped + stats.failed
+        if done % data.progress_every(stats.total) == 0 or done == stats.total:
+            log(f"encoding features {done}/{stats.total} ({stats.computed} new, {stats.skipped} stored)")
+
+    stats = asyncio.run(
+        build_features(
+            config.manifest_path,
+            store=store,
+            encoder=encoder,
+            encoder_fingerprint=config.encoder_fingerprint,
+            on_progress=progress,
+        )
+    )
+    if stats.failed:
+        raise RuntimeError(
+            f"{stats.failed} of {stats.total} images could not be encoded "
+            f"(e.g. {', '.join(stats.failed_sample_ids[:3])}); check the encoder URL, key and logs"
+        )
+
+
 def run(run_id: str, tracking_uri: str, data_root: Path) -> int:
     """Train one existing MagniData MLflow run through AgriTune."""
     client = mlflow.MlflowClient(tracking_uri=tracking_uri)
@@ -182,10 +229,13 @@ def run(run_id: str, tracking_uri: str, data_root: Path) -> int:
     image_size = _integer(dict(queued.data.params), "image_size", 256)
     manifest, palette = _prepare_manifest(run_id, dataset_source, data_root, image_size, default_num_workers())
     config = _config(queued, data_root, manifest, palette)
+    store = DirectoryFeatureStore(config.feature_store_dir)
+    if config.feature_provider == "cached":
+        _encode_dataset(config, store)
     palette_colors = ((0, 0, 0), *palette.colors)
     result = run_magnidata_training(
         config,
-        store=DirectoryFeatureStore(config.feature_store_dir),
+        store=store,
         run_id=run_id,
         tracking_uri=tracking_uri,
         options=MagniDataOptions(

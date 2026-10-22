@@ -132,6 +132,47 @@ def test_agritune_presets_launch_with_their_served_defaults(client, mlflow_store
     assert response.status_code == 201
 
 
+def test_agritune_presets_default_to_cached_features_preloaded_in_host_memory(client, mlflow_store):
+    response = client.post(
+        "/api/training/runs", json={"dataset_source": "data_user/syn.csv", "preset": "agritune_token_fpn"}
+    )
+
+    assert response.status_code == 201
+    params = mlflow_store.get_run(response.get_json()["run_id"])["params"]
+    assert params["feature_provider"] == "cached"
+    assert params["feature_preload"] == "host"
+
+
+def test_choosing_a_provider_that_cannot_preload_turns_preload_off(client, mlflow_store):
+    response = client.post(
+        "/api/training/runs",
+        json={
+            "dataset_source": "data_user/syn.csv",
+            "preset": "agritune_mlp_probe",
+            "params": {"feature_provider": "hybrid", "augmentation_mode": "online"},
+        },
+    )
+
+    assert response.status_code == 201
+    params = mlflow_store.get_run(response.get_json()["run_id"])["params"]
+    assert params["feature_preload"] == "none"
+    assert params["augmentation_mode"] == "online"
+
+
+def test_cached_features_can_be_preloaded_on_the_device(client, mlflow_store):
+    response = client.post(
+        "/api/training/runs",
+        json={
+            "dataset_source": "data_user/syn.csv",
+            "preset": "agritune_mlp_probe",
+            "params": {"feature_preload": "device"},
+        },
+    )
+
+    assert response.status_code == 201
+    assert mlflow_store.get_run(response.get_json()["run_id"])["params"]["feature_preload"] == "device"
+
+
 def test_launch_records_parent_and_weights(client, mlflow_store):
     parent = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
     client.post(f"/api/runs/{parent}/cancel")
@@ -316,7 +357,11 @@ def test_launch_and_cancel_are_visible_immediately_despite_the_runs_cache(client
         ("agritune_mlp_probe", {"num_workers": 2}, "params.num_workers"),
         ("agritune_mlp_probe", {"split_mode": "column"}, "params.split_mode"),
         ("agritune_token_fpn", {"pretrained": True}, "params.pretrained"),
-        ("agritune_mlp_probe", {"feature_provider": "cached"}, "params.feature_provider"),
+        ("agritune_mlp_probe", {"feature_provider": "bogus"}, "params.feature_provider"),
+        ("tiny_unet", {"feature_preload": "host"}, "params.feature_preload"),
+        ("agritune_mlp_probe", {"feature_preload": "disk"}, "params.feature_preload"),
+        ("agritune_mlp_probe", {"feature_provider": "hybrid", "feature_preload": "host"}, "params.feature_preload"),
+        ("agritune_mlp_probe", {"augmentation_mode": "online"}, "params.augmentation_mode"),
         ("agritune_mlp_probe", {"agritune_loss": "focal"}, "params.agritune_loss"),
     ],
 )

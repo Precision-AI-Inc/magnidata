@@ -10,9 +10,13 @@ services:
     build:
       additional_contexts:
         agritune: ../agritune
+    # The hosted encoder's key is read from AgriTune's own .env (AGRITUNE_ENCODER_API_KEY, the file its CLI reads),
+    # so it is never copied into this repository.
+    env_file:
+      - path: ../agritune/.env
+        required: false
     environment:
-      # Optional hosted patch-token encoder. Empty values select AgriTune's deterministic fake encoder,
-      # which keeps the full workflow runnable offline.
-      AGRITUNE_ENCODER_BASE_URL: ${AGRITUNE_ENCODER_BASE_URL:-}
-      AGRITUNE_ENCODER_API_KEY: ${AGRITUNE_ENCODER_API_KEY:-}
+      # Hosted patch-token encoder. Set AGRITUNE_ENCODER_BASE_URL= (empty) in this repository's .env to use AgriTune's
+      # deterministic fake encoder instead, which keeps the workflow runnable offline but cannot learn real classes.
+      AGRITUNE_ENCODER_BASE_URL: ${AGRITUNE_ENCODER_BASE_URL-https://embeddings.precision.ai/v1}
       AGRITUNE_ENCODER_MODEL: ${AGRITUNE_ENCODER_MODEL:-pai-embedding}

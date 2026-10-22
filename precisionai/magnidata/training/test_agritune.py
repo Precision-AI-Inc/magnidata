@@ -36,8 +36,10 @@ def test_every_agritune_preset_maps_to_a_decoder(agritune):
     assert set(agritune.PRESET_DECODERS) == {"agritune_mlp_probe", "agritune_token_fpn"}
 
 
-def _run(preset="agritune_mlp_probe"):
-    return SimpleNamespace(info=SimpleNamespace(run_id="r1"), data=SimpleNamespace(params={"preset": preset}, tags={}))
+def _run(preset="agritune_mlp_probe", **params):
+    return SimpleNamespace(
+        info=SimpleNamespace(run_id="r1"), data=SimpleNamespace(params={"preset": preset, **params}, tags={})
+    )
 
 
 def _palette(agritune):
@@ -84,3 +86,44 @@ def test_prepare_manifest_stages_resized_images_and_index_masks(agritune, synthe
     total = len(synthetic_dataset.names)
     assert f"scanning mask colours {total}/{total}" in output
     assert f"staging images {total}/{total}" in output
+
+
+def test_cached_features_are_preloaded_in_half_precision_and_shuffled(agritune, monkeypatch, tmp_path):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+
+    config = agritune._config(
+        _run(feature_provider="cached", feature_preload="host"), tmp_path, tmp_path / "m.csv", _palette(agritune)
+    )
+
+    assert config.feature_provider == "cached"
+    assert config.feature_preload == "host"
+    assert config.feature_preload_dtype == "float16"
+    assert config.shuffle is True
+
+
+def test_runs_without_preload_keep_agritune_defaults(agritune, monkeypatch, tmp_path):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+
+    config = agritune._config(_run(feature_provider="hybrid"), tmp_path, tmp_path / "m.csv", _palette(agritune))
+
+    assert config.feature_preload == "none"
+    assert config.feature_preload_dtype is None
+    assert config.shuffle is False
+
+
+def test_encode_dataset_fills_the_store_once(agritune, synthetic_dataset, monkeypatch, capsys):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+    monkeypatch.delenv("AGRITUNE_ENCODER_BASE_URL", raising=False)
+    root = synthetic_dataset.root
+    total = len(synthetic_dataset.names)
+    manifest, palette = agritune._prepare_manifest("run1", str(synthetic_dataset.csv.relative_to(root)), root, 32)
+    config = agritune._config(_run(feature_provider="cached", feature_preload="host"), root, manifest, palette)
+    store = agritune.DirectoryFeatureStore(config.feature_store_dir)
+
+    agritune._encode_dataset(config, store)
+    agritune._encode_dataset(config, store)
+
+    output = capsys.readouterr().out
+    assert "offline fake encoder" in output
+    assert f"encoding features {total}/{total} ({total} new, 0 stored)" in output
+    assert f"encoding features {total}/{total} (0 new, {total} stored)" in output

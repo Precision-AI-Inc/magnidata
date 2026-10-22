@@ -78,7 +78,10 @@ The AgriTune presets are optional. To build them into the trainer image, clone
 `docker-compose.agritune.yml` to `COMPOSE_FILE` in the git-ignored `.env`
 (`COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml`; with the GPU file, list all three on that one line,
 since a second `COMPOSE_FILE` line overrides the first), then run
-`docker compose up --build`. Without it the stack builds and runs as before.
+`docker compose up --build`. Without it the stack builds and runs as before. AgriTune runs use the hosted encoder
+(`https://embeddings.precision.ai/v1`) with the key from AgriTune's own `../agritune/.env`
+(`AGRITUNE_ENCODER_API_KEY`); they encode a dataset into the feature store once and then train from features
+preloaded into RAM. Set `AGRITUNE_ENCODER_BASE_URL=` (empty) in `.env` to use the offline fake encoder instead.
 
 The dataset catalog (`precisionai/magnidata/confi.yaml`) ships empty. From the portal's
 "Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or

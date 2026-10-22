@@ -33,12 +33,13 @@ BOUNDS: dict[str, dict[str, Any]] = {
     "pretrained": {"type": "bool"},
     "amp": {"type": "bool"},
     "num_workers": {"type": "int", "min": 0, "max": 16},
-    "feature_provider": {"type": "choice", "choices": ["hybrid", "online"]},
+    "feature_provider": {"type": "choice", "choices": ["cached", "hybrid", "online"]},
+    "feature_preload": {"type": "choice", "choices": ["none", "host", "device"]},
     "augmentation_mode": {"type": "choice", "choices": ["none", "offline", "online", "hybrid"]},
     "agritune_loss": {"type": "choice", "choices": ["ce", "bce", "dice", "ce_dice", "bce_dice"]},
 }
 
-AGRITUNE_FIELDS = ("feature_provider", "augmentation_mode", "agritune_loss")
+AGRITUNE_FIELDS = ("feature_provider", "feature_preload", "augmentation_mode", "agritune_loss")
 AGRITUNE_LOSS_TERMS: dict[str, list[str]] = {
     "ce": ["cce"],
     "bce": ["bce"],
@@ -98,7 +99,8 @@ PRESETS: dict[str, dict[str, Any]] = {
             "image_size": 256,
             "lr": 3e-4,
             "pretrained": False,
-            "feature_provider": "hybrid",
+            "feature_provider": "cached",
+            "feature_preload": "host",
             "augmentation_mode": "none",
             "agritune_loss": "ce_dice",
         },
@@ -114,7 +116,8 @@ PRESETS: dict[str, dict[str, Any]] = {
             "image_size": 256,
             "lr": 3e-4,
             "pretrained": False,
-            "feature_provider": "hybrid",
+            "feature_provider": "cached",
+            "feature_preload": "host",
             "augmentation_mode": "none",
             "agritune_loss": "ce_dice",
         },
@@ -201,6 +204,25 @@ def _check_engine_fields(engine: str, overrides: dict[str, Any]) -> None:
         raise ValueError("params.pretrained: AgriTune presets use a frozen encoder, not ImageNet weights")
 
 
+def _resolve_preload(p: dict[str, Any], overrides: dict[str, Any]) -> None:
+    """Default ``feature_preload`` to ``none`` for providers that cannot preload; reject an explicit conflict.
+
+    AgriTune preloads only features already in the store, i.e. the ``cached`` provider; ``hybrid`` and ``online``
+    encode samples during training. Defaulting rather than rejecting keeps retraining runs from before preload existed.
+    """
+    if p["feature_provider"] == "cached":
+        if p.get("augmentation_mode", "none") != "none":
+            raise ValueError(
+                "params.augmentation_mode: feature_provider cached encodes unaugmented images once; "
+                "use feature_provider hybrid for augmentation"
+            )
+        return
+    if "feature_preload" not in overrides:
+        p["feature_preload"] = "none"
+    elif p["feature_preload"] != "none":
+        raise ValueError("params.feature_preload: requires feature_provider cached")
+
+
 def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(overrides) - set(BOUNDS))
     if unknown:
@@ -208,6 +230,8 @@ def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     engine = PRESETS[preset]["engine"]
     _check_engine_fields(engine, overrides)
     p = {**PRESETS[preset]["defaults"], **overrides}
+    if engine == "agritune":
+        _resolve_preload(p, overrides)
     choices: dict[str, str] = {}
     for field in AGRITUNE_FIELDS:
         if field in p:

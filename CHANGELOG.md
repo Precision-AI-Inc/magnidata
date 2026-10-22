@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- AgriTune runs launched from the portal use the hosted encoder (`https://embeddings.precision.ai/v1`) by default,
+  with the key read from AgriTune's own `../agritune/.env`, instead of silently falling back to the fake encoder,
+  whose features cannot teach the decoder anything but the most common class. The run log names the encoder in use;
+  `AGRITUNE_ENCODER_BASE_URL=` (empty) still selects the offline fake encoder.
 - AgriTune runs prepare their data in parallel (one process per spare core, at most 8) and log progress while they scan
   mask colours and stage resized images, instead of working through a large dataset in one process for hours with an
   empty log. The worker also starts trainers with unbuffered output, so a failure such as a full disk is recorded in
@@ -29,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- AgriTune presets default to a new *Encode once, then train from the store* feature provider (`cached`): every
+  image is encoded into the feature store before training, skipped on later runs over the same images, and the
+  features and masks can be preloaded into RAM or GPU memory (`feature_preload`, half precision, shuffled each
+  epoch), so epochs no longer wait on per-batch feature reads. The API rejects preload without `cached` and
+  augmentation with it; choosing another provider turns preload off.
 - AgriTune is now an optional portal training engine. Presets carry an `engine` (`reference` or `agritune`); the new
   MLP Probe and TokenFPN presets expose a frozen-feature provider, augmentation and loss objective, and the existing
   worker dispatches the same MLflow queue to the engine named by the run's `magnidata.engine` tag, so progress, losses,

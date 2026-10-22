@@ -30,8 +30,8 @@ export const COMMANDS = {
   // Extends an existing COMPOSE_FILE (e.g. the GPU file) instead of appending a second line, which would override it.
   agrituneEnable:
     "if grep -q '^COMPOSE_FILE=' .env 2>/dev/null; then\n  grep -q 'docker-compose.agritune.yml' .env || sed -i '/^COMPOSE_FILE=/s/$/:docker-compose.agritune.yml/' .env\nelse\n  echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml' >> .env\nfi\ndocker compose up -d --build",
-  agrituneEncoder:
-    'cat >> .env <<\'EOF\'\nAGRITUNE_ENCODER_BASE_URL=https://embeddings.precision.ai/v1\nAGRITUNE_ENCODER_API_KEY=replace-me\nAGRITUNE_ENCODER_MODEL=pai-embedding\nEOF\ndocker compose up -d --build trainer',
+  agrituneEncoder: "echo 'AGRITUNE_ENCODER_API_KEY=replace-me' >> ../agritune/.env\ndocker compose up -d --build trainer",
+  agrituneOffline: "echo 'AGRITUNE_ENCODER_BASE_URL=' >> .env\ndocker compose up -d --build trainer",
   features:
     'python -m precisionai.magnidata.tools.features --input images.csv --output features.csv --skip-nima',
 } as const

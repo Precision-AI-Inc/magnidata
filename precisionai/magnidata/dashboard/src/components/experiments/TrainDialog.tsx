@@ -59,6 +59,13 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
     setParams(prev => ({ ...prev, [key]: value }))
     setServerErrors(prev => ({ ...prev, [key]: undefined }))
   }
+  // Cached features are encoded once without augmentation and default to preloading into RAM.
+  const setProvider = (provider: TrainParams['feature_provider']) => {
+    setParams(prev => provider === 'cached'
+      ? { ...prev, feature_provider: provider, augmentation_mode: 'none', feature_preload: prev.feature_preload ?? 'host' }
+      : { ...prev, feature_provider: provider })
+    setServerErrors(prev => ({ ...prev, feature_provider: undefined, feature_preload: undefined, augmentation_mode: undefined }))
+  }
   const toggleTerm = (term: string) =>
     set('loss_terms', params.loss_terms.includes(term) ? params.loss_terms.filter(t => t !== term) : [...params.loss_terms, term])
 
@@ -148,14 +155,25 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
 
           {isAgriTune && <div className="grid gap-x-3 gap-y-2 train-dialog-grid">
             <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Feature provider
-              <select value={params.feature_provider ?? 'hybrid'} onChange={e => set('feature_provider', e.target.value as TrainParams['feature_provider'])}
+              <select value={params.feature_provider ?? 'hybrid'} onChange={e => setProvider(e.target.value as TrainParams['feature_provider'])}
                       className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
-                <option value="hybrid">Hybrid cache (recommended)</option>
+                <option value="cached">Encode once, then train from the store (fastest)</option>
+                <option value="hybrid">Hybrid cache (needed for augmentation)</option>
                 <option value="online">Online every time</option>
               </select>
             </label>
+            {params.feature_provider === 'cached' && <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Preload features
+              <select value={params.feature_preload ?? 'host'} onChange={e => set('feature_preload', e.target.value as TrainParams['feature_preload'])}
+                      className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
+                <option value="host">Into RAM (recommended)</option>
+                <option value="device">Into GPU memory (must fit)</option>
+                <option value="none">No, read from disk each epoch</option>
+              </select>
+            </label>}
             <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Image augmentation
               <select value={params.augmentation_mode ?? 'none'} onChange={e => set('augmentation_mode', e.target.value as TrainParams['augmentation_mode'])}
+                      disabled={params.feature_provider === 'cached'} aria-invalid={!!errors.augmentation_mode}
+                      title={params.feature_provider === 'cached' ? 'Cached features are encoded once without augmentation; choose the hybrid provider to augment' : undefined}
                       className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
                 <option value="none">None</option>
                 <option value="offline">Fixed augmented samples</option>

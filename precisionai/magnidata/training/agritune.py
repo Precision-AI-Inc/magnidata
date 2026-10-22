@@ -5,8 +5,10 @@
 
 import argparse
 import csv
+import multiprocessing
 import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +16,7 @@ import numpy as np
 from PIL import Image
 
 from precisionai.magnidata.training import data
-from precisionai.magnidata.training.train import describe_device, log, resolve_device
+from precisionai.magnidata.training.train import default_num_workers, describe_device, log, resolve_device
 
 try:
     import mlflow
@@ -59,7 +61,19 @@ def _boolean(params: dict[str, str], key: str, default: bool) -> bool:
     return params.get(key, str(default)).lower() == "true"
 
 
-def _prepare_manifest(run_id: str, dataset_source: str, data_root: Path, image_size: int) -> tuple[Path, data.Palette]:
+def _stage_one(job: tuple[Path, Path, Path, Path, int, tuple[tuple[int, int, int], ...]]) -> None:
+    """Write one sample's image resized to the run's size and its mask decoded to class indices."""
+    source_image, source_mask, image_path, mask_path, image_size, colors = job
+    with Image.open(source_image) as image:
+        image.convert("RGB").resize((image_size, image_size), Image.Resampling.BILINEAR).save(image_path)
+    with Image.open(source_mask) as mask:
+        rgb = np.asarray(mask.convert("RGB").resize((image_size, image_size), Image.Resampling.NEAREST))
+    Image.fromarray(data.decode_mask(rgb, data.Palette(colors)).astype(np.uint8), mode="L").save(mask_path)
+
+
+def _prepare_manifest(
+    run_id: str, dataset_source: str, data_root: Path, image_size: int, workers: int = 0
+) -> tuple[Path, data.Palette]:
     source = data_root / dataset_source
     samples, report = data.resolve_samples(source, data_root)
     if not samples:
@@ -67,22 +81,44 @@ def _prepare_manifest(run_id: str, dataset_source: str, data_root: Path, image_s
             f"dataset has no trainable image/mask pairs ({report.total_rows} rows, "
             f"{len(report.missing_image)} missing images, {len(report.missing_mask)} missing masks)"
         )
-    palette = data.build_palette([sample.mask_path for sample in samples])
+    total = len(samples)
+    log(f"scanning {total} masks for the colour palette with {max(workers, 1)} process(es)")
+    palette = data.build_palette([sample.mask_path for sample in samples], workers=workers, progress=log)
     root = data_root / "data_user" / ".agritune" / run_id
     images = root / "images"
     masks = root / "masks"
     images.mkdir(parents=True, exist_ok=True)
     masks.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for sample in samples:
-        image_path = images / f"{Path(sample.image_name).stem}.png"
-        mask_path = masks / f"{Path(sample.image_name).stem}.png"
-        with Image.open(sample.image_path) as image:
-            image.convert("RGB").resize((image_size, image_size), Image.Resampling.BILINEAR).save(image_path)
-        with Image.open(sample.mask_path) as mask:
-            rgb = np.asarray(mask.convert("RGB").resize((image_size, image_size), Image.Resampling.NEAREST))
-        Image.fromarray(data.decode_mask(rgb, palette).astype(np.uint8), mode="L").save(mask_path)
-        rows.append((sample.image_name, image_path, mask_path, sample.csv_split or ""))
+    jobs = [
+        (
+            sample.image_path,
+            sample.mask_path,
+            images / f"{Path(sample.image_name).stem}.png",
+            masks / f"{Path(sample.image_name).stem}.png",
+            image_size,
+            palette.colors,
+        )
+        for sample in samples
+    ]
+    log(f"staging {total} images at {image_size}x{image_size} with {max(workers, 1)} process(es)")
+    every = data.progress_every(total)
+    if workers > 1 and total > 1:
+        # spawn, not fork: this process already runs MLflow client threads
+        with ProcessPoolExecutor(
+            max_workers=min(workers, total), mp_context=multiprocessing.get_context("spawn")
+        ) as pool:
+            for done, _ in enumerate(pool.map(_stage_one, jobs, chunksize=16), start=1):
+                if done % every == 0 or done == total:
+                    log(f"staging images {done}/{total}")
+    else:
+        for done, job in enumerate(jobs, start=1):
+            _stage_one(job)
+            if done % every == 0 or done == total:
+                log(f"staging images {done}/{total}")
+    rows = [
+        (sample.image_name, image_path, mask_path, sample.csv_split or "")
+        for sample, (_, _, image_path, mask_path, _, _) in zip(samples, jobs, strict=True)
+    ]
     manifest = root / "manifest.csv"
     with manifest.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -145,7 +181,7 @@ def run(run_id: str, tracking_uri: str, data_root: Path) -> int:
     queued = client.get_run(run_id)
     dataset_source = queued.data.tags.get("magnidata.dataset_source", "")
     image_size = _integer(dict(queued.data.params), "image_size", 256)
-    manifest, palette = _prepare_manifest(run_id, dataset_source, data_root, image_size)
+    manifest, palette = _prepare_manifest(run_id, dataset_source, data_root, image_size, default_num_workers())
     config = _config(queued, data_root, manifest, palette)
     palette_colors = ((0, 0, 0), *palette.colors)
     result = run_magnidata_training(

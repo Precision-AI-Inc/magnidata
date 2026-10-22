@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- AgriTune runs prepare their data in parallel (one process per spare core, at most 8) and log progress while they scan
+  mask colours and stage resized images, instead of working through a large dataset in one process for hours with an
+  empty log. The worker also starts trainers with unbuffered output, so a failure such as a full disk is recorded in
+  the run log rather than ending as a bare *trainer exited with code 120*.
 - Building a dataset from a server folder or a browser upload now extracts features with the same worker pool as the
   AgriStress-500 build (up to 6 processes, bounded by CPU and memory) instead of a single process, so large folders
   build several times faster.

@@ -128,6 +128,15 @@ def test_run_one_fails_run_when_trainer_exits_badly(env, tmp_path):
     assert [a.path for a in client.list_artifacts(run_id, "logs")] == ["logs/trainer.log"]
 
 
+def test_run_one_logs_output_that_is_never_flushed(env, tmp_path):
+    _, client, exp = env
+    run_id = _run(client, exp)
+    # Exits without flushing, so with a block-buffered stdout the line would only reach the log at exit, if ever.
+    argv = [sys.executable, "-c", "import os; print('still preparing'); os._exit(3)"]
+    assert worker.run_one(client, run_id, tmp_path, argv=argv) == "FAILED"
+    assert "still preparing" in client.get_run(run_id).data.tags["magnidata.error"]
+
+
 def test_run_one_skips_unclaimable_run(env, tmp_path):
     _, client, exp = env
     run_id = _run(client, exp, {contract.TAG_WORKER: "someone:1:else"})

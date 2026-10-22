@@ -93,6 +93,21 @@ def test_build_palette_orders_by_frequency(synthetic_dataset):
     assert palette.as_mapping()[2]["rgb"] == list(synthetic_dataset.colors[1])
 
 
+def test_build_palette_in_parallel_matches_serial_and_reports_progress(synthetic_dataset):
+    masks = _mask_files(synthetic_dataset)
+    lines: list[str] = []
+
+    palette = data.build_palette(masks, workers=2, progress=lines.append)
+
+    assert palette == data.build_palette(masks)
+    assert lines[-1] == f"scanning mask colours {len(masks)}/{len(masks)}"
+
+
+def test_progress_every_caps_the_number_of_lines():
+    assert data.progress_every(10) == data.WARM_PROGRESS_EVERY
+    assert data.progress_every(151_291) == 1512
+
+
 def test_build_palette_treats_near_black_as_background(tmp_path):
     arr = np.zeros((4, 4, 3), dtype=np.uint8)
     arr[0] = (9, 10, 3)

@@ -208,6 +208,15 @@ def inference_argv(run_id: str, image_name: str, data_root: Path, tracking_uri: 
     ]
 
 
+def _child_env() -> dict[str, str]:
+    """Return the trainer's environment with unbuffered output.
+
+    Its stdout is a file, which Python block-buffers: a trainer that prints without flushing (AgriTune does)
+    leaves the log empty for hours, and when a write then fails, e.g. on a full disk, even the error is lost.
+    """
+    return {**os.environ, "PYTHONUNBUFFERED": "1"}
+
+
 def _stop_child(child: subprocess.Popen) -> None:
     child.terminate()
     try:
@@ -277,7 +286,7 @@ def run_one(
             else trainer_argv(run_id, data_root, client.tracking_uri)
         )
     with open(log, "w") as out:
-        child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
+        child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT, env=_child_env())
         interrupted = _watch(
             child,
             client,
@@ -311,7 +320,7 @@ def run_inference(client: Any, run_id: str, data_root: Path, argv: Sequence[str]
     log.parent.mkdir(parents=True, exist_ok=True)
     command = list(argv) if argv else inference_argv(run_id, image_name, data_root, client.tracking_uri)
     with open(log, "w") as out:
-        child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT)
+        child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT, env=_child_env())
         interrupted = _watch(child, client, run_id, log, lambda: touch_heartbeat(data_root), LOG_UPLOAD_S)
     _upload_log(client, run_id, log)
     if child.returncode == 0 and not interrupted:

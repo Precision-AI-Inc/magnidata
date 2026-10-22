@@ -162,12 +162,23 @@ def _palette_from_counts(counts_per_mask: Sequence[np.ndarray], max_classes: int
     return Palette(tuple((k >> 16 & 255, k >> 8 & 255, k & 255) for k in ranked))
 
 
-def build_palette(mask_paths: Sequence[str | Path], max_classes: int = 32) -> Palette:
+def _mask_colour_counts(path: str | Path) -> np.ndarray:
+    return _colour_counts(_load_small_rgb(path))
+
+
+def build_palette(
+    mask_paths: Sequence[str | Path],
+    max_classes: int = 32,
+    workers: int = 0,
+    progress: Callable[[str], None] | None = None,
+) -> Palette:
     """Derive the colour palette from masks: background is 0, other colours rank by pixel count.
 
     Masks are shrunk with nearest-neighbour sampling before counting, which keeps exact
     colours but makes counts approximate and can miss a colour covering only a few pixels
-    of a very large mask; such pixels are later decoded as ``ignore_index``.
+    of a very large mask; such pixels are later decoded as ``ignore_index``. With ``workers`` > 1
+    the masks are read in that many processes; ``progress`` receives a line every
+    `progress_every` masks.
 
     Raises
     ------
@@ -175,7 +186,29 @@ def build_palette(mask_paths: Sequence[str | Path], max_classes: int = 32) -> Pa
         If the masks contain more than ``max_classes`` classes (background included), which
         usually means instance-coloured rather than class-coloured masks.
     """
-    return _palette_from_counts([_colour_counts(_load_small_rgb(path)) for path in mask_paths], max_classes)
+    total = len(mask_paths)
+    every = progress_every(total)
+    counts = []
+    if workers > 1 and total > 1:
+        # spawn, not fork: the caller may already run MLflow client threads
+        with ProcessPoolExecutor(
+            max_workers=min(workers, total), mp_context=multiprocessing.get_context("spawn")
+        ) as pool:
+            for done, pair in enumerate(pool.map(_mask_colour_counts, mask_paths, chunksize=16), start=1):
+                counts.append(pair)
+                if progress and (done % every == 0 or done == total):
+                    progress(f"scanning mask colours {done}/{total}")
+    else:
+        for done, path in enumerate(mask_paths, start=1):
+            counts.append(_mask_colour_counts(path))
+            if progress and (done % every == 0 or done == total):
+                progress(f"scanning mask colours {done}/{total}")
+    return _palette_from_counts(counts, max_classes)
+
+
+def progress_every(total: int) -> int:
+    """Return how many items to process between progress lines: every `WARM_PROGRESS_EVERY`, at most ~100 lines."""
+    return max(WARM_PROGRESS_EVERY, total // 100)
 
 
 def decode_mask(rgb: np.ndarray, palette: Palette, ignore_index: int = IGNORE_INDEX) -> np.ndarray:

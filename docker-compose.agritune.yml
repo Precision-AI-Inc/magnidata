@@ -1,6 +1,5 @@
 # Opt-in AgriTune training engine for the trainer worker.
-# Clone https://github.com/Precision-AI-Inc/agritune beside this repository (so ../agritune exists) on its
-# feature/magnidata-integration branch (main lacks the MagniData integration), then enable it with
+# Clone https://github.com/Precision-AI-Inc/agritune beside this repository (so ../agritune exists), then enable it with
 # plain `docker compose up --build` by putting this in the git-ignored .env:
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml
 # Or pass both files: docker compose -f docker-compose.yml -f docker-compose.agritune.yml up --build

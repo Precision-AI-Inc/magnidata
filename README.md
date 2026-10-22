@@ -74,8 +74,7 @@ log (first line `device=…`) is uploaded to the run's `logs/` artifacts while i
 To run the reference trainer outside Docker: `pip install -e ".[training]"`, then
 `python -m precisionai.magnidata.training.train --dataset data_user/<name>.csv --data-root precisionai/magnidata`.
 The AgriTune presets are optional. To build them into the trainer image, clone
-`git@github.com:Precision-AI-Inc/agritune.git` next to this repository (so `../agritune` exists) on its
-`feature/magnidata-integration` branch (its `main` does not have the MagniData integration yet), and add
+`git@github.com:Precision-AI-Inc/agritune.git` next to this repository (so `../agritune` exists) and add
 `docker-compose.agritune.yml` to `COMPOSE_FILE` in the git-ignored `.env`
 (`COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml`; with the GPU file, list all three on that one line,
 since a second `COMPOSE_FILE` line overrides the first), then run

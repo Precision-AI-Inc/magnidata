@@ -754,13 +754,13 @@ function AgriTune() {
       </p>
       <h3>Turn it on</h3>
       <Steps>
-        <li>Clone AgriTune <strong>next to</strong> the MagniData folder, so <code>../agritune</code> exists, on its <code>feature/magnidata-integration</code> branch: its main branch does not have the MagniData integration yet. In an existing checkout run <code>git switch feature/magnidata-integration</code> instead.<Cmd id="agrituneClone" /></li>
+        <li>Clone AgriTune <strong>next to</strong> the MagniData folder, so <code>../agritune</code> exists.<Cmd id="agrituneClone" /></li>
         <li>Tell Compose to include the AgriTune file and rebuild the trainer. This adds it to <code>COMPOSE_FILE</code> in the git-ignored <code>.env</code>, keeping the GPU file if it is already listed:<Cmd id="agrituneEnable" /></li>
       </Steps>
       <Note title="What this does">
         <code>docker-compose.agritune.yml</code> passes the AgriTune checkout into the trainer image as a named build context and installs it there.
         It combines with the GPU file: list all three in <code>COMPOSE_FILE</code>, separated by colons.
-        If an AgriTune run fails at once with <em>AgriTune is required for this preset</em>, the trainer image was built without it, or from a checkout on the wrong branch: repeat the steps above.
+        If an AgriTune run fails at once with <em>AgriTune is required for this preset</em>, the trainer image was built without it: repeat the steps above.
       </Note>
       <h3>Run it offline first</h3>
       <Steps>
@@ -816,7 +816,7 @@ function AgriTune() {
       <table className="guide-table">
         <thead><tr><th>You see</th><th>What to do</th></tr></thead>
         <tbody>
-          <tr><td>The run fails at once with <em>AgriTune is required for this preset</em></td><td>The trainer was built without AgriTune, or from a checkout that lacks the MagniData integration (the message then names <code>precisionai.agritune.integrations</code>). Check that <code>../agritune</code> is on <code>feature/magnidata-integration</code>, follow <em>Turn it on</em> and rebuild.</td></tr>
+          <tr><td>The run fails at once with <em>AgriTune is required for this preset</em></td><td>The trainer was built without AgriTune. Follow <em>Turn it on</em> and rebuild.</td></tr>
           <tr><td>AgriTune runs train on the CPU although the GPU file is enabled</td><td><code>.env</code> has more than one <code>COMPOSE_FILE</code> line and the last one wins. Keep a single line listing all three files, then rebuild.</td></tr>
           <tr><td>The trainer build says the <code>agritune</code> context is missing</td><td>You enabled the AgriTune file but <code>../agritune/pyproject.toml</code> does not exist. Clone it there, or remove <code>docker-compose.agritune.yml</code> from <code>COMPOSE_FILE</code>.</td></tr>
           <tr><td>The run fails while encoding</td><td>Check <code>docker compose logs trainer</code>, the URL and key, and the encoder&apos;s rate limits. To go back to the fake encoder remove the three variables and rebuild.</td></tr>

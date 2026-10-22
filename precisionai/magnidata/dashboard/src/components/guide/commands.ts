@@ -26,8 +26,7 @@ export const COMMANDS = {
     'python -m precisionai.magnidata.tools.embeddings \\\n  --input precisionai/magnidata/data_user/my-field-survey.csv \\\n  --output precisionai/magnidata/data_user/my-field-survey_resnet18.json \\\n  --model resnet18 --device cpu',
   trainerTests: 'python -m pytest precisionai/magnidata/training -q',
   mlflowEnv: 'export MLFLOW_TRACKING_URI=http://localhost:5052',
-  agrituneClone:
-    'git clone --branch feature/magnidata-integration git@github.com:Precision-AI-Inc/agritune.git ../agritune',
+  agrituneClone: 'git clone git@github.com:Precision-AI-Inc/agritune.git ../agritune',
   // Extends an existing COMPOSE_FILE (e.g. the GPU file) instead of appending a second line, which would override it.
   agrituneEnable:
     "if grep -q '^COMPOSE_FILE=' .env 2>/dev/null; then\n  grep -q 'docker-compose.agritune.yml' .env || sed -i '/^COMPOSE_FILE=/s/$/:docker-compose.agritune.yml/' .env\nelse\n  echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml' >> .env\nfi\ndocker compose up -d --build",

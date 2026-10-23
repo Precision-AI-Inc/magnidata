@@ -813,6 +813,17 @@ function AgriTune() {
           <tr><td>Epochs, batch size, image size, learning rate, validation fraction, seed, score every N, hardest predictions</td><td>Same meaning as for the reference trainer. Validation images are chosen at random by the validation fraction.</td></tr>
         </tbody>
       </table>
+      <h3>Advanced settings</h3>
+      <p>
+        Open <strong>Advanced AgriTune settings</strong> at the bottom of the Train dialog for every other AgriTune option,
+        grouped as AgriTune configures them: optimizer (AdamW, Adam or SGD, betas, momentum), learning-rate schedule
+        (constant, cosine, linear warm-up, polynomial or plateau), training (precision, early stopping, extra checkpoints,
+        best-checkpoint metric, class weights), the decoder (MLP Probe hidden layers and dropout; TokenFPN width, levels and
+        CLS fusion), image augmentation (flips, rotation, crop and the photometric jitters, used when Image augmentation is
+        not None), feature augmentation (patch and channel dropout, token masking, noise) and data loading. Each field shows
+        its default as a placeholder and explains itself underneath; only fields you change are sent, and the run records
+        them as parameters (for example <code>optimizer.name</code>), so a retrain starts from them again.
+      </p>
       <p>
         Settings that only the reference trainer understands (loss-term checkboxes, loader processes, pretrained weights, the dataset&apos;s split column) are hidden for AgriTune presets,
         and the API refuses them rather than ignoring them.

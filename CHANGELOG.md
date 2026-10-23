@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Train dialog has an *Advanced AgriTune settings* section exposing AgriTune's whole training configuration:
+  optimizer, learning-rate schedule, precision, early stopping, checkpointing, class weights, decoder options, image
+  and feature augmentation, and data loading. Each setting is declared once (`training/agritune_settings.py`); the
+  API validates it, the dialog renders it, and the trainer applies it to AgriTune's config.
 - The reference trainer (Tiny UNet, LR-ASPP) can train at the images' own size with *Input resolution: Original
   size* (`input_resolution: native`) instead of a square `image_size`; every image must share one size, and the
   checkpoint records it so on-demand inference resizes to the same width and height.

@@ -6,6 +6,7 @@
 import argparse
 import asyncio
 import csv
+import math
 import multiprocessing
 import os
 import sys
@@ -17,21 +18,24 @@ from typing import Any, NamedTuple
 import numpy as np
 from PIL import Image
 
-from precisionai.magnidata.training import contract, data
+from precisionai.magnidata.training import agritune_settings, contract, data
 from precisionai.magnidata.training.train import default_num_workers, describe_device, log, resolve_device
 
 try:
     import mlflow
+    import torch
 
-    from precisionai.agritune.augmentations.image.pipeline import AugmentationMode, GeometricConfig
+    from precisionai.agritune.augmentations.image.pipeline import AugmentationMode
     from precisionai.agritune.features.keys import EncoderFingerprint
     from precisionai.agritune.features.precompute import PrecomputeStats
     from precisionai.agritune.features.store import DirectoryFeatureStore, ShardedFeatureStore
     from precisionai.agritune.integrations.magnidata import MagniDataOptions, run_magnidata_training
     from precisionai.agritune.optimization.optimizers import OptimizerConfig
+    from precisionai.agritune.optimization.schedulers import SchedulerConfig
     from precisionai.agritune.services.encoder_selection import build_encoder
     from precisionai.agritune.services.feature_service import build_features
     from precisionai.agritune.services.training_service import AugmentationSelection, TrainingRunConfig
+    from precisionai.agritune.tasks.segmentation.decoders.token_fpn import CLSFusion
     from precisionai.agritune.tasks.segmentation.losses import SegmentationLossConfig
     from precisionai.agritune.training.precision import PrecisionConfig
     from precisionai.agritune.training.trainer import TrainerConfig
@@ -239,7 +243,7 @@ def _prepare_manifest(
         writer = csv.writer(handle)
         writer.writerow(["sample_id", "image_path", "mask_path", "source_split"])
         writer.writerows(rows)
-    if matched is None:
+    if matched is None or existing is None:
         return StagedDataset(manifest, palette, native)
     log(f"reusing the existing feature store {existing.root} for all {total} images (no encoding)")
     names = {sample_id: name for name, (sample_id, _) in matched.items()}
@@ -257,8 +261,6 @@ def _config(run: Any, data_root: Path, staged: StagedDataset) -> TrainingRunConf
     revision = None if base_url else "fake-v1"
     augmentation_mode = AugmentationMode(params.get("augmentation_mode", "none"))
     augmentation = AugmentationSelection(mode=augmentation_mode)
-    if augmentation_mode is not AugmentationMode.NONE:
-        augmentation.geometric = GeometricConfig(horizontal_flip_probability=0.5)
     device = resolve_device(os.environ.get("MAGNIDATA_TRAIN_DEVICE", "auto"))
     log(f"training on {describe_device(device)}")
     preload = params.get("feature_preload", "none")
@@ -271,7 +273,7 @@ def _config(run: Any, data_root: Path, staged: StagedDataset) -> TrainingRunConf
         # Native and square features of the same image differ, so their cache keys must too.
         preprocessing = "magnidata-native-v1" if staged.native else "magnidata-square-v1"
     clip = _number(params, "grad_clip_norm", 0.0)
-    return TrainingRunConfig(
+    config = TrainingRunConfig(
         manifest_path=str(staged.manifest),
         feature_store_dir=str(existing.root if existing is not None else store_dir),
         store_type=existing.store_type if existing is not None else "directory",
@@ -310,6 +312,90 @@ def _config(run: Any, data_root: Path, staged: StagedDataset) -> TrainingRunConf
             dice_weight=_number(params, "weight_dice", 1.0),
         ),
     )
+    _apply_advanced(config, params, preset, staged.manifest)
+    return config
+
+
+def _manifest_rows(manifest: Path) -> int:
+    with manifest.open(newline="", encoding="utf-8") as handle:
+        return sum(1 for _ in csv.DictReader(handle))
+
+
+def _steps_per_run(config: TrainingRunConfig, samples: int) -> int:
+    """Return the optimizer steps of the whole run, for schedules whose total length is left at 0."""
+    train = max(round(samples * (1 - config.val_fraction)), 1)
+    batches = math.ceil(train / config.batch_size)
+    return max(math.ceil(batches / config.trainer.accumulation_steps), 1) * config.trainer.max_epochs
+
+
+def _set_path(root: Any, path: str, value: Any) -> None:
+    *parents, name = path.split(".")
+    target = root
+    for part in parents:
+        target = getattr(target, part)
+    if isinstance(target, dict):
+        target[name] = value
+    else:
+        setattr(target, name, value)
+
+
+def _advanced_value(setting: agritune_settings.Setting, params: dict[str, str]) -> Any:
+    value = agritune_settings.from_param(setting, params[setting.key]) if setting.key in params else setting.default
+    if setting.zero_is_none and value == 0:
+        return None
+    if setting.type in ("range", "size") and value is not None:
+        return tuple(value)
+    return value
+
+
+def _apply_schedule(config: TrainingRunConfig, values: dict[str, Any], manifest: Path) -> None:
+    """Pop the ``scheduler.*`` values; any schedule but ``constant`` becomes AgriTune's scheduler."""
+    name = values.pop("scheduler.name")
+    schedule = {key.split(".", 1)[1]: values.pop(key) for key in list(values) if key.startswith("scheduler.")}
+    if name == "constant":
+        return
+    if not schedule["total_steps"]:
+        schedule["total_steps"] = _steps_per_run(config, _manifest_rows(manifest))
+    config.scheduler = SchedulerConfig(name=name, **schedule)
+
+
+def _apply_special(config: TrainingRunConfig, values: dict[str, Any]) -> None:
+    """Pop and apply the values that are not a plain assignment to their target."""
+    if (precision := values.pop("trainer.precision")) != "auto":
+        config.trainer.precision.mode = precision
+    if (shuffle := values.pop("data.shuffle")) != "auto":
+        config.shuffle = shuffle == "true"
+    # AgriTune rejects a preload precision without preloading.
+    preload_dtype = values.pop("data.feature_preload_dtype")
+    if config.feature_preload != "none":
+        config.feature_preload_dtype = preload_dtype
+    config.higher_is_better = values["val_metric_name"] != "loss"
+    weights = values.pop("loss.class_weights")
+    if weights is not None:
+        if len(weights) != config.num_classes:
+            raise ValueError(f"loss.class_weights: {len(weights)} weights for {config.num_classes} classes")
+        config.loss.class_weights = torch.tensor(weights, dtype=torch.float32)
+    if "decoder.hidden_dims" in values:
+        values["decoder.hidden_dims"] = list(values["decoder.hidden_dims"] or [])
+    if "decoder.cls_fusion" in values:
+        values["decoder.cls_fusion"] = CLSFusion(values["decoder.cls_fusion"])
+
+
+def _apply_advanced(config: TrainingRunConfig, params: dict[str, str], preset: str, manifest: Path) -> None:
+    """Write every advanced setting (the run's value, else its default) into AgriTune's config."""
+    values = {
+        setting.key: _advanced_value(setting, params)
+        for setting in agritune_settings.SETTINGS
+        if agritune_settings.applies_to(setting, preset)
+    }
+    _apply_schedule(config, values, manifest)
+    _apply_special(config, values)
+    augmenting = config.augmentation.mode is not AugmentationMode.NONE
+    for key, value in values.items():
+        # Image augmentation settings would otherwise turn on transforms for runs without augmentation.
+        if key.startswith("augmentation.") and not augmenting:
+            continue
+        _set_path(config, agritune_settings.BY_KEY[key].target, value)
 
 
 def _encode_dataset(config: TrainingRunConfig, store: DirectoryFeatureStore | ShardedFeatureStore) -> None:

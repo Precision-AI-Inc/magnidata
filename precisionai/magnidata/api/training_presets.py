@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from precisionai.magnidata.training import contract
+from precisionai.magnidata.training import agritune_settings, contract
 
 RUN_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 SPLIT_MODES = ("random", "column")
@@ -159,6 +159,8 @@ def describe() -> dict[str, Any]:
         "presets": [{"key": key, **value} for key, value in PRESETS.items()],
         "bounds": BOUNDS,
         "loss_terms": list(contract.SEGMENTATION_LOSS_TERMS),
+        # AgriTune's Advanced section: one entry per setting, in display order.
+        "advanced": [setting.as_dict() for setting in agritune_settings.SETTINGS],
     }
 
 
@@ -205,7 +207,7 @@ def _loss_weights(value: Any, terms: list[str]) -> dict[str, float]:
 def _check_engine_fields(engine: str, overrides: dict[str, Any]) -> None:
     """Reject overrides that the preset's engine would ignore."""
     if engine == "reference":
-        for field in (*AGRITUNE_FIELDS, *AGRITUNE_NUMBERS):
+        for field in (*AGRITUNE_FIELDS, *AGRITUNE_NUMBERS, *agritune_settings.BY_KEY):
             if field in overrides:
                 raise ValueError(f"params.{field}: only available for AgriTune presets")
         return
@@ -250,11 +252,13 @@ def _optimiser_settings(engine: str, p: dict[str, Any]) -> dict[str, Any]:
 
 
 def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
-    unknown = sorted(set(overrides) - set(BOUNDS))
+    unknown = sorted(set(overrides) - set(BOUNDS) - set(agritune_settings.BY_KEY))
     if unknown:
         raise ValueError(f"params: unknown parameter(s) {', '.join(unknown)}")
     engine = PRESETS[preset]["engine"]
     _check_engine_fields(engine, overrides)
+    advanced = {key: value for key, value in overrides.items() if key in agritune_settings.BY_KEY}
+    overrides = {key: value for key, value in overrides.items() if key not in agritune_settings.BY_KEY}
     p = {**PRESETS[preset]["defaults"], **overrides}
     if engine == "agritune":
         _resolve_preload(p, overrides)
@@ -292,13 +296,17 @@ def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
         out["num_workers"] = _integer("params.num_workers", p["num_workers"], 0, 16)
     out.update(_optimiser_settings(engine, p))
     out.update(choices)
+    # Only the advanced settings a run sets are recorded; the trainer uses each setting's default otherwise.
+    out.update({key: agritune_settings.validate(key, value, preset) for key, value in advanced.items()})
     return out
 
 
 def _flat(resolved: dict[str, Any]) -> dict[str, str]:
     params = {}
     for key, value in resolved.items():
-        if key == "loss_terms":
+        if key in agritune_settings.BY_KEY:
+            params[key] = agritune_settings.to_param(value)
+        elif key == "loss_terms":
             params[key] = ",".join(value)
         elif key == "loss_weights":
             params.update({f"weight_{term}": str(weight) for term, weight in value.items()})

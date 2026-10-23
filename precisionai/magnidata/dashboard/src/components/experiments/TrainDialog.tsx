@@ -3,6 +3,8 @@ import { Loader2, X } from 'lucide-react'
 import { api, errorText } from '../../api'
 import type { TrainingPresets } from '../../api'
 import { launchParams, validateParams } from '../../lib/train'
+import { advancedFor, advancedFromRun, advancedPayload, formatValue, groupSettings } from '../../lib/advanced'
+import type { AdvancedInput, AdvancedSetting } from '../../lib/advanced'
 import type { FieldErrors, TrainParams } from '../../lib/train'
 import '../ByodDialog.css'
 
@@ -13,6 +15,8 @@ interface Props {
   parentRunId?: string
   /** Settings to start from instead of the preset's defaults (e.g. the run being retrained). */
   initialParams?: Partial<TrainParams>
+  /** An earlier run's MLflow params, to restore its advanced AgriTune settings for a retrain. */
+  initialRunParams?: Record<string, string>
   /** Preset to preselect (the retrained run's). */
   initialPreset?: string
   onClose: () => void
@@ -42,7 +46,7 @@ function initial(defaults: Record<string, unknown>): TrainParams {
 }
 
 /** Launch a training run on the loaded dataset. Server-side validation errors are shown beside the field. */
-export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, initialParams, initialPreset, onClose, onLaunched }: Props) {
+export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, initialParams, initialRunParams, initialPreset, onClose, onLaunched }: Props) {
   const startPreset = presets.presets.find(p => p.key === initialPreset) ?? presets.presets[0]
   const [preset, setPreset] = useState(startPreset.key)
   const [name, setName] = useState('')
@@ -52,15 +56,25 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
   const [busy, setBusy] = useState(false)
   const selectedPreset = presets.presets.find(p => p.key === preset) ?? startPreset
   const isAgriTune = selectedPreset.engine === 'agritune'
+  const advancedSettings = useMemo(() => advancedFor(presets.advanced ?? [], preset), [presets.advanced, preset])
+  const [advanced, setAdvanced] = useState<Record<string, AdvancedInput>>(() => advancedFromRun(presets.advanced ?? [], initialRunParams ?? {}))
+  const [advancedServerErrors, setAdvancedServerErrors] = useState<Record<string, string>>({})
+  const advancedResult = useMemo(() => advancedPayload(advancedSettings, advanced), [advancedSettings, advanced])
+  const advancedErrors = { ...advancedServerErrors, ...advancedResult.errors }
 
   const clientErrors = useMemo(() => validateParams(params, presets.bounds), [params, presets.bounds])
   const errors = { ...serverErrors, ...clientErrors }
-  const valid = Object.keys(clientErrors).length === 0
+  const valid = Object.keys(clientErrors).length === 0 && (!isAgriTune || Object.keys(advancedResult.errors).length === 0)
+  const setAdvancedInput = (key: string, input: AdvancedInput) => {
+    setAdvanced(prev => ({ ...prev, [key]: input }))
+    setAdvancedServerErrors(prev => ({ ...prev, [key]: '' }))
+  }
 
   const choosePreset = (key: string) => {
     setPreset(key)
     setParams(initial(presets.presets.find(p => p.key === key)!.defaults))
     setServerErrors({})
+    setAdvancedServerErrors({})
   }
   const set = <K extends keyof TrainParams>(key: K, value: TrainParams[K]) => {
     setParams(prev => ({ ...prev, [key]: value }))
@@ -82,11 +96,17 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
     try {
       const run = await api.launchTraining({
         name: name.trim() || undefined, dataset_source: datasetSource, preset,
-        params: launchParams(params, selectedPreset.engine), parent_run_id: parentRunId,
+        params: { ...launchParams(params, selectedPreset.engine), ...(isAgriTune ? advancedResult.params : {}) },
+        parent_run_id: parentRunId,
       })
       onLaunched(run.run_id)
     } catch (e) {
       const message = errorText(e)
+      const advancedKey = /params\.([a-z_.]+):/.exec(message)?.[1]
+      if (advancedKey && advancedSettings.some(s => s.key === advancedKey)) {
+        setAdvancedServerErrors(prev => ({ ...prev, [advancedKey]: message.replace(/^.*?params\.[a-z_.]+:\s*/, '').replace(/["}\\]/g, '') }))
+        return
+      }
       const field = /params\.([a-z_]+)(?:\.[a-z]+)?:/.exec(message)?.[1] as keyof TrainParams | undefined
       if (field) setServerErrors(prev => ({ ...prev, [field]: message.replace(/^.*?params\.[a-z_.]+:\s*/, '').replace(/["}\\]/g, '') }))
       else setFormError(message)
@@ -221,6 +241,31 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
             </div>
           </div>}
 
+          {isAgriTune && advancedSettings.length > 0 && <details className="text-xs" style={{ color: 'var(--c-t2)' }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
+              Advanced AgriTune settings{Object.keys(advanced).length ? ` (${Object.keys(advanced).length} changed)` : ''}
+              {Object.keys(advancedErrors).some(k => advancedErrors[k]) && <span style={{ color: 'var(--color-danger)' }}> · check the highlighted fields</span>}
+            </summary>
+            <p className="mt-1" style={{ color: 'var(--c-t3)' }}>
+              Every AgriTune training option. Unchanged fields keep the value shown as their placeholder; only changed ones are sent with the run.
+            </p>
+            {groupSettings(advancedSettings).map(group => (
+              <fieldset key={group.group} className="mt-2" style={{ border: '1px solid var(--c-border)', borderRadius: 8, padding: '6px 10px 10px' }}>
+                <legend className="px-1" style={{ color: 'var(--c-t1)' }}>{group.group}</legend>
+                <div className="grid gap-x-3 gap-y-2 train-dialog-grid">
+                  {group.settings.map(setting => (
+                    <AdvancedField key={setting.key} setting={setting} input={advanced[setting.key]} error={advancedErrors[setting.key]}
+                                   style={inputStyle} onChange={input => setAdvancedInput(setting.key, input)} />
+                  ))}
+                </div>
+              </fieldset>
+            ))}
+            {Object.keys(advanced).length > 0 && (
+              <button type="button" className="mt-2 text-xs underline" style={{ color: 'var(--c-t2)' }}
+                      onClick={() => { setAdvanced({}); setAdvancedServerErrors({}) }}>Reset advanced settings</button>
+            )}
+          </details>}
+
           <div className="grid gap-x-3 gap-y-2 train-dialog-grid">
             {!isAgriTune && <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Loader processes (blank = automatic)
               <input type="number" min={presets.bounds.num_workers?.min} max={presets.bounds.num_workers?.max as number | undefined} step={1}
@@ -249,5 +294,35 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
         </div>
       </div>
     </div>
+  )
+}
+
+/** One advanced AgriTune setting: a select, checkbox or text field, with its help and any error. */
+function AdvancedField({ setting, input, error, style, onChange }: {
+  setting: AdvancedSetting
+  input: AdvancedInput | undefined
+  error?: string
+  style: Record<string, string>
+  onChange: (input: AdvancedInput) => void
+}) {
+  const changed = input !== undefined
+  const fieldStyle = { ...style, borderColor: error ? 'var(--color-danger)' : changed ? 'var(--c-accent, var(--c-t2))' : 'var(--c-border)' }
+  return (
+    <label className="text-xs" style={{ color: 'var(--c-t2)' }}>{setting.label}
+      {setting.type === 'bool' ? (
+        <input type="checkbox" className="ml-2 align-middle" aria-label={setting.label}
+               checked={changed ? input === true : setting.default === true} onChange={e => onChange(e.target.checked)} />
+      ) : setting.type === 'choice' ? (
+        <select value={changed ? String(input) : String(setting.default)} onChange={e => onChange(e.target.value)} aria-invalid={!!error}
+                className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={fieldStyle}>
+          {setting.choices.map(choice => <option key={choice} value={choice}>{choice}</option>)}
+        </select>
+      ) : (
+        <input value={changed ? String(input) : ''} placeholder={formatValue(setting, setting.default) || 'unset'}
+               onChange={e => onChange(e.target.value)} aria-invalid={!!error} inputMode={setting.type === 'int' || setting.type === 'float' ? 'decimal' : 'text'}
+               className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={fieldStyle} />
+      )}
+      <span className="block mt-0.5" style={{ color: error ? 'var(--color-danger)' : 'var(--c-t3)' }}>{error || setting.help}</span>
+    </label>
   )
 }

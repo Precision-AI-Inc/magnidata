@@ -252,6 +252,8 @@ export interface TrainingPresets {
   presets: { key: string; label: string; description: string; engine: 'reference' | 'agritune'; defaults: Record<string, unknown> }[]
   bounds: Record<string, import('./lib/train').Bound>
   loss_terms: string[]
+  /** AgriTune's Advanced settings, in display order. */
+  advanced: import('./lib/advanced').AdvancedSetting[]
   backend: { available: boolean; reason: string | null; worker_heartbeat: number | null }
   mlflow: MlflowStatus
 }

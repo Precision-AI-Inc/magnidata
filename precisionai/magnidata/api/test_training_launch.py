@@ -210,6 +210,61 @@ def test_reference_presets_train_at_native_resolution_on_request(client, mlflow_
     assert mlflow_store.get_run(native.get_json()["run_id"])["params"]["input_resolution"] == "native"
 
 
+def test_presets_serve_the_advanced_agritune_settings(client):
+    advanced = client.get("/api/training/presets").get_json()["advanced"]
+
+    keys = {item["key"] for item in advanced}
+    assert {
+        "optimizer.name",
+        "scheduler.name",
+        "decoder.hidden_dims",
+        "feature_augmentation.patch_dropout_probability",
+    } <= keys
+    assert next(item for item in advanced if item["key"] == "decoder.hidden_dim")["presets"] == ["agritune_token_fpn"]
+
+
+def test_advanced_agritune_settings_are_validated_and_recorded(client, mlflow_store):
+    params = {
+        "optimizer.name": "sgd",
+        "optimizer.betas": [0.8, 0.99],
+        "scheduler.name": "cosine",
+        "scheduler.warmup_steps": 100,
+        "decoder.hidden_dims": [256, 128],
+        "loss.class_weights": [],
+        "data.pin_memory": True,
+    }
+    response = client.post(
+        "/api/training/runs",
+        json={"dataset_source": "data_user/syn.csv", "preset": "agritune_mlp_probe", "params": params},
+    )
+
+    assert response.status_code == 201
+    logged = mlflow_store.get_run(response.get_json()["run_id"])["params"]
+    assert logged["optimizer.name"] == "sgd"
+    assert logged["optimizer.betas"] == "0.8,0.99"
+    assert logged["scheduler.warmup_steps"] == "100"
+    assert logged["decoder.hidden_dims"] == "256,128"
+    assert logged["loss.class_weights"] == ""
+    assert logged["data.pin_memory"] == "true"
+    assert "trainer.precision" not in logged
+
+
+@pytest.mark.parametrize(
+    ("preset", "params", "message"),
+    [
+        ("tiny_unet", {"optimizer.name": "sgd"}, "only available for AgriTune presets"),
+        ("agritune_token_fpn", {"decoder.hidden_dims": [64]}, "only available for agritune_mlp_probe"),
+        ("agritune_mlp_probe", {"scheduler.name": "warm"}, "must be one of"),
+        ("agritune_mlp_probe", {"augmentation.brightness_range": [2, 1]}, "must not exceed"),
+    ],
+)
+def test_advanced_settings_are_refused_where_they_do_not_apply(client, preset, params, message):
+    resp = client.post("/api/training/runs", json={**VALID, "preset": preset, "params": params})
+
+    assert resp.status_code == 400
+    assert message in resp.get_json()["error"]
+
+
 def test_reference_presets_accept_weight_decay(client, mlflow_store):
     response = client.post("/api/training/runs", json={**VALID, "params": {"weight_decay": 0.05}})
 

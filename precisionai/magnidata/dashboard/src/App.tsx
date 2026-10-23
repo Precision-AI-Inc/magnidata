@@ -404,7 +404,7 @@ export default function App() {
   const [showTrain, setShowTrain] = useState(false)
   // A child dataset was just saved: offer to train on it, carrying over the overlaid run's settings.
   const [createdDataset, setCreatedDataset] = useState<DatasetMeta | null>(null)
-  const [trainOn, setTrainOn] = useState<{ dataset: DatasetMeta; params: Partial<TrainParams>; preset?: string; parent?: string } | null>(null)
+  const [trainOn, setTrainOn] = useState<{ dataset: DatasetMeta; params: Partial<TrainParams>; runParams?: Record<string, string>; preset?: string; parent?: string } | null>(null)
   const trainBlocked = (hasDataset: boolean) => trainDisabledReason({
     hasDataset,
     mlflowReachable: activeRun.presets?.mlflow.reachable ?? false,
@@ -416,17 +416,19 @@ export default function App() {
   const trainOnCreated = async () => {
     if (!createdDataset) return
     let params: Partial<TrainParams> = {}
+    let runParams: Record<string, string> | undefined
     let preset: string | undefined
     const parent = runOverlay.overlay?.runId
     if (parent) {
       try {
         const earlier = await api.getRun(parent)
         params = paramsFromRun(earlier.params)
+        runParams = earlier.params
         preset = earlier.tags['magnidata.preset'] ?? earlier.params.preset
       } catch { /* start from the preset defaults */ }
     }
     await activeRun.loadPresets()
-    setTrainOn({ dataset: createdDataset, params, preset, parent })
+    setTrainOn({ dataset: createdDataset, params, runParams, preset, parent })
   }
   const exportRelabelQueue = async () => {
     if (!data) return
@@ -1197,7 +1199,7 @@ export default function App() {
 
       {trainOn && activeRun.presets && (
         <TrainDialog key={trainOn.dataset.source} presets={activeRun.presets} datasetSource={trainOn.dataset.source}
-                     datasetName={trainOn.dataset.name} parentRunId={trainOn.parent} initialParams={trainOn.params}
+                     datasetName={trainOn.dataset.name} parentRunId={trainOn.parent} initialParams={trainOn.params} initialRunParams={trainOn.runParams}
                      initialPreset={trainOn.preset} onClose={() => setTrainOn(null)} onLaunched={onLaunched} />
       )}
 

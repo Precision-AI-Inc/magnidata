@@ -24,7 +24,8 @@ def resolve_under(root: str | Path, relative: str) -> Path | None:
         return None
     base = os.path.realpath(root)
     path = os.path.realpath(os.path.join(base, relative))
-    if os.path.commonpath((base, path)) != base:
+    # A startswith check on the resolved path (not commonpath) is what code scanning recognises as containment.
+    if not path.startswith(base.rstrip(os.sep) + os.sep):
         return None
     return Path(path)
 

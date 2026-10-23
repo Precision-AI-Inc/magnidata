@@ -30,7 +30,8 @@ def test_status_unreachable_returns_quickly():
     status = store.status()
     assert time.monotonic() - started < 15
     assert status["reachable"] is False
-    assert "MLflow" in status["error"]
+    # A fixed message: the underlying connection error is logged, not returned to clients.
+    assert status["error"] == "MLflow is not reachable at http://127.0.0.1:1"
 
 
 def test_run_entities_are_plain_dicts(mlflow_store):

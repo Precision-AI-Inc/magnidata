@@ -8,6 +8,7 @@ MLflow entities: every method here returns plain dicts and maps client failures 
 `MlflowUnavailableError` / `MlflowNotFoundError` (also exported as `MlflowUnavailable` / `MlflowNotFound`).
 """
 
+import logging
 import os
 import threading
 from collections.abc import Mapping, Sequence
@@ -21,6 +22,7 @@ import requests
 from mlflow.protos import databricks_pb2
 
 DEFAULT_TRACKING_URI = "http://localhost:5052"
+logger = logging.getLogger(__name__)
 
 # A down server must never hang the API: bound the per-request wait and the retry backoff.
 _HTTP_DEFAULTS = {
@@ -130,7 +132,9 @@ class MlflowStore:
         try:
             self._call("status", self._client.search_experiments, max_results=1)
         except MlflowUnavailableError as err:
-            result["error"] = str(err)
+            # The underlying error can name hosts, ports or paths; it is logged, and clients get a fixed message.
+            logger.warning("MLflow status check failed: %s", err)
+            result["error"] = f"MLflow is not reachable at {self.tracking_uri}"
             return result
         result["reachable"] = True
         result["version"] = self._server_version()

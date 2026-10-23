@@ -9,6 +9,7 @@ least-recently-used run folders are evicted above ``MLFLOW_CACHE_MAX_MB``.
 """
 
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -22,11 +23,29 @@ from precisionai.magnidata.training import contract
 DEFAULT_MAX_MB = 2048
 CACHE_DIRNAME = ".mlflow_cache"
 _lock = threading.Lock()
+# MLflow run ids are 32 lowercase hex characters; anything else could name a folder outside the cache.
+_RUN_ID = re.compile(r"[0-9a-f]{32}")
 
 
 def cache_root() -> Path:
     """Return the cache folder, resolved from ``DATA_ROOT`` at call time."""
     return Path(os.environ.get("DATA_ROOT", ".")) / "data_user" / CACHE_DIRNAME
+
+
+def _inside(base: Path, relative: str) -> Path:
+    """Return ``base / relative`` resolved, refusing a path that would leave ``base``."""
+    root = os.path.realpath(base)
+    path = os.path.realpath(os.path.join(root, relative))
+    if not path.startswith(root + os.sep):
+        raise MlflowNotFoundError(f"artifact path outside the cache: {relative!r}")
+    return Path(path)
+
+
+def _run_dir(run_id: str) -> Path:
+    """Return a run's cache folder; only real MLflow run ids are accepted, so it stays inside the cache."""
+    if not _RUN_ID.fullmatch(run_id):
+        raise MlflowNotFoundError(f"not an MLflow run id: {run_id!r}")
+    return _inside(cache_root(), run_id)
 
 
 def max_bytes() -> int:
@@ -48,7 +67,8 @@ def evict(root: Path, keep: str, limit: int) -> list[str]:
     """
     folders = [d for d in root.iterdir() if d.is_dir() and d.name != keep]
     sizes = {d: _folder_size(d) for d in folders}
-    total = sum(sizes.values()) + (_folder_size(root / keep) if (root / keep).is_dir() else 0)
+    kept = _inside(root, keep)
+    total = sum(sizes.values()) + (_folder_size(kept) if kept.is_dir() else 0)
     evicted = []
     for folder in sorted(folders, key=lambda d: d.stat().st_mtime):
         if total <= limit:
@@ -61,7 +81,7 @@ def evict(root: Path, keep: str, limit: int) -> list[str]:
 
 def _fetch(store: MlflowStore, run_id: str, artifact: str, run_dir: Path) -> Path | None:
     """Return the cached copy of ``artifact``, downloading it first if needed; None if the run lacks it."""
-    target = run_dir / artifact
+    target = _inside(run_dir, artifact)
     if target.is_file():
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -86,7 +106,7 @@ def sync_per_sample(
     scored = contract.parse_scored_epochs(store.get_run(run_id)["tags"])
     wanted = [e for e in scored if epochs is None or e in set(epochs)]
     root = cache_root()
-    run_dir = root / run_id
+    run_dir = _run_dir(run_id)
     with _lock:
         run_dir.mkdir(parents=True, exist_ok=True)
         files = []
@@ -103,13 +123,13 @@ def sync_per_sample(
 
 def cached_split(run_id: str) -> Path | None:
     """Return the cached ``split.csv`` of a run, if present."""
-    path = cache_root() / run_id / contract.SPLIT_ARTIFACT
+    path = _run_dir(run_id) / contract.SPLIT_ARTIFACT
     return path if path.is_file() else None
 
 
 def fetch_artifact(store: MlflowStore, run_id: str, artifact: str) -> Path | None:
     """Return a local copy of one run artifact (downloaded on first use), or None if the run lacks it."""
-    run_dir = cache_root() / run_id
+    run_dir = _run_dir(run_id)
     with _lock:
         run_dir.mkdir(parents=True, exist_ok=True)
         path = _fetch(store, run_id, artifact, run_dir)

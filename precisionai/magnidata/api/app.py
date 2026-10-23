@@ -117,11 +117,9 @@ def _data_path(relative_path: str) -> str:
         raise ValueError("invalid data path")
     root = os.path.realpath(DATA_ROOT)
     path = os.path.realpath(os.path.join(root, relative_path))
-    try:
-        if os.path.commonpath((root, path)) != root:
-            raise ValueError("invalid data path")
-    except ValueError as exc:
-        raise ValueError("invalid data path") from exc
+    # A startswith check on the resolved path (not commonpath) is what code scanning recognises as containment.
+    if not path.startswith(root.rstrip(os.sep) + os.sep):
+        raise ValueError("invalid data path")
     return path
 
 
@@ -1131,8 +1129,10 @@ def _projection_response(source: str, variant: str | None, method: str, cache_ke
 
     try:
         matrix = _base_matrix(source, variant)
-    except (FileNotFoundError, ValueError) as e:
-        return jsonify({"error": str(e)}), 404
+    except (FileNotFoundError, ValueError):
+        # File and parsing errors can name server paths; log them, answer with a fixed message.
+        app.logger.warning("embeddings unavailable for %s (%s)", source, variant, exc_info=True)
+        return jsonify({"error": "embeddings not found or unreadable for this dataset"}), 404
     positions = projections.project(matrix, method)
     _COMPUTE_CACHE[cache_key] = positions
     return jsonify({"positions": positions})
@@ -1166,8 +1166,10 @@ def _clusters_response(source: str, variant: str | None, k: int, cache_key: tupl
     """Compute, cache and return spherical k-means labels for one (dataset, variant, k)."""
     try:
         matrix = _base_matrix(source, variant)
-    except (FileNotFoundError, ValueError) as e:
-        return jsonify({"error": str(e)}), 404
+    except (FileNotFoundError, ValueError):
+        # File and parsing errors can name server paths; log them, answer with a fixed message.
+        app.logger.warning("embeddings unavailable for %s (%s)", source, variant, exc_info=True)
+        return jsonify({"error": "embeddings not found or unreadable for this dataset"}), 404
     n = matrix.shape[0]
     if n < 2:
         return jsonify({"labels": [0] * n})
@@ -1230,12 +1232,12 @@ def start_embedding_analysis() -> ResponseReturnValue:
     payload = request.get_json(silent=True) or {}
     try:
         source = _safe_source(str(payload.get("source", "")).strip())
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"error": "invalid source path"}), 400
     try:
         variant = _safe_variant(str(payload.get("variant", "")).strip())
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"error": "invalid variant"}), 400
     try:
         k = max(1, min(50, int(payload.get("k", 20))))
     except (TypeError, ValueError):
@@ -1340,8 +1342,8 @@ def embedding_compare() -> ResponseReturnValue:
     """
     try:
         source = _safe_source(request.args.get("source", "").strip())
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except ValueError:
+        return jsonify({"error": "invalid source path"}), 400
     variant = request.args.get("variant", "").strip()
     if not variant or not re.fullmatch(r"[A-Za-z0-9_-]+", variant):
         return jsonify({"error": "valid variant required"}), 400
@@ -1359,8 +1361,9 @@ def _compare_response(source: str, variant: str, cache_key: tuple) -> ResponseRe
     try:
         paths = _dataset_paths(source)
         comp = _load_emb_by_name(source, variant)
-    except (FileNotFoundError, ValueError) as e:
-        return jsonify({"error": str(e)}), 404
+    except (FileNotFoundError, ValueError):
+        app.logger.warning("embeddings unavailable for comparing %s (%s)", source, variant, exc_info=True)
+        return jsonify({"error": "dataset or comparison embeddings not found or unreadable"}), 404
 
     name_to_row: dict[str, int] = {}
     for i, p in enumerate(paths):

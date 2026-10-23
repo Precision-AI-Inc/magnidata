@@ -11,6 +11,7 @@ import os
 import artifact_cache
 import pytest
 from conftest import seed_run
+from mlflow_store import MlflowNotFoundError
 
 from precisionai.magnidata.training import contract
 
@@ -111,3 +112,20 @@ def test_eviction_never_removes_the_run_in_use(mlflow_store, monkeypatch):
 def test_invalid_size_setting_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("MLFLOW_CACHE_MAX_MB", "lots")
     assert artifact_cache.max_bytes() == artifact_cache.DEFAULT_MAX_MB * 1024 * 1024
+
+
+@pytest.mark.parametrize("run_id", ["../../etc", "a" * 31, "A" * 32, "0123456789abcdef0123456789abcde/"])
+def test_cache_paths_accept_only_mlflow_run_ids(mlflow_store, run_id):
+    with pytest.raises(MlflowNotFoundError, match="not an MLflow run id"):
+        artifact_cache.fetch_artifact(mlflow_store, run_id, contract.SPLIT_ARTIFACT)
+    with pytest.raises(MlflowNotFoundError, match="not an MLflow run id"):
+        artifact_cache.cached_split(run_id)
+
+
+def test_artifact_paths_cannot_leave_the_run_folder(mlflow_store, tmp_path):
+    run_id = _run(mlflow_store, [1])
+
+    with pytest.raises(MlflowNotFoundError, match="outside the cache"):
+        artifact_cache.fetch_artifact(mlflow_store, run_id, "../../../outside.csv")
+
+    assert not (tmp_path / "root" / "outside.csv").exists()

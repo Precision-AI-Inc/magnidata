@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Code scanning: the MLflow artifact cache only accepts real run ids and refuses artifact paths outside a run's
+  folder; data paths are checked for containment in the form CodeQL recognises; the embedding and MLflow-status
+  endpoints return fixed error messages and log the underlying error, which could contain server paths.
 - The trainer has 16 GB of shared memory instead of 1 GB, so full-size reference training (for example LR-ASPP
   at 798×532) no longer hangs when its data-loader workers run out of room for prefetched batches.
 - Run detail and run compare plot every metric of a run instead of only the first 20 keys, which left most

@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- AgriTune ASPP, Pyramid Pooling, Segmenter and MaskFormer presets, so the portal offers all six AgriTune decoders,
+  with each decoder's options (atrous rates, pool sizes, attention heads, MLP ratio, mask queries, widths and
+  layers) under the Train dialog's advanced Decoder section; left empty, they keep that decoder's defaults.
 - The Train dialog has an *Advanced AgriTune settings* section exposing AgriTune's whole training configuration:
   optimizer, learning-rate schedule, precision, early stopping, checkpointing, class weights, decoder options, image
   and feature augmentation, and data loading. Each setting is declared once (`training/agritune_settings.py`); the

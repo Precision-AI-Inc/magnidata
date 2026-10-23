@@ -59,8 +59,12 @@ def test_presets_endpoint_reports_worker_availability(client, root):
         "lraspp_mobilenet",
         "agritune_mlp_probe",
         "agritune_token_fpn",
+        "agritune_aspp",
+        "agritune_ppm",
+        "agritune_segmenter",
+        "agritune_mask_former",
     ]
-    assert [p["engine"] for p in body["presets"]] == ["reference", "reference", "agritune", "agritune"]
+    assert [p["engine"] for p in body["presets"]] == ["reference", "reference", *["agritune"] * 6]
     assert body["bounds"]["epochs"] == {"type": "int", "min": 1, "max": 200}
     assert body["loss_terms"] == ["dice", "cce", "bce"]
     assert body["mlflow"]["reachable"] is True
@@ -116,7 +120,17 @@ def test_agritune_launch_records_engine_and_component_losses(client, mlflow_stor
     assert run["params"]["feature_provider"] == "online"
 
 
-@pytest.mark.parametrize("preset", ["agritune_mlp_probe", "agritune_token_fpn"])
+@pytest.mark.parametrize(
+    "preset",
+    [
+        "agritune_mlp_probe",
+        "agritune_token_fpn",
+        "agritune_aspp",
+        "agritune_ppm",
+        "agritune_segmenter",
+        "agritune_mask_former",
+    ],
+)
 def test_agritune_presets_launch_with_their_served_defaults(client, mlflow_store, preset):
     served = next(p for p in client.get("/api/training/presets").get_json()["presets"] if p["key"] == preset)
     params = {
@@ -220,7 +234,8 @@ def test_presets_serve_the_advanced_agritune_settings(client):
         "decoder.hidden_dims",
         "feature_augmentation.patch_dropout_probability",
     } <= keys
-    assert next(item for item in advanced if item["key"] == "decoder.hidden_dim")["presets"] == ["agritune_token_fpn"]
+    assert next(item for item in advanced if item["key"] == "decoder.num_queries")["presets"] == ["agritune_mask_former"]
+    assert "agritune_mlp_probe" not in next(item for item in advanced if item["key"] == "decoder.hidden_dim")["presets"]
 
 
 def test_advanced_agritune_settings_are_validated_and_recorded(client, mlflow_store):

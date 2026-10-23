@@ -51,6 +51,10 @@ PRELOAD_DTYPE = "float16"
 PRESET_DECODERS = {
     "agritune_mlp_probe": "mlp_probe",
     "agritune_token_fpn": "token_fpn",
+    "agritune_aspp": "aspp",
+    "agritune_ppm": "ppm",
+    "agritune_segmenter": "segmenter",
+    "agritune_mask_former": "mask_former",
 }
 
 
@@ -395,7 +399,11 @@ def _apply_advanced(config: TrainingRunConfig, params: dict[str, str], preset: s
         # Image augmentation settings would otherwise turn on transforms for runs without augmentation.
         if key.startswith("augmentation.") and not augmenting:
             continue
-        _set_path(config, agritune_settings.BY_KEY[key].target, value)
+        target = agritune_settings.BY_KEY[key].target
+        # An unset decoder setting keeps that decoder's own default (they differ between decoders).
+        if value is None and target.startswith("decoder_kwargs."):
+            continue
+        _set_path(config, target, value)
 
 
 def _encode_dataset(config: TrainingRunConfig, store: DirectoryFeatureStore | ShardedFeatureStore) -> None:

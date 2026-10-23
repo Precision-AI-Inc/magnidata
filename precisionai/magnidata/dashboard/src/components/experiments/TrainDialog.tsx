@@ -318,7 +318,7 @@ function AdvancedField({ setting, input, error, style, onChange }: {
           {setting.choices.map(choice => <option key={choice} value={choice}>{choice}</option>)}
         </select>
       ) : (
-        <input value={changed ? String(input) : ''} placeholder={formatValue(setting, setting.default) || 'unset'}
+        <input value={changed ? String(input) : ''} placeholder={formatValue(setting, setting.default) || 'default'}
                onChange={e => onChange(e.target.value)} aria-invalid={!!error} inputMode={setting.type === 'int' || setting.type === 'float' ? 'decimal' : 'text'}
                className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={fieldStyle} />
       )}

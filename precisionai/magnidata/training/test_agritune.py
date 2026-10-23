@@ -35,7 +35,14 @@ def test_missing_objective_defaults_to_cross_entropy(agritune):
 
 
 def test_every_agritune_preset_maps_to_a_decoder(agritune):
-    assert set(agritune.PRESET_DECODERS) == {"agritune_mlp_probe", "agritune_token_fpn"}
+    assert agritune.PRESET_DECODERS == {
+        "agritune_mlp_probe": "mlp_probe",
+        "agritune_token_fpn": "token_fpn",
+        "agritune_aspp": "aspp",
+        "agritune_ppm": "ppm",
+        "agritune_segmenter": "segmenter",
+        "agritune_mask_former": "mask_former",
+    }
 
 
 def _run(preset="agritune_mlp_probe", **params):
@@ -264,7 +271,30 @@ def _staged_synthetic(agritune, dataset):
     return agritune._prepare_manifest("run1", _source(dataset), dataset.root, 16)
 
 
-@pytest.mark.parametrize("preset", ["agritune_mlp_probe", "agritune_token_fpn"])
+ALL_PRESETS = [
+    "agritune_mlp_probe",
+    "agritune_token_fpn",
+    "agritune_aspp",
+    "agritune_ppm",
+    "agritune_segmenter",
+    "agritune_mask_former",
+]
+# A valid non-default value for every decoder setting (hidden width 16 divides by 4 heads).
+DECODER_VALUES = {
+    "decoder.hidden_dims": "8",
+    "decoder.hidden_dim": "16",
+    "decoder.num_layers": "1",
+    "decoder.dropout": "0.1",
+    "decoder.cls_fusion": "concat",
+    "decoder.atrous_rates": "1,2",
+    "decoder.pool_sizes": "1,2",
+    "decoder.num_heads": "4",
+    "decoder.mlp_ratio": "2",
+    "decoder.num_queries": "4",
+}
+
+
+@pytest.mark.parametrize("preset", ALL_PRESETS)
 def test_every_advanced_setting_targets_a_real_agritune_field(agritune, synthetic_dataset, monkeypatch, preset):
     monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
     settings = importlib.import_module("precisionai.magnidata.training.agritune_settings")
@@ -275,7 +305,8 @@ def test_every_advanced_setting_targets_a_real_agritune_field(agritune, syntheti
     )
 
     for setting in settings.SETTINGS:
-        if not settings.applies_to(setting, preset) or setting.key.startswith("scheduler."):
+        # Decoder settings are checked by building the decoder below; the schedule is built separately.
+        if not settings.applies_to(setting, preset) or setting.key.startswith(("scheduler.", "decoder.")):
             continue
         *parents, name = setting.target.split(".")
         target = config
@@ -373,3 +404,35 @@ def test_token_fpn_cls_fusion_and_preload_precision(agritune, synthetic_dataset,
     assert config.decoder_kwargs["cls_fusion"] is agritune.CLSFusion.FILM
     assert config.feature_preload_dtype == "float32"
     assert unpreloaded.feature_preload_dtype is None
+
+
+@pytest.mark.parametrize("preset", ALL_PRESETS)
+def test_every_decoder_builds_with_its_settings_changed(agritune, synthetic_dataset, monkeypatch, preset):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+    settings = importlib.import_module("precisionai.magnidata.training.agritune_settings")
+    common = importlib.import_module("precisionai.agritune.services.segmentation_common")
+    changed = {key: value for key, value in DECODER_VALUES.items() if settings.applies_to(settings.BY_KEY[key], preset)}
+    staged = _staged_synthetic(agritune, synthetic_dataset)
+
+    config = agritune._config(_run(preset, **changed), synthetic_dataset.root, staged)
+    decoder = common.build_decoder(
+        config.decoder_name, patch_dim=8, cls_dim=8, num_classes=3, output_size=(16, 16), **config.decoder_kwargs
+    )
+
+    assert config.decoder_name == agritune.PRESET_DECODERS[preset]
+    assert set(config.decoder_kwargs) == {settings.BY_KEY[key].target.split(".", 1)[1] for key in changed}
+    assert sum(parameter.numel() for parameter in decoder.parameters()) > 0
+
+
+@pytest.mark.parametrize("preset", ALL_PRESETS)
+def test_unset_decoder_settings_keep_each_decoders_defaults(agritune, synthetic_dataset, monkeypatch, preset):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+    common = importlib.import_module("precisionai.agritune.services.segmentation_common")
+    staged = _staged_synthetic(agritune, synthetic_dataset)
+
+    config = agritune._config(_run(preset), synthetic_dataset.root, staged)
+
+    assert all(value is not None for value in config.decoder_kwargs.values())
+    common.build_decoder(
+        config.decoder_name, patch_dim=8, cls_dim=8, num_classes=3, output_size=(16, 16), **config.decoder_kwargs
+    )

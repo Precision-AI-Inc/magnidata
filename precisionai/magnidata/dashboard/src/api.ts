@@ -1,5 +1,7 @@
 import type { Note } from './types'
 
+import { batches, METRIC_KEYS_PER_REQUEST } from './lib/metrics'
+
 const BASE = '/api'
 
 async function get<T>(url: string): Promise<T> {
@@ -404,6 +406,17 @@ export const api = {
       `${BASE}/runs/${runId}/metrics?keys=${encodeURIComponent(keys.join(','))}`),
   getRunsMetrics: (runIds: string[], keys: string[]) =>
     mutate<{ runs: Record<string, Record<string, MetricHistory[]>> }>('POST', `${BASE}/runs/metrics`, { run_ids: runIds, keys }),
+  /** Every key's history, in as many requests as the API's per-request key limit needs. AgriTune logs ~140 keys. */
+  getAllRunMetrics: async (runId: string, keys: string[]) => {
+    const parts = await Promise.all(batches(keys, METRIC_KEYS_PER_REQUEST).map(part => api.getRunMetrics(runId, part)))
+    return { metrics: Object.assign({}, ...parts.map(part => part.metrics)) as Record<string, MetricHistory[]> }
+  },
+  getAllRunsMetrics: async (runIds: string[], keys: string[]) => {
+    const parts = await Promise.all(batches(keys, METRIC_KEYS_PER_REQUEST).map(part => api.getRunsMetrics(runIds, part)))
+    const runs: Record<string, Record<string, MetricHistory[]>> = {}
+    for (const part of parts) for (const [id, metrics] of Object.entries(part.runs)) runs[id] = { ...runs[id], ...metrics }
+    return { runs }
+  },
   /** Derived per-sample columns of a run at an epoch, as CSV text (`image_name` first). */
   getRunColumns: async (runId: string, epoch: number | 'latest' = 'latest') => {
     const r = await fetch(`${BASE}/runs/${runId}/columns?epoch=${epoch}`)

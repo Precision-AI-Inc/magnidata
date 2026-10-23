@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ema, groupMetricKeys, pairTrainVal, toRelativeTime } from './metrics'
+import { batches, ema, groupMetricKeys, METRIC_KEYS_PER_REQUEST, pairTrainVal, toRelativeTime } from './metrics'
 
 describe('groupMetricKeys', () => {
   it('groups by prefix in a fixed order and omits empty groups', () => {
@@ -44,5 +44,18 @@ describe('toRelativeTime', () => {
       { step: 1, value: 1, timestamp: 12_500 },
     ])).toEqual([0, 2.5])
     expect(toRelativeTime([])).toEqual([])
+  })
+})
+
+describe('batches', () => {
+  it('splits a long key list into requests of at most the API limit', () => {
+    const keys = Array.from({ length: 142 }, (_, i) => `val_metric/iou_${i}`)
+    const parts = batches(keys, METRIC_KEYS_PER_REQUEST)
+    expect(parts).toHaveLength(8)
+    expect(parts.every(part => part.length <= 20)).toBe(true)
+    expect(parts.flat()).toEqual(keys)
+  })
+  it('returns no batches for no keys', () => {
+    expect(batches([], 20)).toEqual([])
   })
 })

@@ -47,7 +47,7 @@ export function RunCompare({ runIds, knownDatasets, onCompareOnDataset, onClose 
   useEffect(() => {
     if (!keys.length) return
     let live = true
-    api.getRunsMetrics(runIds, keys.slice(0, 20))
+    api.getAllRunsMetrics(runIds, keys)
       .then(r => { if (live) setHistories(r.runs) })
       .catch(e => { if (live) setError(e instanceof Error ? e.message : String(e)) })
     return () => { live = false }

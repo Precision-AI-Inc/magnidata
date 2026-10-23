@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Run detail and run compare plot every metric of a run instead of only the first 20 keys, which left most
+  charts of an AgriTune run (about 140 per-class metrics) empty.
 - *Input resolution: Original size* no longer refuses datasets with more than one image size (SEEDPLANT mixes
   798×532 and 810×540 tiles). It trains at the size most images share: AgriTune still encodes every image as it
   is and resizes the other masks to that size (as AgriTune's own `geometric.resize` does), the reference trainer

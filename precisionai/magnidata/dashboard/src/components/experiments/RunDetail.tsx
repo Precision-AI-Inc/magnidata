@@ -61,10 +61,9 @@ export function RunDetail({ runId, currentDataset, knownDatasets, onLoadDataset,
   }, [runId])
 
   const loadMetrics = useCallback(async () => {
-    const wanted = visibleKeys.slice(0, 20)
-    if (!wanted.length) return
+    if (!visibleKeys.length) return
     try {
-      const fetched = (await api.getRunMetrics(runId, wanted)).metrics
+      const fetched = (await api.getAllRunMetrics(runId, visibleKeys)).metrics
       setHistories(prev => ({ ...prev, ...fetched }))
     } catch { /* the run request surfaces connection errors */ }
   }, [runId, visibleKeys])

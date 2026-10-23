@@ -1,5 +1,15 @@
 export interface MetricPoint { step: number; value: number; timestamp: number }
 
+/** Metric keys the API returns per request (its MAX_METRIC_KEYS); longer lists are fetched in batches. */
+export const METRIC_KEYS_PER_REQUEST = 20
+
+/** Split `items` into consecutive batches of at most `size`. */
+export function batches<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
+
 const GROUP_ORDER = ['train_loss/', 'val_loss/', 'val_metric/', 'Learning_rate/']
 
 export function groupName(key: string): string {

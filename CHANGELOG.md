@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The trainer has 16 GB of shared memory instead of 1 GB, so full-size reference training (for example LR-ASPP
+  at 798×532) no longer hangs when its data-loader workers run out of room for prefetched batches.
 - Run detail and run compare plot every metric of a run instead of only the first 20 keys, which left most
   charts of an AgriTune run (about 140 per-class metrics) empty.
 - *Input resolution: Original size* no longer refuses datasets with more than one image size (SEEDPLANT mixes

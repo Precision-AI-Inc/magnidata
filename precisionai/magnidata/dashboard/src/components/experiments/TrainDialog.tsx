@@ -126,7 +126,7 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
               <select value={params.input_resolution ?? 'image_size'} onChange={e => set('input_resolution', e.target.value as TrainParams['input_resolution'])}
                       aria-invalid={!!errors.input_resolution} className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
                 <option value="image_size">Square, at Image size</option>
-                <option value="native">Original size (all images alike)</option>
+                <option value="native">Original size (most common)</option>
               </select>
               {errors.input_resolution && <span role="alert" className="block mt-0.5" style={{ color: 'var(--color-danger)' }}>{errors.input_resolution}</span>}
             </label>

@@ -323,6 +323,25 @@ def test_native_resolution_trains_at_the_images_own_size(mlflow_tracking, synthe
     assert (synthetic_dataset.root / "data_user" / ".train_cache" / f"{width}x{height}").is_dir()
 
 
+def test_native_resolution_resizes_images_of_another_size(mlflow_tracking, synthetic_dataset, tmp_path):
+    torch = pytest.importorskip("torch")
+    name = synthetic_dataset.names[0]
+    folder = synthetic_dataset.root / "data_user" / "syn"
+    Image.new("RGB", (40, 30)).save(folder / "images" / name)
+    Image.new("RGB", (40, 30)).save(folder / "masks" / name)
+    uri, client, run_id = _new_run(
+        mlflow_tracking, {"input_resolution": "native", "epochs": "1", "batch_size": "2", "num_workers": "0"}
+    )
+
+    assert train.run(run_id, uri, synthetic_dataset.root, "cpu") == 0
+
+    height, width = synthetic_dataset.size
+    checkpoint = torch.load(
+        client.download_artifacts(run_id, contract.CHECKPOINT_ARTIFACT, str(tmp_path)), weights_only=True
+    )
+    assert checkpoint["input_size"] == [width, height]
+
+
 def test_unknown_input_resolution_is_rejected():
     with pytest.raises(ValueError, match="unknown input_resolution 'full': choose image_size or native"):
         train.config_from_run({"input_resolution": "full"}, {contract.TAG_DATASET_SOURCE: "data_user/syn.csv"})

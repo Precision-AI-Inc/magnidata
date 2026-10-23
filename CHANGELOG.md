@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *Input resolution: Original size* no longer refuses datasets with more than one image size (SEEDPLANT mixes
+  798×532 and 810×540 tiles). It trains at the size most images share: AgriTune still encodes every image as it
+  is and resizes the other masks to that size (as AgriTune's own `geometric.resize` does), the reference trainer
+  resizes their images and masks, and the run log says how many were resized.
 - AgriTune runs launched from the portal use the hosted encoder (`https://embeddings.precision.ai/v1`) by default,
   with the key read from AgriTune's own `../agritune/.env`, instead of silently falling back to the fake encoder,
   whose features cannot teach the decoder anything but the most common class. The run log names the encoder in use;

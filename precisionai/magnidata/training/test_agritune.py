@@ -158,18 +158,24 @@ def test_native_staging_keeps_the_original_images_and_mask_size(agritune, synthe
     with image_module.open(rows[0]["mask_path"]) as mask:
         assert mask.size == (width, height)
     assert staged.native is True
-    assert "at their original size" in capsys.readouterr().out
+    assert f"staging {len(synthetic_dataset.names)} masks at {width}x{height}" in capsys.readouterr().out
 
 
-def test_native_staging_rejects_images_of_different_sizes(agritune, synthetic_dataset):
+def test_native_staging_resizes_masks_of_another_size_to_the_shared_size(agritune, synthetic_dataset, capsys):
     image_module = importlib.import_module("PIL.Image")
     name = synthetic_dataset.names[0]
     folder = synthetic_dataset.root / "data_user" / "syn"
     image_module.new("RGB", (40, 30)).save(folder / "images" / name)
     image_module.new("RGB", (40, 30)).save(folder / "masks" / name)
 
-    with pytest.raises(ValueError, match="every image the same size"):
-        agritune._prepare_manifest("run1", _source(synthetic_dataset), synthetic_dataset.root, 16, native=True)
+    staged = agritune._prepare_manifest("run1", _source(synthetic_dataset), synthetic_dataset.root, 16, native=True)
+
+    height, width = synthetic_dataset.size
+    with image_module.open(synthetic_dataset.root / "data_user" / ".agritune" / "run1" / "masks" / name) as mask:
+        assert mask.size == (width, height)
+    with staged.manifest.open() as handle:
+        assert {Path(row["image_path"]).name for row in csv.DictReader(handle)} == set(synthetic_dataset.names)
+    assert "1 others' masks are resized" in capsys.readouterr().out
 
 
 def test_an_existing_store_is_reused_under_its_own_sample_ids(agritune, synthetic_dataset, monkeypatch, capsys):

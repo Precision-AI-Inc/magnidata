@@ -398,13 +398,10 @@ def _image_size(path: Path) -> tuple[int, int]:
         return image.size
 
 
-def common_image_size(samples: Sequence[Sample], workers: int = 0) -> tuple[int, int]:
-    """Return the ``(width, height)`` every sample's image shares, reading only image headers.
+def native_size(samples: Sequence[Sample], workers: int = 0) -> tuple[tuple[int, int], int]:
+    """Return the ``(width, height)`` most images share and how many images have another size.
 
-    Raises
-    ------
-    ValueError
-        If the images do not all have the same size.
+    Only image headers are read. Ties go to the larger size, so no image is shrunk more than needed.
     """
     paths = [sample.image_path for sample in samples]
     if workers > 1 and len(paths) > 1:
@@ -412,15 +409,11 @@ def common_image_size(samples: Sequence[Sample], workers: int = 0) -> tuple[int,
         with ProcessPoolExecutor(
             max_workers=min(workers, len(paths)), mp_context=multiprocessing.get_context("spawn")
         ) as pool:
-            sizes = set(pool.map(_image_size, paths, chunksize=256))
+            sizes = Counter(pool.map(_image_size, paths, chunksize=256))
     else:
-        sizes = {_image_size(path) for path in paths}
-    if len(sizes) != 1:
-        examples = ", ".join(f"{w}x{h}" for w, h in sorted(sizes)[:3])
-        raise ValueError(
-            f"input_resolution native needs every image the same size; found {len(sizes)} sizes (e.g. {examples})"
-        )
-    return sizes.pop()
+        sizes = Counter(_image_size(path) for path in paths)
+    size = max(sizes, key=lambda wh: (sizes[wh], wh[0] * wh[1]))
+    return size, len(paths) - sizes[size]
 
 
 def build_palette_cached(

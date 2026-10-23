@@ -29,7 +29,7 @@ export interface TrainParams {
   feature_preload?: 'none' | 'host' | 'device'
   augmentation_mode?: 'none' | 'offline' | 'online' | 'hybrid'
   agritune_loss?: 'ce' | 'bce' | 'dice' | 'ce_dice' | 'bce_dice'
-  /** `native` trains at the size every image shares (AgriTune: the encoder sees the original images). */
+  /** `native` trains at the size most images share (AgriTune: the encoder sees the original images). */
   input_resolution?: 'image_size' | 'native'
   /** AgriTune: micro-batches per optimizer step. */
   accumulation_steps?: number

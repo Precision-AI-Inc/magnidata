@@ -302,18 +302,26 @@ def test_warm_cache_parallel_reports_progress_and_palette_matches(synthetic_data
 
 
 @pytest.mark.parametrize("workers", [0, 2])
-def test_common_image_size_is_width_by_height(synthetic_dataset, workers):
+def test_native_size_is_the_shared_width_by_height(synthetic_dataset, workers):
     samples, _ = data.resolve_samples(synthetic_dataset.csv, synthetic_dataset.root)
     height, width = synthetic_dataset.size
 
-    assert data.common_image_size(samples, workers) == (width, height)
+    assert data.native_size(samples, workers) == ((width, height), 0)
 
 
-def test_common_image_size_rejects_mixed_sizes(synthetic_dataset):
-    Image.new("RGB", (40, 30)).save(
-        synthetic_dataset.root / "data_user" / "syn" / "images" / synthetic_dataset.names[0]
-    )
+def test_native_size_is_the_most_common_size(synthetic_dataset):
+    images = synthetic_dataset.root / "data_user" / "syn" / "images"
+    Image.new("RGB", (40, 30)).save(images / synthetic_dataset.names[0])
+    samples, _ = data.resolve_samples(synthetic_dataset.csv, synthetic_dataset.root)
+    height, width = synthetic_dataset.size
+
+    assert data.native_size(samples) == ((width, height), 1)
+
+
+def test_native_size_breaks_ties_towards_the_larger_size(synthetic_dataset):
+    images = synthetic_dataset.root / "data_user" / "syn" / "images"
+    for name in synthetic_dataset.names[:4]:
+        Image.new("RGB", (40, 30)).save(images / name)
     samples, _ = data.resolve_samples(synthetic_dataset.csv, synthetic_dataset.root)
 
-    with pytest.raises(ValueError, match="every image the same size; found 2 sizes"):
-        data.common_image_size(samples)
+    assert data.native_size(samples) == ((40, 30), 4)

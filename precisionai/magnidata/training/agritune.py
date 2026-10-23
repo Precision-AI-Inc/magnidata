@@ -68,13 +68,17 @@ def _boolean(params: dict[str, str], key: str, default: bool) -> bool:
 
 
 class _StageJob(NamedTuple):
-    """One sample to stage: its sources, where to write, the target size (None keeps the original) and the palette."""
+    """One sample to stage: its sources, where to write, the mask's ``(width, height)`` and the palette.
+
+    ``image_path`` is set for square staging, which writes the image resized to ``mask_size`` too; native staging
+    leaves the image file alone.
+    """
 
     source_image: Path
     source_mask: Path
     image_path: Path | None
     mask_path: Path
-    size: int | None
+    mask_size: tuple[int, int]
     colors: tuple[tuple[int, int, int], ...]
 
 
@@ -121,43 +125,36 @@ def existing_store_from_env() -> ExistingStore | None:
     )
 
 
-def _stage_one(job: _StageJob) -> tuple[int, int]:
-    """Write one sample's mask decoded to class indices (and, when square, its resized image); return the image size."""
-    with Image.open(job.source_image) as image:
-        size = image.size
-        if job.image_path is not None and job.size is not None:
-            image.convert("RGB").resize((job.size, job.size), Image.Resampling.BILINEAR).save(job.image_path)
+def _stage_one(job: _StageJob) -> None:
+    """Write one sample's mask decoded to class indices at ``mask_size`` (and, when square, its resized image)."""
+    if job.image_path is not None:
+        with Image.open(job.source_image) as image:
+            image.convert("RGB").resize(job.mask_size, Image.Resampling.BILINEAR).save(job.image_path)
     with Image.open(job.source_mask) as mask:
         rgb = mask.convert("RGB")
-        if job.size is not None:
-            rgb = rgb.resize((job.size, job.size), Image.Resampling.NEAREST)
-        elif rgb.size != size:
-            raise ValueError(f"mask {job.source_mask} is {rgb.size[0]}x{rgb.size[1]}, its image {size[0]}x{size[1]}")
+        if rgb.size != job.mask_size:
+            rgb = rgb.resize(job.mask_size, Image.Resampling.NEAREST)
     Image.fromarray(data.decode_mask(np.asarray(rgb), data.Palette(job.colors)).astype(np.uint8), mode="L").save(
         job.mask_path
     )
-    return size
 
 
-def _stage(jobs: list[_StageJob], workers: int) -> list[tuple[int, int]]:
+def _stage(jobs: list[_StageJob], workers: int) -> None:
     total = len(jobs)
     every = data.progress_every(total)
-    sizes = []
     if workers > 1 and total > 1:
         # spawn, not fork: this process already runs MLflow client threads
         with ProcessPoolExecutor(
             max_workers=min(workers, total), mp_context=multiprocessing.get_context("spawn")
         ) as pool:
-            for done, size in enumerate(pool.map(_stage_one, jobs, chunksize=16), start=1):
-                sizes.append(size)
+            for done, _ in enumerate(pool.map(_stage_one, jobs, chunksize=16), start=1):
                 if done % every == 0 or done == total:
                     log(f"staging images {done}/{total}")
     else:
         for done, job in enumerate(jobs, start=1):
-            sizes.append(_stage_one(job))
+            _stage_one(job)
             if done % every == 0 or done == total:
                 log(f"staging images {done}/{total}")
-    return sizes
 
 
 def _match_existing(samples: list[data.Sample], existing: ExistingStore) -> dict[str, tuple[str, Path]] | None:
@@ -189,9 +186,10 @@ def _prepare_manifest(
 ) -> StagedDataset:
     """Stage masks (and square images) for AgriTune and write its manifest.
 
-    ``native`` keeps every image file as it is, so the encoder sees the original resolution, and decodes masks at
-    their original size; all images must share one size. ``existing`` (native only) reuses a feature store built
-    from another manifest when every image matches one of its rows by file name.
+    ``native`` keeps every image file as it is, so the encoder sees the original resolution, and decodes masks at the
+    size most images share (others' masks are resized to it, as AgriTune's ``geometric.resize`` would). ``existing``
+    (native only) reuses a feature store built from another manifest when every image matches one of its rows by
+    file name.
     """
     source = data_root / dataset_source
     samples, report = data.resolve_samples(source, data_root)
@@ -208,25 +206,27 @@ def _prepare_manifest(
     masks = root / "masks"
     images.mkdir(parents=True, exist_ok=True)
     masks.mkdir(parents=True, exist_ok=True)
+    if native:
+        mask_size, resized = data.native_size(samples, workers)
+        log(
+            f"native resolution {mask_size[0]}x{mask_size[1]}: shared by most images; {resized} others' masks are resized to it"
+        )
+    else:
+        mask_size = (image_size, image_size)
     jobs = [
         _StageJob(
             sample.image_path,
             sample.mask_path,
             None if native else images / f"{Path(sample.image_name).stem}.png",
             masks / f"{Path(sample.image_name).stem}.png",
-            None if native else image_size,
+            mask_size,
             palette.colors,
         )
         for sample in samples
     ]
-    resolution = "their original size" if native else f"{image_size}x{image_size}"
-    log(f"staging {total} {'masks' if native else 'images'} at {resolution} with {max(workers, 1)} process(es)")
-    sizes = set(_stage(jobs, workers))
-    if native and len(sizes) > 1:
-        raise ValueError(
-            f"input_resolution native needs every image the same size; found {len(sizes)} sizes "
-            f"(e.g. {', '.join(f'{w}x{h}' for w, h in sorted(sizes)[:3])}); use input_resolution image_size"
-        )
+    what = "masks" if native else "images"
+    log(f"staging {total} {what} at {mask_size[0]}x{mask_size[1]} with {max(workers, 1)} process(es)")
+    _stage(jobs, workers)
     matched = _match_existing(samples, existing) if native and existing is not None else None
     rows = []
     for sample, job in zip(samples, jobs, strict=True):

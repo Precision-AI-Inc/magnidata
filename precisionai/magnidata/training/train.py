@@ -477,7 +477,8 @@ def prepare_data(
             f"{len(report.missing_image)} without image"
         )
     if cfg.input_resolution == "native":
-        size = data.common_image_size(samples, cfg.num_workers)
+        size, resized = data.native_size(samples, cfg.num_workers)
+        log(f"native resolution {size[0]}x{size[1]}: shared by most images; {resized} others are resized to it")
     else:
         size = (cfg.image_size, cfg.image_size)
     cache = data.ResizedCache(data_root / "data_user" / data.CACHE_DIRNAME, size)

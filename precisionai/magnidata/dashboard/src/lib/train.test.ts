@@ -147,8 +147,9 @@ describe('AgriTune optimisation settings', () => {
     expect(paramsFromRun({ input_resolution: 'native', accumulation_steps: '32', grad_clip_norm: '1.0', weight_decay: '0.01' }))
       .toEqual({ input_resolution: 'native', accumulation_steps: 32, grad_clip_norm: 1, weight_decay: 0.01 })
     const sent = launchParams({ ...valid, input_resolution: 'native', accumulation_steps: 4, grad_clip_norm: 1, weight_decay: 0.05 }, 'reference')
-    for (const key of ['input_resolution', 'accumulation_steps', 'grad_clip_norm']) expect(sent).not.toHaveProperty(key)
+    for (const key of ['accumulation_steps', 'grad_clip_norm']) expect(sent).not.toHaveProperty(key)
     expect(sent.weight_decay).toBe(0.05)
+    expect(sent.input_resolution).toBe('native')
   })
 })
 

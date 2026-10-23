@@ -43,7 +43,9 @@ BOUNDS: dict[str, dict[str, Any]] = {
     "grad_clip_norm": {"type": "float", "min": 0.0, "max": 100.0},
 }
 
-AGRITUNE_FIELDS = ("feature_provider", "feature_preload", "augmentation_mode", "agritune_loss", "input_resolution")
+AGRITUNE_FIELDS = ("feature_provider", "feature_preload", "augmentation_mode", "agritune_loss")
+# Choice settings both engines understand.
+COMMON_CHOICES = ("input_resolution",)
 # Numeric AgriTune-only settings; grad_clip_norm 0 turns clipping off.
 AGRITUNE_NUMBERS = ("accumulation_steps", "grad_clip_norm")
 AGRITUNE_LOSS_TERMS: dict[str, list[str]] = {
@@ -57,6 +59,7 @@ AGRITUNE_LOSS_TERMS: dict[str, list[str]] = {
 REFERENCE_ONLY_FIELDS = ("loss_terms", "num_workers")
 
 COMMON_DEFAULTS: dict[str, Any] = {
+    "input_resolution": "image_size",
     "score_every": 1,
     "val_fraction": 0.2,
     "seed": 0,
@@ -107,7 +110,6 @@ PRESETS: dict[str, dict[str, Any]] = {
             "pretrained": False,
             "feature_provider": "cached",
             "feature_preload": "host",
-            "input_resolution": "image_size",
             "accumulation_steps": 1,
             "grad_clip_norm": 0.0,
             "weight_decay": 0.01,
@@ -128,7 +130,6 @@ PRESETS: dict[str, dict[str, Any]] = {
             "pretrained": False,
             "feature_provider": "cached",
             "feature_preload": "host",
-            "input_resolution": "image_size",
             "accumulation_steps": 1,
             "grad_clip_norm": 0.0,
             "weight_decay": 0.01,
@@ -258,7 +259,7 @@ def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     if engine == "agritune":
         _resolve_preload(p, overrides)
     choices: dict[str, str] = {}
-    for field in AGRITUNE_FIELDS:
+    for field in (*AGRITUNE_FIELDS, *COMMON_CHOICES):
         if field in p:
             allowed = BOUNDS[field]["choices"]
             if p[field] not in allowed:

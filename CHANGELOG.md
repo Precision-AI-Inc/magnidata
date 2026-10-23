@@ -33,6 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The reference trainer (Tiny UNet, LR-ASPP) can train at the images' own size with *Input resolution: Original
+  size* (`input_resolution: native`) instead of a square `image_size`; every image must share one size, and the
+  checkpoint records it so on-demand inference resizes to the same width and height.
 - AgriTune runs can encode images at their original size (*Encoder input: Original image size*, `input_resolution:
   native`) instead of squaring them to the image size, which for 798×532 tiles gives the encoder a 57×38 patch grid
   instead of 18×18; masks are then trained at their own size. They can also read a feature store already built by

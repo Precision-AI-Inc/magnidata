@@ -393,6 +393,36 @@ def warm_cache(
     cache.evict({cache.key(s) for s in samples})
 
 
+def _image_size(path: Path) -> tuple[int, int]:
+    with Image.open(path) as image:
+        return image.size
+
+
+def common_image_size(samples: Sequence[Sample], workers: int = 0) -> tuple[int, int]:
+    """Return the ``(width, height)`` every sample's image shares, reading only image headers.
+
+    Raises
+    ------
+    ValueError
+        If the images do not all have the same size.
+    """
+    paths = [sample.image_path for sample in samples]
+    if workers > 1 and len(paths) > 1:
+        # spawn, not fork: the trainer process already runs MLflow client threads
+        with ProcessPoolExecutor(
+            max_workers=min(workers, len(paths)), mp_context=multiprocessing.get_context("spawn")
+        ) as pool:
+            sizes = set(pool.map(_image_size, paths, chunksize=256))
+    else:
+        sizes = {_image_size(path) for path in paths}
+    if len(sizes) != 1:
+        examples = ", ".join(f"{w}x{h}" for w, h in sorted(sizes)[:3])
+        raise ValueError(
+            f"input_resolution native needs every image the same size; found {len(sizes)} sizes (e.g. {examples})"
+        )
+    return sizes.pop()
+
+
 def build_palette_cached(
     cache: ResizedCache,
     samples: Sequence[Sample],

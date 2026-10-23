@@ -52,14 +52,15 @@ def infer(run_id: str, image_name: str, data_root: Path, tracking_uri: str, devi
         checkpoint_path = Path(client.download_artifacts(run_id, contract.CHECKPOINT_ARTIFACT, directory))
         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
         epoch = int(checkpoint["epoch"])
-        image_size = int(checkpoint["image_size"])
+        # Checkpoints from before native-resolution training only record a square image_size.
+        width, height = checkpoint.get("input_size") or (int(checkpoint["image_size"]),) * 2
         model = build_model(str(checkpoint["preset"]), int(checkpoint["num_classes"]), pretrained=False)
         model.load_state_dict(checkpoint["model"])
         model.to(device).eval()
 
         image_path = _image_path(client, run_id, image_name, data_root)
         with Image.open(image_path) as opened:
-            rgb = opened.convert("RGB").resize((image_size, image_size), Image.Resampling.BILINEAR)
+            rgb = opened.convert("RGB").resize((int(width), int(height)), Image.Resampling.BILINEAR)
         pixels = torch.from_numpy(np.asarray(rgb).copy()).permute(2, 0, 1).float() / 255.0
         mean = torch.tensor(IMAGENET_MEAN).view(3, 1, 1)
         std = torch.tensor(IMAGENET_STD).view(3, 1, 1)

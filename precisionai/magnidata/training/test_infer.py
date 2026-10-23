@@ -12,7 +12,8 @@ infer = pytest.importorskip("precisionai.magnidata.training.infer")
 models = pytest.importorskip("precisionai.magnidata.training.models")
 
 
-def test_infer_logs_prediction_from_checkpoint(mlflow_tracking, synthetic_dataset, tmp_path):
+@pytest.mark.parametrize("input_size", [None, [32, 24]])
+def test_infer_logs_prediction_from_checkpoint(mlflow_tracking, synthetic_dataset, tmp_path, input_size):
     uri, client, run_id = mlflow_tracking()
     client.set_tag(run_id, contract.TAG_DATASET_SOURCE, "data_user/syn.csv")
     model = models.build_model("tiny_unet", 3, pretrained=False)
@@ -29,6 +30,8 @@ def test_infer_logs_prediction_from_checkpoint(mlflow_tracking, synthetic_datase
             },
             "image_size": 32,
             "epoch": 7,
+            # Native-resolution checkpoints record (width, height); older ones only image_size.
+            **({"input_size": input_size} if input_size else {}),
         },
         checkpoint,
     )

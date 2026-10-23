@@ -73,6 +73,8 @@ class TrainConfig:
     lr: float = 1e-3
     weight_decay: float = 1e-4
     image_size: int = 256
+    # "native" trains at the size all images share instead of image_size x image_size.
+    input_resolution: str = "image_size"
     val_fraction: float = 0.2
     seed: int = 0
     score_every: int = 1
@@ -93,6 +95,7 @@ class TrainConfig:
             "lr": str(self.lr),
             "weight_decay": str(self.weight_decay),
             "image_size": str(self.image_size),
+            "input_resolution": self.input_resolution,
             "val_fraction": str(self.val_fraction),
             "seed": str(self.seed),
             "score_every": str(self.score_every),
@@ -108,6 +111,13 @@ class TrainConfig:
 
 def _as_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes"}
+
+
+def _choice(params: Mapping[str, str], name: str, default: str, allowed: tuple[str, ...]) -> str:
+    value = params.get(name, default)
+    if value not in allowed:
+        raise ValueError(f"unknown {name} {value!r}: choose {' or '.join(allowed)}")
+    return value
 
 
 def config_from_run(params: Mapping[str, str], tags: Mapping[str, str]) -> TrainConfig:
@@ -129,9 +139,8 @@ def config_from_run(params: Mapping[str, str], tags: Mapping[str, str]) -> Train
     for name in ("pretrained", "checkpoint_every_score", "amp"):
         if name in params:
             setattr(cfg, name, _as_bool(params[name]))
-    cfg.split_mode = params.get("split_mode", cfg.split_mode)
-    if cfg.split_mode not in {"random", "column"}:
-        raise ValueError(f"unknown split_mode {cfg.split_mode!r}: choose random or column")
+    cfg.input_resolution = _choice(params, "input_resolution", cfg.input_resolution, ("image_size", "native"))
+    cfg.split_mode = _choice(params, "split_mode", cfg.split_mode, ("random", "column"))
     if cfg.preset not in contract.MODEL_PRESETS:
         raise ValueError(f"unknown preset {cfg.preset!r}: choose from {', '.join(contract.MODEL_PRESETS)}")
     return cfg
@@ -411,7 +420,13 @@ def log_predictions(
 
 
 def save_checkpoint(
-    sink: MlflowSink, model: nn.Module, cfg: TrainConfig, palette: data.Palette, epoch: int, scratch: Path
+    sink: MlflowSink,
+    model: nn.Module,
+    cfg: TrainConfig,
+    palette: data.Palette,
+    epoch: int,
+    scratch: Path,
+    input_size: tuple[int, int],
 ) -> None:
     """Log ``checkpoints/last.pt`` with the weights and what is needed to rebuild the model."""
     path = scratch / Path(contract.CHECKPOINT_ARTIFACT).name
@@ -421,6 +436,8 @@ def save_checkpoint(
         "num_classes": palette.num_classes,
         "palette": palette.as_mapping(),
         "image_size": cfg.image_size,
+        # (width, height) the model was trained at; inference resizes to it.
+        "input_size": list(input_size),
         "epoch": epoch,
     }
     torch.save(state, path)
@@ -439,6 +456,7 @@ class _Setup:
     score_loader: DataLoader
     n_train: int
     n_val: int
+    input_size: tuple[int, int]
 
 
 def prepare_data(
@@ -458,9 +476,12 @@ def prepare_data(
             f"no usable samples in {cfg.dataset_source}: {len(report.missing_mask)} without mask, "
             f"{len(report.missing_image)} without image"
         )
-    size = cfg.image_size
-    cache = data.ResizedCache(data_root / "data_user" / data.CACHE_DIRNAME, (size, size))
-    log(f"caching {len(samples)} images at {size}x{size} with {max(cfg.num_workers, 1)} process(es)")
+    if cfg.input_resolution == "native":
+        size = data.common_image_size(samples, cfg.num_workers)
+    else:
+        size = (cfg.image_size, cfg.image_size)
+    cache = data.ResizedCache(data_root / "data_user" / data.CACHE_DIRNAME, size)
+    log(f"caching {len(samples)} images at {size[0]}x{size[1]} with {max(cfg.num_workers, 1)} process(es)")
     started = time.monotonic()
     cache_bucket = [-1]
 
@@ -519,6 +540,7 @@ def prepare_data(
         loader(score_ds, False),
         len(train_ds),
         len(val_ds),
+        size,
     )
 
 
@@ -626,8 +648,8 @@ def run_epochs(
                 return "KILLED"
             log_predictions(sink, setup.palette, hardest, epoch, scratch)
             if cfg.checkpoint_every_score:
-                save_checkpoint(sink, model, cfg, setup.palette, epoch, scratch)
-    save_checkpoint(sink, model, cfg, setup.palette, cfg.epochs, scratch)
+                save_checkpoint(sink, model, cfg, setup.palette, epoch, scratch, setup.input_size)
+    save_checkpoint(sink, model, cfg, setup.palette, cfg.epochs, scratch, setup.input_size)
     set_run_progress(sink, "Complete", 1, 1)
     return "FINISHED"
 

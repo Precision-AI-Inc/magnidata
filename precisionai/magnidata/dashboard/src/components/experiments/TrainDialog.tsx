@@ -122,6 +122,14 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
           </div>}
 
           <div className="grid gap-x-3 gap-y-2 train-dialog-grid">
+            <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Input resolution
+              <select value={params.input_resolution ?? 'image_size'} onChange={e => set('input_resolution', e.target.value as TrainParams['input_resolution'])}
+                      aria-invalid={!!errors.input_resolution} className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
+                <option value="image_size">Square, at Image size</option>
+                <option value="native">Original size (all images alike)</option>
+              </select>
+              {errors.input_resolution && <span role="alert" className="block mt-0.5" style={{ color: 'var(--color-danger)' }}>{errors.input_resolution}</span>}
+            </label>
             {FIELDS.map(f => {
               const b = presets.bounds[f.key]
               return (
@@ -187,14 +195,6 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
                 <option value="online">Fresh every epoch</option>
                 <option value="hybrid">Hybrid</option>
               </select>
-            </label>
-            <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Encoder input
-              <select value={params.input_resolution ?? 'image_size'} onChange={e => set('input_resolution', e.target.value as TrainParams['input_resolution'])}
-                      aria-invalid={!!errors.input_resolution} className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
-                <option value="image_size">Resized to Image size (square)</option>
-                <option value="native">Original image size (all images alike)</option>
-              </select>
-              {errors.input_resolution && <span role="alert" className="block mt-0.5" style={{ color: 'var(--color-danger)' }}>{errors.input_resolution}</span>}
             </label>
             {AGRITUNE_NUMBERS.map(f => (
               <label key={f.key} className="text-xs" style={{ color: 'var(--c-t2)' }}>{f.label}

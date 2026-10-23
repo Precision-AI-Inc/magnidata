@@ -200,6 +200,16 @@ def test_agritune_launch_records_the_report_settings(client, mlflow_store):
     assert logged["weight_decay"] == "0.01"
 
 
+def test_reference_presets_train_at_native_resolution_on_request(client, mlflow_store):
+    default = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
+    client.post(f"/api/runs/{default}/cancel")
+    native = client.post("/api/training/runs", json={**VALID, "params": {"input_resolution": "native"}})
+
+    assert native.status_code == 201
+    assert mlflow_store.get_run(default)["params"]["input_resolution"] == "image_size"
+    assert mlflow_store.get_run(native.get_json()["run_id"])["params"]["input_resolution"] == "native"
+
+
 def test_reference_presets_accept_weight_decay(client, mlflow_store):
     response = client.post("/api/training/runs", json={**VALID, "params": {"weight_decay": 0.05}})
 
@@ -399,7 +409,7 @@ def test_launch_and_cancel_are_visible_immediately_despite_the_runs_cache(client
         ("agritune_mlp_probe", {"augmentation_mode": "online"}, "params.augmentation_mode"),
         ("tiny_unet", {"accumulation_steps": 4}, "params.accumulation_steps"),
         ("tiny_unet", {"grad_clip_norm": 1.0}, "params.grad_clip_norm"),
-        ("tiny_unet", {"input_resolution": "native"}, "params.input_resolution"),
+        ("tiny_unet", {"input_resolution": "full"}, "params.input_resolution"),
         ("agritune_mlp_probe", {"input_resolution": "full"}, "params.input_resolution"),
         ("agritune_mlp_probe", {"accumulation_steps": 0}, "params.accumulation_steps"),
         ("agritune_mlp_probe", {"agritune_loss": "focal"}, "params.agritune_loss"),

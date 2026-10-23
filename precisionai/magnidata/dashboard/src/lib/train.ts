@@ -29,7 +29,7 @@ export interface TrainParams {
   feature_preload?: 'none' | 'host' | 'device'
   augmentation_mode?: 'none' | 'offline' | 'online' | 'hybrid'
   agritune_loss?: 'ce' | 'bce' | 'dice' | 'ce_dice' | 'bce_dice'
-  /** AgriTune: `native` encodes the original images and trains on masks at their own size. */
+  /** `native` trains at the size every image shares (AgriTune: the encoder sees the original images). */
   input_resolution?: 'image_size' | 'native'
   /** AgriTune: micro-batches per optimizer step. */
   accumulation_steps?: number
@@ -96,7 +96,7 @@ export function validateParams(params: TrainParams, bounds: Record<string, Bound
 /** Settings the AgriTune engine does not use; the API rejects them, so they are never sent for its presets. */
 const REFERENCE_ONLY: (keyof TrainParams)[] = ['loss_terms', 'num_workers', 'split_mode', 'pretrained']
 /** Settings only AgriTune understands; never sent for reference presets. */
-const AGRITUNE_ONLY: (keyof TrainParams)[] = ['input_resolution', 'accumulation_steps', 'grad_clip_norm']
+const AGRITUNE_ONLY: (keyof TrainParams)[] = ['accumulation_steps', 'grad_clip_norm']
 
 /** The parameters to POST for a launch: the dialog state minus anything the preset's engine would reject. */
 export function launchParams(params: TrainParams, engine: string): Partial<TrainParams> {

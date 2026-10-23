@@ -299,3 +299,21 @@ def test_warm_cache_parallel_reports_progress_and_palette_matches(synthetic_data
     )
     assert palette_progress[-1] == (len(samples), len(samples))
     assert cached == data.build_palette([s.mask_path for s in samples])
+
+
+@pytest.mark.parametrize("workers", [0, 2])
+def test_common_image_size_is_width_by_height(synthetic_dataset, workers):
+    samples, _ = data.resolve_samples(synthetic_dataset.csv, synthetic_dataset.root)
+    height, width = synthetic_dataset.size
+
+    assert data.common_image_size(samples, workers) == (width, height)
+
+
+def test_common_image_size_rejects_mixed_sizes(synthetic_dataset):
+    Image.new("RGB", (40, 30)).save(
+        synthetic_dataset.root / "data_user" / "syn" / "images" / synthetic_dataset.names[0]
+    )
+    samples, _ = data.resolve_samples(synthetic_dataset.csv, synthetic_dataset.root)
+
+    with pytest.raises(ValueError, match="every image the same size; found 2 sizes"):
+        data.common_image_size(samples)

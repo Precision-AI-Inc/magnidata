@@ -144,3 +144,11 @@ Reported after tasks 00–17 were done, diagnosed against the running stack on 2
 | task-31 | Audit: predictions must never show ground-truth masks | 30 | completed | |
 | task-32 | Self-contained portal guide: AgriStress-500 to a curated, retrained dataset | 31 | completed | |
 | task-33 | AgriTune training engine integration and responsive portal controls | 32 | completed | |
+| task-34 | AgriTune: hosted encoder by default and preloaded cached features | 33 | completed | 5e28d3b |
+| task-35 | AgriTune: full-resolution runs, existing feature stores, report training settings | 34 | completed | 358392b |
+| task-36 | Reference trainer: native-resolution training | 35 | completed | e6639e0 |
+| task-37 | Native resolution with mixed image sizes | 36 | completed | 3aa2978 |
+| task-38 | Run detail and compare plot every metric | 37 | completed | 4a12983 |
+| task-39 | Advanced AgriTune training settings in the Train dialog | 38 | completed | 11468ca |
+| task-40 | Every AgriTune decoder as a preset | 39 | completed | 416cd33 |
+| task-41 | Trainer shared memory for full-size training | 40 | completed | 694fa3a |

@@ -1,68 +1,195 @@
-# MagniData: Feature-First Visual Analysis for Global Dataset Understanding in Computer Vision
+# MagniData: Closing the Loop Between Dataset Features and Model Failures in Computer Vision
 
-*Official release notes and technical report · Precision AI · September 2026*
+*Official release notes and technical report · Precision AI · October 2026*
 
-MagniData is an image-dataset exploration tool for teams that need to understand what
-is inside a large visual dataset before they train, label, clean, or ship with it. It
-turns images into a dashboard-ready feature table, then makes those features usable as
-parallel coordinates, 3D views, histograms, table filters, and image previews.
-
-Parallel coordinates is the main working view: each axis is an extracted signal, and
-brushing several axes together becomes a combined feature-extraction query.
+MagniData started as a way to see what is inside a large image dataset. It is now also a way to
+find out **why a model fails on it**, and to act on the answer. A model's per-image behaviour
+during training (loss, rank, trend, hardness, prediction) joins the same linked views as the
+photometric, geometric and embedding features of the data. Failures can then be explained by
+the images themselves, checked against the annotations, compared across models, and fixed by
+building a better dataset with its lineage recorded.
 
 <p align="center">
   <img src="assets/preview.png" alt="MagniData Dashboard Preview" width="720"/>
 </p>
 
+A four-page technical report with figures accompanies this release:
+[`docs/paper/magnidata-technical-report.pdf`](docs/paper/magnidata-technical-report.pdf).
 
-In data-centric computer vision, a recurring bottleneck is incomplete understanding of the training distribution. Large image collections are often uncategorized, sparsely labeled, or annotated under inconsistent protocols. Under these conditions, architectural changes and additional annotation are frequently undertaken before the dominant visual statistics, coverage gaps, and quality structure of the data are known. The practical questions are straightforward, but sample-centric viewers do not make them easy to answer:
+## The problem
 
-- Which photometric and geometric properties account for most of the observed variance?
-- How are object and scene diversity distributed across the collection?
-- Is quality degradation, class imbalance, or geometric bias concentrated in identifiable subpopulations?
+Training a segmentation or detection model gives you a number, such as mIoU, and a curve. When
+the number is disappointing, the usual next steps are a bigger model, more epochs, more labels,
+or a new architecture. Each is expensive, and each is a guess made without answering the
+questions that decide which one is right:
 
-MagniData is a visual analysis pipeline organized around interpretable, dataset-wide features rather than individual samples. It couples three coordinated views: (i) parallel coordinates for interactive multivariate and compound querying; (ii) a three-dimensional multiparametric or embedding view with clustering, to expose global structure and outliers; and (iii) a table for exact filtering and image, mask, and overlay inspection. Feature construction is automatic. From images, the system derives color, exposure, sharpness, noise, compression, and learned image-quality measurements. When instance masks or boxes are available, it also computes geometry-aware quantities such as annotation coverage, relative object area, aspect ratio, instance count, overlap, and spatial layout. The result is a global view of both what the dataset contains and how its important properties co-vary.
+- **Is the annotation wrong?** Is this "failure" a model error or a label error?
+- **Is the model actually struggling with these instances or classes?** Or is the aggregate metric hiding a handful of bad images?
+- **Is the failure a capacity problem?** Does a larger model fail on the *same* images as the small one?
+- **Is it the architecture or the dataset?** If every model fails on the same samples, no architecture change will help.
+- **What do we add?** Which unlabeled images look like the hard ones, so labeling effort goes where it matters?
+- **Where did this dataset come from?** Which dataset and which run produced which result?
 
-This feature-first workflow differs from other instance-centric tools because the feature space is the starting point. Many engineered signals are visible together, can be brushed in combination, and remain linked to the 3D structure, distributions, and underlying images. MagniData therefore turns feature extraction into an interactive method for understanding the collection, rather than treating global analysis as a separately configured extension of sample browsing.
+Existing tools answer parts of this. Experiment trackers show aggregate curves. Sample browsers
+show images and labels. Label-noise tools rank suspicious labels. None of them puts the
+training dynamics of every image in the same space as the dataset's own structure, so the
+questions above are answered by inspection, intuition and spreadsheets.
 
-## Motivation
+## What is new in this release
 
-Standard inspection tools are useful for examining individual images, labels, tracks, or embedding neighborhoods. They are less effective as a default interface for seeing compound regularities—for example, the co-occurrence of low quality, small object scale, and a restricted hue distribution. Without that global structure, it is difficult to decide whether underperformance is attributable to model capacity, annotation coverage, or a mismatch between the labeled slice and the unlabeled remainder. MagniData treats that mismatch as an empirical object: selections in feature space update the 3D view, distributions, and table together, so underrepresented regions can be measured rather than inferred from anecdotal browsing.
+### 1. Every image gets a training history, and it is a dataset axis
 
-### Two operating regimes are distinguished.
+Train from the portal (the reference U-Net and LRASPP presets, or the optional AgriTune
+frozen-feature presets) or log a run from your own trainer. After each scored epoch the model
+re-scores every image in eval mode, without augmentation, and the loss of each term is stored
+per image. MagniData turns these files into regular columns:
 
-- *Unlabeled or weakly labeled collections:* Analysis relies on photometric statistics, quality measures, resolution, and optional embeddings. The intended use is to identify tails, near-duplicates, and visually homogeneous regimes.
+| Column | What it tells you |
+|---|---|
+| `loss_<term>` | how wrong the model is on this image at the selected epoch, per loss term |
+| `loss_<term>_mean` | how hard the image is across the whole run |
+| `loss_<term>_delta` / `_slope` | whether the model is still learning it, or has stopped improving |
+| `loss_<term>_rank` | percentile within the image's own split, so train and val are never mixed |
+| `hardness` | the share of scored epochs in which the image was in the worst fifth of its split |
+| `split`, `iou`, `confidence` | which side of the partition the image is on, how good the mask is, how sure the model was |
 
-- *Partially annotated collections:* The same axes are extended with mask- or box-derived geometry and, where present, class composition. The intended use is to test whether the annotated subset is representative of the full set.
+These columns are parallel-coordinates axes, 3D colour-by fields, histograms, table columns and
+filters, **next to** the colour, exposure, sharpness, noise, geometry and embedding features.
+A scrubber moves the whole dashboard through the scored epochs. The image preview shows the
+ground truth, the mask, the overlay and the **model's prediction** with the image's per-term
+loss curves, so you can compare label and prediction at a glance.
 
-Proposed masks, when used, are treated as derived features for exploration. They are not presented as ground truth.
+### 2. Diagnosis: reading the failure instead of guessing it
 
-## Relation to instance-centric tools
+Because loss is decomposed per term and sits beside the data features, the common failure
+modes have a recognisable signature:
 
-Instance-centric tools are optimized for tasks such as frame inspection, label and prediction review, multimodal playback, similarity search, and dataset engineering. They can also expose custom fields, histograms, embeddings, and linked plots. The difference is the default analytical priority. In MagniData, parallel coordinates are the primary query surface: many engineered variables can be brushed at once, while the effect on global geometry, distributions, and selected samples is immediate. MagniData organizes the workflow around simultaneous, interpretable, multivariate constraints and a structural view of the dataset.
+| You see | It usually means | What to do |
+|---|---|---|
+| High `hardness`, high `loss_total_mean`, flat slope, ground truth disagrees with the prediction when you open it | **Annotation problem** (wrong, missing or shifted label) | Select, **Export relabel queue**, fix, retrain |
+| High `loss_dice_rank`, low `loss_cce_rank` | Pixels are mostly right but the region's **shape** is off: a coarse or shifted mask | Check mask quality, not the class list |
+| High `loss_cce_rank` and low `confidence` | The model does not know **what** it is looking at: ambiguous classes or too few examples | Add examples of that kind, or merge classes |
+| Hard samples cluster on a feature axis (low sharpness, small `annotation_ratio`, a restricted hue band) | A **coverage or quality gap** in the data | Add images from that region of feature space |
+| Hard on `val`, easy on `train` | Overfitting, or a split that differs from training | Regularise, or re-split |
+| Large positive `delta`, negative `slope` | Still learning | Train longer before judging |
 
-The two classes of tool are complementary. MagniData is aimed at early dataset characterization, global coverage analysis, and subset construction. Instance-centric tools remain appropriate for detailed label validation, temporal alignment, neighborhood search, and downstream pipeline integration.
+### 2b. From one hard sample to a population: brush by similarity
 
-## An analysis step
+Open a hard sample and read its feature values in the preview. Then brush a narrow band around
+them on a few parallel-coordinates axes (sharpness, noise, object area, hue). The surviving
+polylines are its look-alikes, and the 3D view, histograms, table and counts update with them.
+If the look-alikes are also hard, you have found a **tendency** (a region of feature space where
+the model fails as a group), which points to coverage or quality. If they are easy, the sample
+is an outlier of its own neighbourhood and its label is the first suspect. Widening the band
+until neighbour hardness returns to the dataset base rate gives a rough extent of the failure
+region. The band is drawn by hand today; a one-click "brush around this sample" is planned.
 
-A typical query combines a quality threshold, an object-area ratio, and a photometric band. The user brushes one or more axes to build a combined feature query. The 3D view reveals the location and structure of the resulting subpopulation; the distributions show how it differs from the full dataset; and the table provides exact rows and previews. The subset can be exported for targeted labeling or reserved as a robustness split. The same mechanism applies to any conjunction of computed axes.
+### 3. Is it the model or the data? Compare two runs image by image
 
-## Methodological constraints
+**Compare on dataset** takes any two runs on the same images and gives every image
+`cmp_hardness_change` and `cmp_loss_total_change` (positive means it got harder), drawn on a
+diverging scale centred on zero. This turns "do we need a bigger model?" into something you can look at:
 
-Engineered features support explanation; embeddings support neighborhood structure. Both should be available, with engineered quantities on the parallel-coordinate axes and embeddings (or a joint projection) in the spatial view. Parallel coordinates scale poorly with undifferentiated high-dimensional input; axes therefore require grouping, ranking by variance or association with the current selection, and optional suggested brushes. Clustering over heterogeneous units (photometry, quality, geometry) requires explicit normalization and a means of attributing cluster membership to a small set of driving dimensions. These are interface and estimation problems, not afterthoughts.
+- The larger model's hard set is **a subset of the small model's** and the rest improved: capacity was the limit.
+- The **same images stay hard** in both, and they are the ones with flagged labels or a shared feature signature: the limit is **the dataset**, and a bigger model will not fix it.
+- Different images are hard in different models: an **architecture-specific** weakness. Ensembling or changing the decoder may help.
+- Runs from different engines are directly comparable, because every engine writes the same per-sample contract. That includes the reference trainer, the AgriTune presets and trainers you log yourself.
 
-## MagniData Offerings
+**With AgriTune the "why" gets sharper.** AgriTune calls a hosted embedding API once per original
+image, caches the patch-level features of a general-purpose agricultural encoder, and trains a
+lightweight decoder (MLP Probe, TokenFPN) on them, distilling the encoder's broad knowledge into a
+task decoder. The encoder is never fine-tuned. Image-space augmentation would cost one API call per
+augmented view, so the cached recipe leaves it out (the Train dialog defaults to *Image augmentation:
+None*). Reading the same hard set across engines separates four causes an aggregate metric merges:
+**capacity** (a larger decoder fixes it), **representation** (only the end-to-end model fixes it),
+**missing invariance** (survivors share a photometric signature that augmentation would cover) and
+**labels or coverage** (the same images stay hard everywhere). This procedure is supported by the
+tool; we have not yet run the full study.
 
-- Find dataset outliers, low-quality images, and difficult samples faster.
-- Use parallel-coordinate brushes as a human-readable feature extraction layer.
-- Compare multiparametric features with embedding-space structure.
-- Build and save curated subsets for training, review, or downstream analysis.
-- Bring your own images, build demo datasets, or load an existing feature CSV.
+The comparison needs no new training harness. It is a per-image join of two sets of MLflow artifacts.
 
+### 4. Improve the dataset from the hard samples, in the same screen
 
-## Scope
+1. Brush `hardness` (or press **High-loss samples**) and look at what the survivors have in common on the photometric, geometry and embedding axes.
+2. **Save as dataset** to keep the selection as a new dataset, or **Export relabel queue** to give the annotators the selected images with losses, hardness and your notes, hardest first.
+3. **Complement**: expand the selection with the *unseen* images from the combined Cloud pool that are nearest to its standardized feature centroid, so new labeling effort goes to images that resemble the failures. Removals staged in the preview are applied in the same step.
+4. **Train on it** reopens the Train dialog with the overlaid run's settings, and the new run records the old one as its parent.
+5. **Compare on dataset** shows whether those images actually stopped being hard.
 
-MagniData does not replace annotation tools, training frameworks, or embedding-based retrieval. It does not, by itself, establish that additional model capacity is unnecessary. Its function is focused: to make the distributional properties of raw and partially labeled image data globally observable, so subsequent modeling and labeling decisions can be justified from measured structure rather than unexamined assumptions.
+The original dataset is never modified. Every step produces a new, named dataset.
+
+### 5. Lineage you can see and query
+
+The Workspace is now a lineage graph: every derived dataset (selection, merge, complement, tile partition) keeps its parents; every run keeps its dataset and parent run.
+
+- Cards show an experiment badge (yellow and pulsing while a run is queued or training), with run counts per dataset.
+- A selected dataset highlights its ancestors and descendants, and the side panel shows its statistics, sample images, annotation coverage, runs and lineage.
+- Shift-click several cards to **merge** them into a de-duplicated union with all sources as parents; `POST /api/datasets/<id>/parents` edits the parents with cycle checks.
+- `partition_dataset` tiles a large dataset into fixed-size crops and registers balanced sub-datasets under the source.
+
+The result is a traceable answer to "which data and which run produced this model?", with no
+spreadsheet and no naming convention to remember.
+
+### 6. An open training contract and two engines
+
+MLflow is the system of record. The training contract defines the tags, metric keys, artifact
+layout and per-sample loss CSV that the API reads. That is why the reference trainer, the optional
+AgriTune engine and external trainers (including pai-seed runs) all appear in the same
+Experiments view, with the same overlays and comparisons.
+
+- **Add a model or a metric** is documented in the User Guide: a preset becomes a Train dialog option, a per-image loss term becomes an Explorer axis, and an epoch metric becomes a chart.
+- The API rejects settings the chosen engine cannot honour instead of silently ignoring them.
+- GPU training is a Compose override. On AgriStress-500 at 256 px on an RTX 5070 an epoch drops from about 31 min on CPU to about 2 s once the resized-image cache is warm.
+- Cancelling an AgriTune run now stops it within seconds, and AgriTune metrics are logged once per epoch to keep MLflow small.
+
+### 7. Documentation
+
+The in-portal **User Guide** takes a new user from `docker compose up` to a curated, retrained
+dataset on AgriStress-500, with 19+ screenshots generated from the real UI. New chapters cover
+bringing your own data, adding embeddings, training with AgriTune, and adding a model or a metric.
+
+## Why the combination matters
+
+Each ingredient has a precedent: training-dynamics maps, forgetting events, confident learning,
+embedding browsers, experiment trackers. The advantage of MagniData is that they are **joined on
+the image**, in one interactive surface, with provenance:
+
+| Question | Without MagniData | With MagniData |
+|---|---|---|
+| Which images does the model fail on? | Aggregate mIoU; ad-hoc scripts over logged losses | `hardness` and per-term ranks as brushable axes |
+| Model error or label error? | Open files one by one | Ground truth vs prediction vs per-term loss in one preview; relabel queue export |
+| Do we need a bigger model? | Train it and compare scalars | Per-image hardness change between two runs |
+| Architecture or dataset limit? | Intuition | Same images hard across engines means data; different images means architecture |
+| What data to add? | More of everything | Feature-nearest unseen images to the hard set |
+| Did the fix work? | Compare final metrics | Per-image change on the curated set, parent run linked |
+| Where did this come from? | Folder names | Dataset and run lineage graph |
+
+## Positioning
+
+MagniData does not replace annotation tools, experiment trackers or training frameworks. It
+reads from MLflow, writes new dataset CSVs, and leaves labeling to your annotation tool. It
+complements instance-centric viewers by adding a dataset-wide, multivariate and
+model-aware view. The training-dynamics signals here are heuristics for prioritising
+inspection, not proofs of label error or of sufficient capacity. The report states what has and
+has not been evaluated.
+
+## Coming next
+
+A contrastive-learning edition is planned. It targets the main limit of the cached AgriTune recipe: invariances that augmentation normally teaches, which today cost one API call per view.
+
+## Limitations and what we are measuring next
+
+- The complement uses distance to the selection's standardized feature centroid within a shared-column Cloud pool. It is a fast, explainable heuristic, not a per-image nearest-neighbour search or a learned retrieval model.
+- Per-sample scoring costs one extra evaluation pass per scored epoch; `score_every` trades resolution for time.
+- Only the hardest samples of each epoch have a saved prediction mask. Other images fall back to the nearest earlier epoch, and say so.
+- The training workflows are verified end to end on AgriStress-500 and a small demo run. We have not yet published quantitative results on label-noise detection or on dataset-quality gains across benchmarks; those are the next evaluation.
+- Parallel coordinates need axis grouping and ranking as column counts grow, and large plots render a deterministic 3,000-line representation while all counts, tables and selections use every row.
+
+## Upgrade notes
+
+- Training is opt-in per run. The default build is unchanged; add `docker-compose.gpu.yml` for CUDA and `docker-compose.agritune.yml` for AgriTune (clone AgriTune beside this repository).
+- No change to existing dataset CSVs or embeddings files.
+- See `CHANGELOG.md` for the full list of additions and fixes.
 
 ## Benchmark
 

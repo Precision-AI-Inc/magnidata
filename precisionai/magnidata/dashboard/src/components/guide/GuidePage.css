@@ -1,0 +1,91 @@
+.guide-page { flex: 1; min-height: 0; overflow-y: auto; display: flex; justify-content: center; align-items: flex-start; gap: 40px; padding: 28px 24px 80px; }
+.guide-toc { flex: 0 0 230px; position: sticky; top: 0; display: none; }
+@media (min-width: 960px) { .guide-toc { display: block; } }
+.guide-toc__label { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: var(--c-t3); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+.guide-toc nav { display: flex; flex-direction: column; gap: 2px; }
+.guide-toc button { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--c-t2); font: 600 11px var(--font); text-align: left; cursor: pointer; transition: background .15s ease, color .15s ease; }
+.guide-toc button:hover { background: var(--c-hover); color: var(--c-t1); }
+.guide-toc button[data-active='true'] { background: var(--c-accent-light); color: var(--c-accent); }
+.guide-toc__number { width: 20px; height: 20px; flex: 0 0 20px; display: grid; place-items: center; border-radius: 50%; background: var(--c-raised); color: var(--c-t3); font-size: 10px; }
+.guide-toc button[data-active='true'] .guide-toc__number { background: var(--c-accent); color: #fff; }
+
+.guide-content { width: min(100%, 820px); min-width: 0; color: var(--c-t2); font-size: 13px; line-height: 1.65; animation: guide-in .25s ease; }
+@keyframes guide-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .guide-content { animation: none; } }
+.guide-header { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid var(--c-border); }
+.guide-header__eyebrow { color: var(--c-accent); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.guide-header h1 { margin: 4px 0 6px; color: var(--c-t1); font-size: 26px; letter-spacing: -.02em; }
+.guide-header p { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--c-t3); font-size: 11px; }
+.guide-content h3 { margin: 26px 0 8px; color: var(--c-t1); font-size: 15px; }
+.guide-content p { margin: 10px 0; }
+.guide-content ul, .guide-content ol { margin: 10px 0; padding-left: 22px; }
+.guide-content ul { list-style: disc; }
+.guide-content ol:not(.guide-steps) { list-style: decimal; }
+.guide-content li { margin: 6px 0; }
+.guide-content code { padding: 1px 5px; border-radius: 5px; background: var(--c-raised); color: var(--c-t1); font: 11.5px 'JetBrains Mono', monospace; }
+.guide-content a { color: var(--c-accent); }
+.guide-goal { padding: 12px 14px; border-left: 3px solid var(--c-accent); border-radius: 0 10px 10px 0; background: var(--c-accent-light); color: var(--c-t1); font-weight: 600; }
+.guide-term { color: var(--c-t1); font-style: normal; font-weight: 600; }
+
+.guide-steps { list-style: none; counter-reset: guide-step; padding-left: 0 !important; }
+.guide-steps > li { counter-increment: guide-step; position: relative; margin: 12px 0; padding-left: 38px; }
+.guide-steps > li::before { content: counter(guide-step); position: absolute; left: 0; top: 0; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; background: var(--c-accent); color: #fff; font-size: 11px; font-weight: 700; }
+
+.guide-cmd { position: relative; margin: 8px 0; }
+.guide-cmd pre { margin: 0; padding: 11px 44px 11px 14px; overflow-x: auto; border-radius: 10px; background: #0b1f2e; color: #d6f5ee; font: 12px/1.55 'JetBrains Mono', monospace; }
+.guide-cmd code { padding: 0; background: none; color: inherit; font: inherit; }
+.guide-cmd__note { display: block; margin-bottom: 3px; color: var(--c-t3); font-size: 11px; }
+.guide-cmd button { position: absolute; right: 8px; bottom: 8px; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: rgba(255, 255, 255, .1); color: #d6f5ee; cursor: pointer; }
+.guide-cmd button:hover { background: rgba(255, 255, 255, .2); }
+.guide-cmd__note + pre { margin-top: 0; }
+.guide-output { margin: 8px 0; padding: 11px 14px; overflow-x: auto; border: 1px dashed var(--c-border-2); border-radius: 10px; background: var(--c-raised); color: var(--c-t2); font: 11px/1.55 'JetBrains Mono', monospace; }
+.guide-output code { padding: 0; background: none; color: inherit; font: inherit; }
+
+.guide-shot { margin: 18px 0; }
+.guide-shot__frame { position: relative; overflow: hidden; border: 1px solid var(--c-border); border-radius: 12px; background: var(--c-raised); box-shadow: var(--shadow); }
+.guide-shot img { width: 100%; display: block; }
+.guide-shot__badge { position: absolute; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: #f59e0b; color: #1a1200; font-size: 11px; font-weight: 800; box-shadow: 0 0 0 3px rgba(245, 158, 11, .3); transform: translate(-50%, -50%); }
+.guide-shot figcaption { margin-top: 8px; color: var(--c-t3); font-size: 11.5px; line-height: 1.5; }
+.guide-shot figcaption ol { margin: 6px 0 0; padding-left: 20px; }
+
+.guide-expect, .guide-note { display: flex; gap: 10px; margin: 16px 0; padding: 12px 14px; border-radius: 10px; font-size: 12.5px; }
+.guide-expect { flex-direction: column; gap: 4px; border: 1px solid var(--color-success); background: var(--color-success-bg); color: var(--c-t1); }
+.guide-expect strong { display: flex; align-items: center; gap: 6px; color: var(--color-success-text); }
+.guide-expect p { margin: 4px 0 0; }
+.guide-note { border: 1px solid var(--c-border); background: var(--c-raised); }
+.guide-note strong { display: block; margin-bottom: 2px; color: var(--c-t1); }
+.guide-note > svg { flex: 0 0 16px; margin-top: 2px; color: var(--c-accent); }
+.guide-note--warn { border-color: #d68013; background: rgba(214, 128, 19, .1); }
+.guide-note--warn > svg { color: #d68013; }
+.guide-note--tip > svg { color: #13a77f; }
+.guide-note .guide-cmd { margin-top: 8px; }
+
+.guide-table { width: 100%; margin: 10px 0; border-collapse: collapse; font-size: 12px; }
+.guide-table th, .guide-table td { padding: 8px 10px; border-bottom: 1px solid var(--c-border); text-align: left; vertical-align: top; }
+.guide-table th { color: var(--c-t3); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.guide-glossary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+.guide-glossary dt { color: var(--c-t1); font-weight: 700; }
+.guide-glossary dd { margin: 0; }
+.guide-diagram { width: 100%; margin: 14px 0; border: 1px solid var(--c-border); border-radius: 12px; background: var(--c-surface); }
+.guide-svg-title { fill: var(--c-t1); font: 700 12px var(--font); }
+.guide-svg-text { fill: var(--c-t2); font: 10.5px var(--font); }
+.guide-svg-label { fill: var(--c-t3); font: 600 10px var(--font); }
+.guide-action { margin: 18px 0 0; }
+
+.guide-pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--c-border); }
+.guide-pager button { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border: 1px solid var(--c-border); border-radius: 11px; background: var(--c-surface); color: var(--c-t1); font: 600 12px var(--font); text-align: left; cursor: pointer; transition: border-color .15s ease, transform .15s ease; }
+.guide-pager button:hover { border-color: var(--c-accent); transform: translateY(-1px); }
+.guide-pager small { display: block; color: var(--c-t3); font-size: 9.5px; font-weight: 500; }
+@media (max-width: 960px) {
+  .guide-page { padding: 18px 14px 60px; }
+  .guide-glossary { grid-template-columns: 1fr; }
+}
+
+.guide-snippet { position: relative; margin: 10px 0; border-radius: 10px; overflow: hidden; background: #0b1f2e; }
+.guide-snippet__file { padding: 6px 14px; border-bottom: 1px solid rgba(255, 255, 255, .08); background: rgba(255, 255, 255, .05); }
+.guide-snippet__file code { padding: 0; background: none; color: #9fd9cf; font: 11px 'JetBrains Mono', monospace; }
+.guide-snippet pre { margin: 0; padding: 11px 44px 11px 14px; overflow-x: auto; color: #d6f5ee; font: 12px/1.55 'JetBrains Mono', monospace; }
+.guide-snippet pre code { padding: 0; background: none; color: inherit; font: inherit; }
+.guide-snippet button { position: absolute; right: 8px; top: 38px; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 7px; background: rgba(255, 255, 255, .1); color: #d6f5ee; cursor: pointer; }
+.guide-snippet button:hover { background: rgba(255, 255, 255, .2); }
+.guide-table th code { text-transform: none; letter-spacing: 0; }

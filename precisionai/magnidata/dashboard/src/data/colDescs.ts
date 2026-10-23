@@ -124,9 +124,49 @@ const EXTRA: Record<string, ColDesc> = {
   },
 }
 
+// ── Training columns (merged in from an MLflow run, not part of the feature extractor) ──
+const TRAINING = 'Training'
+const TERM_NAMES: Record<string, string> = {
+  total: 'the weighted total loss', dice: 'the Dice loss', cce: 'the cross-entropy loss', bce: 'the foreground/background BCE loss',
+}
+const SUFFIXES: { suffix: string; text: (term: string) => string; scale: string }[] = [
+  { suffix: '', text: t => `Per-image ${t} at the selected training epoch, from an eval-mode pass without augmentation.`, scale: '≥ 0 (higher = harder)' },
+  { suffix: '_mean', text: t => `Average of ${t} over every scored epoch up to the selected one: how hard the image is across training, not just now.`, scale: '≥ 0 (higher = persistently harder)' },
+  { suffix: '_delta', text: t => `First scored value of ${t} minus the current one. Positive means the model improved on this image.`, scale: 'positive = improved' },
+  { suffix: '_slope', text: t => `Trend of ${t} over the last 5 scored epochs (least squares). Negative means the image is getting easier.`, scale: 'negative = getting easier' },
+  { suffix: '_rank', text: t => `Percentile rank of ${t} among images of the same split at the selected epoch. 1 is the hardest image.`, scale: '0–1 (1 = hardest in split)' },
+]
+
+function trainingDescs(): Record<string, ColDesc> {
+  const out: Record<string, ColDesc> = {
+    hardness: {
+      group: TRAINING,
+      plain_meaning: 'Share of scored epochs in which the image was among the hardest 20% of its split by total loss. High values mean the image stays hard however long the model trains: a candidate for relabelling or removal.',
+      scale: '0–1 (higher = persistently hard)',
+    },
+    iou: { group: TRAINING, plain_meaning: 'Mean intersection-over-union of the predicted and labelled mask for this image at the selected epoch.', scale: '0–1 (higher = better)' },
+    confidence: { group: TRAINING, plain_meaning: 'Average of the model\'s highest class probability over the image\'s pixels at the selected epoch. Low means the model is unsure.', scale: '0–1 (higher = more confident)' },
+    split: { group: TRAINING, plain_meaning: 'Whether the image was in the train, validation or test split of the training run. Loss ranks are computed within each split.', scale: 'train / val / test' },
+  }
+  for (const [term, name] of Object.entries(TERM_NAMES)) {
+    for (const { suffix, text, scale } of SUFFIXES) out[`loss_${term}${suffix}`] = { group: TRAINING, plain_meaning: text(name), scale }
+  }
+  return out
+}
+
+/** Description of a column, including training-run columns of loss terms not listed above (e.g. a custom `loss_focal_rank`). */
+export function colDesc(col: string): ColDesc | undefined {
+  if (COL_DESCS[col]) return COL_DESCS[col]
+  const m = /^loss_([a-z][a-z0-9_]*?)(_mean|_delta|_slope|_rank)?$/.exec(col)
+  if (!m) return undefined
+  const suffix = SUFFIXES.find(x => x.suffix === (m[2] ?? ''))!
+  return { group: TRAINING, plain_meaning: suffix.text(`the ${m[1]} loss`), scale: suffix.scale }
+}
+
 export const COL_DESCS: Record<string, ColDesc> = {
   ...(raw.columns as Record<string, ColDesc>),
   ...EXTRA,
+  ...trainingDescs(),
 }
 
 export const GROUP_DESCS: Record<string, string> = raw.groups as Record<string, string>
@@ -143,6 +183,7 @@ export const GROUPS_ORDER = [
   'Annotation coverage',
   'Camera & sensor info',
   'Final scores',
+  'Training',
 ]
 
 // Palette for group badges — a coordinated, muted family anchored by the brand
@@ -160,4 +201,5 @@ export const GROUP_COLORS: Record<string, string> = {
   'Annotation coverage':   '#1aa179',   // emerald
   'Camera & sensor info':  '#006A7C',   // brand teal
   'Final scores':          '#013755',   // brand navy
+  'Training':              '#b0530f',   // burnt orange: set apart from the dataset feature groups
 }

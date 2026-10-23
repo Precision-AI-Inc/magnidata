@@ -1,0 +1,22 @@
+# Opt-in AgriTune training engine for the trainer worker.
+# Clone https://github.com/Precision-AI-Inc/agritune beside this repository (so ../agritune exists), then enable it with
+# plain `docker compose up --build` by putting this in the git-ignored .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml
+# Or pass both files: docker compose -f docker-compose.yml -f docker-compose.agritune.yml up --build
+# Combine with the GPU file by listing all three on one line (a second COMPOSE_FILE line overrides the first):
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml:docker-compose.agritune.yml
+services:
+  trainer:
+    build:
+      additional_contexts:
+        agritune: ../agritune
+    # The hosted encoder's key is read from AgriTune's own .env (AGRITUNE_ENCODER_API_KEY, the file its CLI reads),
+    # so it is never copied into this repository.
+    env_file:
+      - path: ../agritune/.env
+        required: false
+    environment:
+      # Hosted patch-token encoder. Set AGRITUNE_ENCODER_BASE_URL= (empty) in this repository's .env to use AgriTune's
+      # deterministic fake encoder instead, which keeps the workflow runnable offline but cannot learn real classes.
+      AGRITUNE_ENCODER_BASE_URL: ${AGRITUNE_ENCODER_BASE_URL-https://embeddings.precision.ai/v1}
+      AGRITUNE_ENCODER_MODEL: ${AGRITUNE_ENCODER_MODEL:-pai-embedding}

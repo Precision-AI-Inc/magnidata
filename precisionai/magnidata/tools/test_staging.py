@@ -10,7 +10,7 @@ import csv
 import hashlib
 import os
 
-from .staging import UploadedImage, stage_images
+from .staging import UploadedImage, remap_embeddings, stage_images
 
 
 def test_stage_images_writes_files_and_manifest(tmp_path):
@@ -185,3 +185,38 @@ def test_empty_annotations_list_behaves_like_none(tmp_path):
     stage_images(images, stage_root, annotations=[])
 
     assert not os.path.isdir(os.path.join(stage_root, "labels"))
+
+
+# ── Embeddings re-keying ───────────────────────────────────────────────────────
+
+
+def test_staged_names_records_each_upload(tmp_path):
+    names: dict[str, str] = {}
+    images = [UploadedImage("weeds/a.png", b"A"), UploadedImage("soil/b.png", b"B")]
+
+    stage_images(images, os.path.join(str(tmp_path), "s"), staged_names=names)
+
+    assert set(names) == {"weeds/a.png", "soil/b.png"}
+    assert all(name in os.listdir(os.path.join(str(tmp_path), "s", "images")) for name in names.values())
+
+
+def test_remap_embeddings_matches_by_basename_and_relative_path():
+    staged = {"weeds/a.png": "a-11111111.png", "soil/b.png": "b-22222222.png"}
+
+    remapped = remap_embeddings({"a.png": [1.0], "soil/b.png": [2.0]}, staged)
+
+    assert remapped == {"a-11111111.png": [1.0], "b-22222222.png": [2.0]}
+
+
+def test_remap_embeddings_keeps_staged_names_and_drops_unknown_keys():
+    staged = {"a.png": "a-11111111.png"}
+
+    remapped = remap_embeddings({"a-11111111.png": [1.0], "other.png": [9.0]}, staged)
+
+    assert remapped == {"a-11111111.png": [1.0]}
+
+
+def test_remap_embeddings_gives_every_same_named_upload_the_vector():
+    staged = {"x/a.png": "a-11111111.png", "y/a.png": "a-22222222.png"}
+
+    assert remap_embeddings({"a.png": [1.0]}, staged) == {"a-11111111.png": [1.0], "a-22222222.png": [1.0]}

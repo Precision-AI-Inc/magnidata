@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, useMemo, useCallback, Fragment, type CSSProperties } from 'react'
 import type Plotly from 'plotly.js-dist-min'
 import { Play, ChevronUp, ChevronDown, ChevronsUpDown, Download, Columns, X, RotateCcw } from 'lucide-react'
 import type { CSVData, CSVRow } from '../types'
@@ -6,6 +6,10 @@ import type { Partitions } from '../hooks/usePartitions'
 import { ColTooltip } from './ColTooltip'
 import { Graph3D } from './Graph3D'
 import { BRAND_CATEGORICAL, BRAND_SEQUENTIAL, TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../data/vizColors'
+import { defaultTrainingAxes, highLossBrush } from '../lib/runAxes'
+import { defaultTrainingCategorical, splitColor, SPLIT_COLUMN } from '../lib/split'
+import { DIVERGING_SCALE, divergingRange, isDivergingColumn } from '../lib/diverging'
+import { sampleParallelRows } from '../lib/parallelSample'
 
 interface Props {
   data: CSVData
@@ -28,6 +32,7 @@ interface Props {
 
 const PALETTE = BRAND_CATEGORICAL
 const PC_HEIGHT = 330
+const MAX_PARALLEL_LINES = 3000
 
 // Brand teal → emerald → mint sequential scale (shared with Graph3D via vizColors).
 // Passed as an explicit array (not a named string) so it renders correctly on the very first
@@ -105,6 +110,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
   const divRef  = useRef<HTMLDivElement>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<typeof Plotly | null>(null)
+  const resizeFrame = useRef<number | null>(null)
 
   // Height of the parallel-coordinates panel (top row); the bottom row (3D + table) flexes to fill.
   // Draggable via the splitter handle between the two rows.
@@ -115,8 +121,13 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     const startY = e.clientY
     const startH = pcHeight
     const onMove = (ev: MouseEvent) => {
-      const max = (rootRef.current?.clientHeight ?? 800) - 300   // leave room for the bottom row (min 280)
-      setPcHeight(Math.max(160, Math.min(max, startH + (ev.clientY - startY))))
+      const clientY = ev.clientY
+      if (resizeFrame.current != null) window.cancelAnimationFrame(resizeFrame.current)
+      resizeFrame.current = window.requestAnimationFrame(() => {
+        const max = (rootRef.current?.clientHeight ?? 800) - 300   // leave room for the bottom row (min 280)
+        setPcHeight(Math.max(160, Math.min(max, startH + (clientY - startY))))
+        resizeFrame.current = null
+      })
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
@@ -129,6 +140,9 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }
+  useEffect(() => () => {
+    if (resizeFrame.current != null) window.cancelAnimationFrame(resizeFrame.current)
+  }, [])
 
   // colorBy / sortMode / showFields are controlled by App (rendered in the tab bar).
   // App seeds colorBy via an effect (async), so on the very first paint it can be ''. Use a
@@ -154,6 +168,34 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     onConstraintsChange({})
   }, [data.fileName]) // eslint-disable-line
 
+  // The overlay's columns came or went: drop axes that no longer exist, show the new headline columns
+  // (so the user need not dig through the picker), and fall back to the defaults if nothing is left.
+  const runColumnsKey = (data.runColumns ?? []).join(',')
+  useEffect(() => {
+    const numeric = new Set(data.numericCols)
+    setSelectedCols(prev => {
+      const kept = [...prev].filter(c => numeric.has(c))
+      const next = new Set(defaultTrainingAxes(numeric, kept, data.runColumns ?? []))
+      return next.size ? next : defaultNumericSelection(data.numericCols, rows)
+    })
+    const categorical = new Set(data.categoricalCols)
+    setSelectedCatCols(prev => {
+      const kept = new Set([...prev].filter(c => categorical.has(c)))
+      const next = new Set(defaultTrainingCategorical(categorical, kept, data.runColumns ?? []))
+      return next.size || !prev.size ? next : defaultCategoricalSelection(data.categoricalCols)
+    })
+  }, [runColumnsKey]) // eslint-disable-line
+
+  // "High-loss samples": brush the hardest samples so the table, histograms and 3D view show their features.
+  const highLoss = useMemo(() => highLossBrush(data.runColumns ?? [], rows), [data.runColumns, rows])
+  const brushHighLoss = useCallback(() => {
+    if (!highLoss) return
+    setSelectedCols(prev => new Set([...prev, highLoss.col]))
+    const next = { [highLoss.col]: [highLoss.range] as [number, number][] }
+    setConstraints(next)
+    onConstraintsChange(next)
+  }, [highLoss, onConstraintsChange])
+
   // 3D cluster selection (null = no selection; Set = row indices selected from 3D view)
   const [filter3D, setFilter3D] = useState<Set<number> | null>(null)
   useEffect(() => setFilter3D(null), [rows])
@@ -178,7 +220,8 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
 
   // Active categorical axes (appended after numeric on the chart)
   const activeCatCols = useMemo(
-    () => data.categoricalCols.filter(c => selectedCatCols.has(c)),
+    () => data.categoricalCols.filter(c => selectedCatCols.has(c))
+      .sort((a, b) => Number(b === SPLIT_COLUMN) - Number(a === SPLIT_COLUMN)),
     [data.categoricalCols, selectedCatCols],
   )
 
@@ -209,6 +252,19 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     return result
   }, [rows, constraints, selectedCols, selectedCatCols, filter3D, removed])
 
+  // Plotly becomes expensive and unresponsive when every line of a large dataset is sent
+  // to its parcoords trace. Keep all filtering/counting/export semantics on `rows`, while
+  // drawing an evenly distributed, deterministic subset of the current visual population.
+  const basePlotRows = useMemo(
+    () => (removed?.size ? rows.filter(row => !removed.has(row._idx as number)) : rows),
+    [rows, removed],
+  )
+  const plotCandidates = filter3D ? filteredRows : basePlotRows
+  const plottedRows = useMemo(
+    () => sampleParallelRows(plotCandidates, MAX_PARALLEL_LINES),
+    [plotCandidates],
+  )
+
   // ── Color helpers ──────────────────────────────────────────────────────────
   // displayRows: the rows to assign colors to; cmin/cmax always derived from all rows for stable scale
   function buildColorData(col: string, displayRows: CSVRow[]) {
@@ -217,8 +273,8 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
       const enc = data.catEncodings[col]
       if (enc) {
         const n         = enc.sorted.length
-        const colorscale: [number, string][] = enc.sorted.map((_, i) =>
-          [n > 1 ? i / (n - 1) : 0, PALETTE[i % PALETTE.length]]
+        const colorscale: [number, string][] = enc.sorted.map((value, i) =>
+          [n > 1 ? i / (n - 1) : 0, col === SPLIT_COLUMN ? splitColor(value) : PALETTE[i % PALETTE.length]]
         )
         return {
           colorData: displayRows.map(r => enc.encode[String(r[col] ?? '')] ?? 0),
@@ -236,6 +292,16 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
       if (v != null && isFinite(v)) nonNullVals.push(v)
     }
     let cmin: number, cmax: number
+    if (isDivergingColumn(col)) {
+      // Signed change column: symmetric range so the colour bar is centred on 0.
+      ;[cmin, cmax] = divergingRange(nonNullVals)
+      return {
+        colorData: displayRows.map(r => { const v = r[col] as number; return v != null && isFinite(v) ? v : 0 }),
+        colorscale: DIVERGING_SCALE,
+        cmin, cmax,
+        tickvals: undefined, ticktext: undefined,
+      }
+    }
     if (nonNullVals.length === 0) {
       cmin = 0; cmax = 1
     } else {
@@ -289,10 +355,8 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     const Plotly = plotRef.current
 
     const sortedCols  = getSortedCols()
-    // When a 3D cluster is selected show only those rows; axis ranges stay pinned to full data
-    // Drop removed rows from the drawn lines (axis ranges below still use full `rows` so they're stable).
-    const baseRows = (removed && removed.size) ? rows.filter(r => !removed.has(r._idx as number)) : rows
-    const displayRows = filter3D ? filteredRows : baseRows
+    // Axis ranges and brush results stay pinned to the complete dataset; only rendered lines are sampled.
+    const displayRows = plottedRows
     const { colorData, colorscale, cmin, cmax, tickvals, ticktext } = buildColorData(colorByEff, displayRows)
 
     // Re-apply any active brush so the selection survives a redraw (color-by / sort / axis change).
@@ -449,7 +513,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
   extractRef.current = extractConstraints
 
   // Redraw when active columns, color-by, sort mode, data, or 3D cluster selection changes
-  useEffect(() => { drawPlot() }, [rows, colorByEff, sortMode, activeCols, activeCatCols, filter3D, removed]) // eslint-disable-line
+  useEffect(() => { drawPlot() }, [rows, plottedRows, colorByEff, sortMode, activeCols, activeCatCols]) // eslint-disable-line
 
   // Resize the plot to the new panel height during splitter drags — relayout (not redraw) so the
   // current axis brush is preserved.
@@ -481,9 +545,14 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
     ? data.numericCols.filter(c => c.toLowerCase().includes(fieldSearch.toLowerCase()))
     : data.numericCols
 
-  const visibleCatCols = fieldSearch
+  // Training-run columns (per-sample losses merged in) are listed first, under their own heading.
+  const trainingSet = useMemo(() => new Set(data.runColumns ?? []), [data.runColumns])
+  const orderedFieldCols = [...visibleFieldCols.filter(c => trainingSet.has(c)), ...visibleFieldCols.filter(c => !trainingSet.has(c))]
+
+  const matchingCatCols = fieldSearch
     ? data.categoricalCols.filter(c => c.toLowerCase().includes(fieldSearch.toLowerCase()))
     : data.categoricalCols
+  const visibleCatCols = [...matchingCatCols.filter(c => trainingSet.has(c)), ...matchingCatCols.filter(c => !trainingSet.has(c))]
 
   // ── CSV export ─────────────────────────────────────────────────────────────
   const exportCSV = useCallback(() => {
@@ -552,7 +621,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
   const unselected   = data.numericCols.length - selectedCols.size
 
   return (
-    <div ref={rootRef} style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
+    <div ref={rootRef} style={{ position: 'relative', display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0,
                                 overflowY: 'auto', overflowX: 'hidden' }}>
 
       {/* ── Action bar — only rendered when there's an active 3D selection ── */}
@@ -583,7 +652,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
 
       {/* ── Field picker panel ── */}
       {showFields && (
-        <div style={{ flexShrink: 0, borderBottom: '1px solid var(--c-border)',
+        <div className="explorer-fields-drawer" style={{ flexShrink: 0, borderBottom: '1px solid var(--c-border)',
                       background: 'var(--c-surface)', padding: '10px 14px' }}>
 
           {/* Picker header */}
@@ -639,10 +708,27 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
           {/* Numeric checkbox grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
                         gap: '3px 10px', maxHeight: 140, overflowY: 'auto' }}>
-            {visibleFieldCols.map(col => {
+            {orderedFieldCols.map((col, i) => {
               const checked = selectedCols.has(col)
+              const heading = trainingSet.size > 0 && (i === 0 || (trainingSet.has(orderedFieldCols[i - 1]) && !trainingSet.has(col)))
+                ? (trainingSet.has(col) ? 'Training' : 'Features') : null
               return (
-                <label key={col}
+                <Fragment key={col}>
+                {heading && (
+                  <div style={{ gridColumn: '1/-1', fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                                letterSpacing: '.5px', color: 'var(--c-t3)', marginTop: i === 0 ? 0 : 4,
+                                display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {heading}
+                    {heading === 'Training' && highLoss && (
+                      <button onClick={brushHighLoss} className="btn-ghost"
+                              title={highLoss.col === 'hardness' ? 'Brush samples that are among the hardest in most epochs (hardness ≥ 0.6)' : 'Brush the 20% of samples with the highest mean loss'}
+                              style={{ fontSize: 10, textTransform: 'none', letterSpacing: 0, padding: '1px 8px', borderRadius: 6, border: '1px solid var(--c-border)' }}>
+                        High-loss samples
+                      </button>
+                    )}
+                  </div>
+                )}
+                <label
                        style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
                                 padding: '3px 6px', borderRadius: 5,
                                 background: checked ? 'var(--c-hover)' : 'transparent' }}>
@@ -654,6 +740,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
                     {col}
                   </ColTooltip>
                 </label>
+                </Fragment>
               )
             })}
             {visibleFieldCols.length === 0 && (
@@ -670,11 +757,18 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
                                letterSpacing: '.5px', color: 'var(--c-t3)' }}>Categorical</span>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px 8px' }}>
-                {visibleCatCols.map(col => {
+                {visibleCatCols.map((col, i) => {
                   const checked = selectedCatCols.has(col)
                   const enc     = data.catEncodings[col]
+                  const heading = trainingSet.has(col) && (i === 0 || !trainingSet.has(visibleCatCols[i - 1])) ? 'Training'
+                    : (!trainingSet.has(col) && i > 0 && trainingSet.has(visibleCatCols[i - 1]) ? 'Features' : null)
                   return (
-                    <label key={col}
+                    <Fragment key={col}>
+                    {heading && (
+                      <div style={{ flexBasis: '100%', fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+                                    letterSpacing: '.5px', color: 'var(--c-t3)' }}>{heading}</div>
+                    )}
+                    <label
                            style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
                                     padding: '3px 8px', borderRadius: 12,
                                     background: checked ? 'var(--c-accent)' : 'var(--c-raised)',
@@ -693,6 +787,7 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
                         </span>
                       )}
                     </label>
+                    </Fragment>
                   )
                 })}
               </div>
@@ -701,58 +796,46 @@ export function ParallelCoords({ data, rows, embeddingsAvailable, datasetSource,
         </div>
       )}
 
-      {/* ── PC Chart ── */}
       {totalActive === 0 ? (
         <div style={{ height: pcHeight, flexShrink: 0, display: 'flex', alignItems: 'center',
                       justifyContent: 'center', background: '#f8fafc' }}>
           <p style={{ fontSize: 12, color: 'var(--c-t3)' }}>Select at least one field above to draw the chart</p>
         </div>
       ) : (
-        <div ref={divRef} style={{ height: pcHeight, flexShrink: 0, background: '#0a1422' }} />
+        <div style={{ height: pcHeight, flexShrink: 0, position: 'relative', background: '#0a1422' }}>
+          <div ref={divRef} style={{ height: '100%' }} />
+          {plotCandidates.length > plottedRows.length && (
+            <span title="Brushes and result counts still apply to every row"
+                  style={{ position: 'absolute', left: 12, bottom: 7, zIndex: 2, pointerEvents: 'none',
+                           padding: '3px 7px', borderRadius: 5, fontSize: 9.5,
+                           color: 'rgba(206,238,228,.72)', background: 'rgba(4,16,28,.72)' }}>
+              Representative {plottedRows.length.toLocaleString()} of {plotCandidates.length.toLocaleString()} lines · filters use all rows
+            </span>
+          )}
+        </div>
       )}
 
-      {/* ── Splitter — drag to resize the top (parallel coords) vs bottom (3D + table) rows ── */}
-      <div
-        onMouseDown={startResize}
-        title="Drag to resize"
-        style={{ height: 8, flexShrink: 0, cursor: 'row-resize', position: 'relative',
-                 background: 'var(--c-border)',
-                 display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-accent)')}
-        onMouseLeave={e => (e.currentTarget.style.background = 'var(--c-border)')}
-      >
-        <div style={{ width: 38, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.55)',
-                      pointerEvents: 'none' }} />
+      <div onMouseDown={startResize} title="Drag to resize"
+           style={{ height: 8, flexShrink: 0, cursor: 'row-resize', position: 'relative',
+                    background: 'var(--c-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+           onMouseEnter={e => (e.currentTarget.style.background = 'var(--c-accent)')}
+           onMouseLeave={e => (e.currentTarget.style.background = 'var(--c-border)')}>
+        <div style={{ width: 38, height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.55)', pointerEvents: 'none' }} />
       </div>
 
-      {/* ── Bottom split: 3D graph (left) + results table (right) ──
-          minHeight keeps both panes usable on short screens; the explorer root scrolls if needed. */}
       <div style={{ flex: 1, minHeight: 280, display: 'flex', overflow: 'hidden' }}>
-
-        {/* Left — 3D graph */}
         <div style={{ width: '50%', flexShrink: 0, borderRight: '2px solid var(--c-border)',
                       display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          <Graph3D
-            data={data}
-            rows={rows}
-            embeddingsAvailable={embeddingsAvailable}
-            datasetSource={datasetSource}
-            selectedRows={filteredRows}
-            colorBy={colorByEff}
-            onClusterSelect={handleClusterSelect}
-            onPointClick={row => onPlay(row, filteredRows)}
-            partitions={partitions}
-            onCommitClusterColumn={onCommitClusterColumn}
-          />
+          <Graph3D data={data} rows={rows} embeddingsAvailable={embeddingsAvailable} datasetSource={datasetSource}
+                   selectedRows={filteredRows} colorBy={colorByEff} onClusterSelect={handleClusterSelect}
+                   onPointClick={row => onPlay(row, filteredRows)} partitions={partitions}
+                   onCommitClusterColumn={onCommitClusterColumn} />
         </div>
-
-        {/* Right — results */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <ResultsSummary data={data} rows={filteredRows} total={rows.length}
                           activeConstraints={Object.keys(constraints).filter(k => selectedCols.has(k) || selectedCatCols.has(k)).length} />
           <ResultsTable data={data} rows={filteredRows} partitions={partitions} onPlay={row => onPlay(row, filteredRows)} />
         </div>
-
       </div>
     </div>
   )

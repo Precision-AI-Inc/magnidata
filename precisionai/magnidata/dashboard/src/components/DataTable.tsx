@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react'
 import { Play, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { CSVData, CSVRow } from '../types'
 import { BRAND_CAT_BADGES, TABLE_HEADER, TABLE_HEADER_ACTIVE } from '../data/vizColors'
+import { splitColor, splitCounts, SPLIT_COLUMN } from '../lib/split'
 
 const PAGE_SIZE = 100
 
@@ -20,15 +21,30 @@ export function DataTable({ data, rows, onPlay }: Props) {
   const [colSearch, setColSearch] = useState('')
 
   // Visible columns
-  const allCols  = data.cols.map(c => c.name)
+  // `split` is pinned right after the image column so train/val is always visible next to the picture.
+  const allCols  = useMemo(() => {
+    const names = data.cols.map(c => c.name)
+    if (!names.includes(SPLIT_COLUMN)) return names
+    const rest = names.filter(c => c !== SPLIT_COLUMN)
+    const at = data.imagePath ? rest.indexOf(data.imagePath) + 1 : 0
+    return [...rest.slice(0, at), SPLIT_COLUMN, ...rest.slice(at)]
+  }, [data.cols, data.imagePath])
   const visCols  = useMemo(() =>
     colSearch ? allCols.filter(c => c.toLowerCase().includes(colSearch.toLowerCase())) : allCols,
   [allCols, colSearch])
 
+  // Split filter chips (only when the dataset carries a split column).
+  const [splitFilter, setSplitFilter] = useState<string | null>(null)
+  const splits = useMemo(() => splitCounts(rows), [rows])
+  const shown = useMemo(
+    () => (splitFilter ? rows.filter(r => r[SPLIT_COLUMN] === splitFilter) : rows),
+    [rows, splitFilter],
+  )
+
   // Sort
   const sorted = useMemo(() => {
-    if (!sortCol || !sortDir) return rows
-    return [...rows].sort((a, b) => {
+    if (!sortCol || !sortDir) return shown
+    return [...shown].sort((a, b) => {
       const va = a[sortCol], vb = b[sortCol]
       if (va == null && vb == null) return 0
       if (va == null) return 1
@@ -38,7 +54,7 @@ export function DataTable({ data, rows, onPlay }: Props) {
       const sa = String(va), sb = String(vb)
       return sortDir === 'asc' ? sa.localeCompare(sb) : sb.localeCompare(sa)
     })
-  }, [rows, sortCol, sortDir])
+  }, [shown, sortCol, sortDir])
 
   const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
   const pageRows   = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
@@ -60,8 +76,21 @@ export function DataTable({ data, rows, onPlay }: Props) {
       <div className="flex items-center gap-3 px-4 py-2.5 shrink-0"
            style={{ borderBottom: '1px solid var(--c-border)' }}>
         <span className="text-xs" style={{ color: 'var(--c-t3)' }}>
-          {rows.length.toLocaleString()} rows · {data.cols.length} columns
+          {shown.length.toLocaleString()} rows · {data.cols.length} columns
         </span>
+        {splits.length > 0 && (
+          <span className="flex items-center gap-1.5" role="group" aria-label="Filter by split">
+            {splits.map(([name, n]) => (
+              <button key={name} aria-pressed={splitFilter === name}
+                      onClick={() => { setSplitFilter(splitFilter === name ? null : name); setPage(0) }}
+                      className="text-[10px] px-2 py-0.5 rounded-full"
+                      style={{ border: `1px solid ${splitColor(name)}`, color: splitFilter === name ? '#fff' : 'var(--c-t2)',
+                               background: splitFilter === name ? splitColor(name) : 'transparent', cursor: 'pointer' }}>
+                {name} {n.toLocaleString()}
+              </button>
+            ))}
+          </span>
+        )}
         <input
           type="text" placeholder="Filter columns…"
           value={colSearch} onChange={e => setColSearch(e.target.value)}

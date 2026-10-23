@@ -41,6 +41,7 @@ dependencies = [
     "scikit-learn>=1.4",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
+    "mlflow-skinny==3.11.1",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +55,13 @@ ml = [
     "pyiqa==0.1.13",
     "tqdm>=4.66",
 ]
+# Reference trainer (precisionai.magnidata.training.train) and the trainer worker — versions
+# match the `ml` extra. Not a dependency of the API image.
+training = [
+    "torch==2.14.0",
+    "torchvision==0.29.0",
+    "mlflow-skinny==3.11.1",
+]
 test = [
     "pytest>=7.0",
     "pytest-cov>=5.0",
@@ -61,6 +69,7 @@ test = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=5.0",
+    "mlflow==3.11.1",
     "pre-commit>=3.7",
     # Pinned to the rev in .pre-commit-config.yaml — a different ruff version
     # reports a different rule set, so an unpinned local run would disagree with CI.
@@ -201,6 +210,11 @@ ignore = [
 # portably (rather than hardcoding a path) always trips it, same underlying limitation
 # as the S310 case above.
 "precisionai/magnidata/scripts/prepare_coco128_dashboard.py" = ["PLC0415", "S603"]
+
+# worker.py: S603 is the trainer subprocess in run_one(). Its argv is built in
+# trainer_argv() from sys.executable and a run id read from MLflow; nothing from an HTTP
+# request reaches it, and ruff cannot see that (same limitation as above).
+"precisionai/magnidata/training/worker.py" = ["S603"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"

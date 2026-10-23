@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSVData, CSVRow } from '../types'
+import { splitColor, splitCounts, SPLIT_COLUMN } from '../lib/split'
 
 interface Props { data: CSVData; rows: CSVRow[] }
 
@@ -7,6 +8,8 @@ const COLS_PER_ROW = 4
 
 export function Histograms({ data, rows }: Props) {
   const [page, setPage] = useState(0)
+  const [stackBySplit, setStackBySplit] = useState(false)
+  const hasSplit = splitCounts(rows).length > 0
   const numCols  = data.numericCols
   const catCols  = data.categoricalCols
   const perPage  = COLS_PER_ROW * 3
@@ -26,6 +29,17 @@ export function Histograms({ data, rows }: Props) {
                   ({rows.length.toLocaleString()} rows · {numCols.length} columns)
                 </span>
               </h3>
+              {hasSplit && (
+                <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--c-t2)' }}>
+                  <input type="checkbox" checked={stackBySplit} onChange={e => setStackBySplit(e.target.checked)} />
+                  Stack by split
+                  {stackBySplit && splitCounts(rows).map(([name]) => (
+                    <span key={name} className="flex items-center gap-1">
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: splitColor(name), display: 'inline-block' }} />{name}
+                    </span>
+                  ))}
+                </label>
+              )}
               {totalPages > 1 && (
                 <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--c-t2)' }}>
                   <button className="btn-ghost py-1 px-2 text-xs" disabled={page === 0}
@@ -39,7 +53,7 @@ export function Histograms({ data, rows }: Props) {
             <div className={`grid gap-3 mb-5`}
                  style={{ gridTemplateColumns: `repeat(${COLS_PER_ROW}, 1fr)` }}>
               {visibleNum.map(col => (
-                <HistogramCard key={col} col={col} rows={rows} />
+                <HistogramCard key={col} col={col} rows={rows} stack={stackBySplit && hasSplit} />
               ))}
             </div>
           </>
@@ -64,7 +78,7 @@ export function Histograms({ data, rows }: Props) {
 }
 
 // ── Histogram (numeric) ────────────────────────────────────────────────────────
-function HistogramCard({ col, rows }: { col: string; rows: CSVRow[] }) {
+function HistogramCard({ col, rows, stack }: { col: string; rows: CSVRow[]; stack: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const vals = rows.map(r => r[col] as number).filter(v => v != null && isFinite(v))
 
@@ -83,23 +97,43 @@ function HistogramCard({ col, rows }: { col: string; rows: CSVRow[] }) {
     const mn = Math.min(...vals), mx = Math.max(...vals)
     const range = mx - mn || 1
     const bins  = new Array(BINS).fill(0)
-    vals.forEach(v => { const i = Math.min(BINS - 1, Math.floor(((v - mn) / range) * BINS)); bins[i]++ })
+    const binOf = (v: number) => Math.min(BINS - 1, Math.floor(((v - mn) / range) * BINS))
+    vals.forEach(v => { bins[binOf(v)]++ })
     const maxBin = Math.max(...bins)
+    const splitNames = stack ? splitCounts(rows).map(([name]) => name) : []
+    const perSplit: Record<string, number[]> = {}
+    if (stack) {
+      for (const name of splitNames) perSplit[name] = new Array(BINS).fill(0)
+      for (const r of rows) {
+        const v = r[col] as number, name = String(r[SPLIT_COLUMN] ?? '')
+        if (v != null && isFinite(v) && perSplit[name]) perSplit[name][binOf(v)]++
+      }
+    }
 
     const barW = W / BINS
     const pad  = 4
 
     ctx.clearRect(0, 0, W, H)
     bins.forEach((count, i) => {
-      const bh = ((count / maxBin) * (H - pad)) || 0
       const x  = i * barW
+      if (stack) {
+        let top = H
+        for (const name of splitNames) {
+          const h = ((perSplit[name][i] / maxBin) * (H - pad)) || 0
+          ctx.fillStyle = splitColor(name)
+          ctx.fillRect(x + 1, top - h, barW - 2, h)
+          top -= h
+        }
+        return
+      }
+      const bh = ((count / maxBin) * (H - pad)) || 0
       const y  = H - bh
       ctx.fillStyle = 'rgba(0,106,124,0.75)'
       ctx.beginPath()
       ctx.roundRect(x + 1, y, barW - 2, bh, [2, 2, 0, 0])
       ctx.fill()
     })
-  }, [vals])
+  }, [vals, stack, rows, col])
 
   const mean = vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0
   const min  = vals.length ? Math.min(...vals) : 0

@@ -9,7 +9,6 @@ Also exposes dataset listing and CSV serving from local disk.
 
 import colorsys
 import contextlib
-import csv
 import glob
 import io
 import os
@@ -51,9 +50,14 @@ os.makedirs(USER_DATA_DIR, exist_ok=True)
 # inserts the precisionai package root onto sys.path (see its own _find_package_root),
 # which that import relies on.
 import dataset_builder
+import dataset_curation
+import dataset_summary
 import db
 import embeddings_io
+import experiments
+import image_overlay
 import local_files
+import mlflow_store
 import projections
 
 from precisionai.magnidata.tools import coco_labels as coco_labels_mod
@@ -63,10 +67,11 @@ db.init_db()
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = dataset_builder.MAX_REQUEST_BYTES
 CORS(app)
+app.register_blueprint(experiments.bp)
 
 # Background threshold: pixels whose R+G+B sum is below this are treated as
 # background and rendered transparent in the mask/overlay views.
-BG_THRESHOLD = 30
+BG_THRESHOLD = image_overlay.BG_THRESHOLD
 LFS_POINTER_VERSION = "version https://git-lfs.github.com/spec/v1"
 
 
@@ -112,59 +117,10 @@ def _data_path(relative_path: str) -> str:
         raise ValueError("invalid data path")
     root = os.path.realpath(DATA_ROOT)
     path = os.path.realpath(os.path.join(root, relative_path))
-    try:
-        if os.path.commonpath((root, path)) != root:
-            raise ValueError("invalid data path")
-    except ValueError as exc:
-        raise ValueError("invalid data path") from exc
+    # A startswith check on the resolved path (not commonpath) is what code scanning recognises as containment.
+    if not path.startswith(root.rstrip(os.sep) + os.sep):
+        raise ValueError("invalid data path")
     return path
-
-
-def _img_from_bytes(data: bytes, max_size: int = 1600) -> Image.Image:
-    img = Image.open(io.BytesIO(data))
-    if max(img.size) > max_size:
-        img = img.copy()
-        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-    return img
-
-
-def _mask_as_rgba(mask_data: bytes, max_size: int = 0) -> Image.Image:
-    """Load an RGB(A) mask PNG and return an RGBA image where black/near-black background pixels are fully transparent and coloured foreground pixels keep their original colour at full (255) alpha.
-
-    The masks in this dataset are pre-coloured: each segmentation class already
-    has its own RGB colour; black (0,0,0) means background.
-    """
-    mask = Image.open(io.BytesIO(mask_data))
-
-    # Normalise to RGBA
-    if mask.mode != "RGBA":
-        mask = mask.convert("RGBA")
-
-    arr = np.array(mask, dtype=np.uint8)  # (H, W, 4)
-    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-
-    # Background = near-black in the original RGB
-    is_bg = (r.astype(np.uint16) + g + b) < BG_THRESHOLD
-    arr[:, :, 3] = np.where(is_bg, 0, 255)  # transparent bg, opaque fg
-
-    result = Image.fromarray(arr, "RGBA")
-
-    if max_size and max(result.size) > max_size:
-        result.thumbnail((max_size, max_size), Image.Resampling.NEAREST)
-
-    return result
-
-
-def _to_jpeg(img: Image.Image, quality: int = 88) -> bytes:
-    buf = io.BytesIO()
-    img.convert("RGB").save(buf, format="JPEG", quality=quality)
-    return buf.getvalue()
-
-
-def _to_png(img: Image.Image) -> bytes:
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
@@ -172,6 +128,13 @@ def _to_png(img: Image.Image) -> bytes:
 def health() -> ResponseReturnValue:
     """Return service status and local-filesystem/datalake accessibility."""
     return jsonify({"status": "ok", "local": local_files.local_status()})
+
+
+# ── MLflow ─────────────────────────────────────────────────────────────────────
+@app.get("/api/mlflow/status")
+def mlflow_status() -> ResponseReturnValue:
+    """Return MLflow reachability; 200 with `reachable: false` when the server is down."""
+    return jsonify(mlflow_store.get_store().status())
 
 
 # ── Images ─────────────────────────────────────────────────────────────────────
@@ -184,8 +147,8 @@ def get_image() -> ResponseReturnValue:
         return jsonify({"error": "path required"}), 400
     try:
         data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
-        img = _img_from_bytes(data, max_size)
-        buf = io.BytesIO(_to_jpeg(img))
+        img = image_overlay.img_from_bytes(data, max_size)
+        buf = io.BytesIO(image_overlay.to_jpeg(img))
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:
@@ -205,8 +168,8 @@ def get_mask() -> ResponseReturnValue:
         return jsonify({"error": "path required"}), 400
     try:
         data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
-        colored = _mask_as_rgba(data, max_size)
-        buf = io.BytesIO(_to_png(colored))
+        colored = image_overlay.mask_as_rgba(data, max_size)
+        buf = io.BytesIO(image_overlay.to_png(colored))
         buf.seek(0)
         return send_file(buf, mimetype="image/png")
     except Exception as exc:
@@ -230,15 +193,9 @@ def get_overlay() -> ResponseReturnValue:
         img_data = local_files.read_thumbnail(img_path, max_size) or local_files.read_file(img_path)
         mask_data = local_files.read_thumbnail(mask_path, max_size) or local_files.read_file(mask_path)
 
-        base = _img_from_bytes(img_data, max_size).convert("RGBA")
-        overlay = _mask_as_rgba(mask_data)
-
-        # Resize mask to match image if they differ (preserves colour regions)
-        if overlay.size != base.size:
-            overlay = overlay.resize(base.size, Image.Resampling.NEAREST)
-
-        result = Image.alpha_composite(base, overlay)
-        buf = io.BytesIO(_to_jpeg(result))
+        base = image_overlay.img_from_bytes(img_data, max_size)
+        result = image_overlay.composite_mask(base, image_overlay.mask_as_rgba(mask_data))
+        buf = io.BytesIO(image_overlay.to_jpeg(result))
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:
@@ -255,7 +212,7 @@ def debug_mask() -> ResponseReturnValue:
         data = local_files.read_file(path)
         mask = Image.open(io.BytesIO(data))
         raw = np.array(mask)
-        rgba = _mask_as_rgba(data)
+        rgba = image_overlay.mask_as_rgba(data)
         fg = np.array(rgba)[:, :, 3] > 0
         return jsonify(
             {
@@ -362,7 +319,7 @@ def _load_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> Image.
     raster_bytes = _sibling_raster_mask_bytes(image_path)
     if raster_bytes is None:
         return None
-    colored = _mask_as_rgba(raster_bytes)
+    colored = image_overlay.mask_as_rgba(raster_bytes)
     if colored.size != target_wh:
         colored = colored.resize(target_wh, Image.Resampling.NEAREST)
     return colored
@@ -379,11 +336,11 @@ def get_annotation_mask() -> ResponseReturnValue:
         return jsonify({"error": "invalid path"}), 400
     try:
         image_data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
-        img = _img_from_bytes(image_data, max_size)
+        img = image_overlay.img_from_bytes(image_data, max_size)
         mask = _load_annotation_mask(path, target_wh=img.size)
         if mask is None:
             return jsonify({"error": "no annotations for this image"}), 404
-        buf = io.BytesIO(_to_png(mask))
+        buf = io.BytesIO(image_overlay.to_png(mask))
         buf.seek(0)
         return send_file(buf, mimetype="image/png")
     except Exception as exc:
@@ -408,14 +365,12 @@ def get_annotation_overlay() -> ResponseReturnValue:
         return jsonify({"error": "invalid path"}), 400
     try:
         image_data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
-        base = _img_from_bytes(image_data, max_size).convert("RGBA")
+        base = image_overlay.img_from_bytes(image_data, max_size).convert("RGBA")
         mask = _load_annotation_mask(path, target_wh=base.size)
         if mask is None:
             return jsonify({"error": "no annotations for this image"}), 404
-        arr = np.array(mask)
-        arr[:, :, 3] = (arr[:, :, 3].astype(np.float32) * alpha).astype(np.uint8)
-        result = Image.alpha_composite(base, Image.fromarray(arr, "RGBA"))
-        buf = io.BytesIO(_to_jpeg(result))
+        result = image_overlay.composite_mask(base, mask, alpha)
+        buf = io.BytesIO(image_overlay.to_jpeg(result))
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:
@@ -505,13 +460,12 @@ def commit_partitions() -> ResponseReturnValue:
 def _resolve_emb_source(source: str) -> str | None:
     """Return the dataset path whose <stem>.json holds the embeddings for `source`.
 
-    Confi/root datasets use their own stem; created (child) datasets inherit the parent's.
+    Confi/root datasets use their own stem; created (child) datasets inherit the parent's, and fall back to a
+    ``<stem>.json`` placed beside their own CSV.
     """
     rec = db.get_created_dataset_by_source(source)
     if rec is not None:
-        emb_source = rec.get("emb_source") or None
-        if not emb_source:
-            return None
+        emb_source = rec.get("emb_source") or source
         stem = os.path.splitext(emb_source)[0]
         emb_path = _data_path(stem + ".json")
         return emb_source if os.path.isfile(emb_path) and _lfs_pointer_info(emb_path) is None else None
@@ -533,6 +487,8 @@ def _confi_datasets() -> list[dict]:
 def list_datasets() -> ResponseReturnValue:
     """Datasets from confi.yaml (permanent) + user-created child datasets (deletable)."""
     try:
+        dataset_curation.ensure_cloud_dataset(DATA_ROOT, db)
+        parent_map = db.dataset_parent_map()
         out = []
         for ds in _confi_datasets():
             source = ds.get("source", "")
@@ -542,11 +498,14 @@ def list_datasets() -> ResponseReturnValue:
                 "name": ds.get("name", source),
                 "description": ds.get("description", ""),
                 "source": source,
+                "parent_sources": parent_map.get(source, []),
                 "deletable": False,
                 "has_embeddings": _resolve_emb_source(source) is not None,
             }
             if os.path.isfile(path):
                 meta["file_size_bytes"] = os.path.getsize(path)
+                if lfs_info is None:
+                    meta["row_count"] = dataset_summary.count_rows(path)
             if lfs_info is not None:
                 meta["is_lfs_pointer"] = True
                 if "size" in lfs_info:
@@ -564,8 +523,9 @@ def list_datasets() -> ResponseReturnValue:
                     "description": rec["description"],
                     "source": rec["source"],
                     "parent_source": rec["parent_source"],
+                    "parent_sources": parent_map.get(rec["source"], []),
                     "row_count": rec["row_count"],
-                    "deletable": True,
+                    "deletable": rec["source"] != dataset_curation.CLOUD_SOURCE,
                     "has_embeddings": _resolve_emb_source(rec["source"]) is not None,
                     "file_size_bytes": os.path.getsize(path),
                 }
@@ -575,61 +535,85 @@ def list_datasets() -> ResponseReturnValue:
         return jsonify({"error": str(exc)}), 500
 
 
+@app.get("/api/datasets/summary")
+def dataset_summary_view() -> ResponseReturnValue:
+    """Statistics, sample images, mask coverage and partition count for one dataset."""
+    source = request.args.get("source", "").strip()
+    if not source:
+        return jsonify({"error": "source required"}), 400
+    try:
+        path = _data_path(source)
+    except ValueError:
+        return jsonify({"error": "invalid source path"}), 400
+    if not os.path.isfile(path):
+        return jsonify({"error": "dataset not found"}), 404
+    if _lfs_pointer_info(path) is not None:
+        return jsonify({"error": "dataset is a Git LFS pointer"}), 409
+    summary = dataset_summary.summarize_dataset(path, DATA_ROOT)
+    summary["partitions_committed"] = sum(1 for p in db.list_partitions(source) if p.get("cluster_id") is not None)
+    summary["has_embeddings"] = _resolve_emb_source(source) is not None
+    return jsonify(summary)
+
+
 def _slugify(name: str) -> str:
     s = re.sub(r"[^A-Za-z0-9_-]+", "_", name.strip()).strip("_").lower()
     return s or "dataset"
 
 
-@app.post("/api/datasets")
-def create_dataset() -> ResponseReturnValue:
-    """Carve a child dataset from a parent's selection.
-
-    Body: {name, description, parent_source, image_names:[...]}. Writes a child CSV
-    (subset of the parent rows by image filename) and registers it; embeddings are
-    inherited from the parent (resolved at compute time, not copied).
-    """
-    body = request.get_json(silent=True) or {}
-    name = (body.get("name") or "").strip()
-    description = (body.get("description") or "").strip()
-    parent_source = (body.get("parent_source") or "").strip()
-    image_names = body.get("image_names") or []
-    if not name:
-        return jsonify({"error": "name required"}), 400
-    if not parent_source or os.path.isabs(parent_source) or ".." in parent_source:
-        return jsonify({"error": "invalid parent_source"}), 400
-    if not isinstance(image_names, list) or not image_names:
-        return jsonify({"error": "image_names required"}), 400
-
-    parent_path = os.path.normpath(os.path.join(DATA_ROOT, parent_source))
-    if not os.path.isfile(parent_path):
-        return jsonify({"error": "parent dataset not found"}), 404
-
-    # Read the parent CSV (full columns) and keep rows whose image filename is in the selection.
-    with open(parent_path, newline="") as f:
-        reader = csv.DictReader(f)
-        cols = reader.fieldnames or []
-        rows = list(reader)
-    col = embeddings_io.image_path_column(cols)
-    wanted = {os.path.basename(str(x)) for x in image_names}
-    kept = [r for r in rows if col and os.path.basename(str(r.get(col, ""))) in wanted]
-    if not kept:
-        return jsonify({"error": "no matching rows"}), 400
-
-    # Unique child path under the writable user-data dir
+def _write_child_csv(name: str, columns: list[str], rows: list[dict[str, str]]) -> str:
+    """Write rows to a unique CSV under the writable user-data dir and return its data-relative path."""
     base_slug = _slugify(name)
     rel = f"{USER_DATA_REL}/{base_slug}.csv"
     n = 2
     while os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, rel))) or db.get_created_dataset_by_source(rel):
         rel = f"{USER_DATA_REL}/{base_slug}_{n}.csv"
         n += 1
-    out_path = os.path.normpath(os.path.join(DATA_ROOT, rel))
-    with open(out_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=cols)
-        writer.writeheader()
-        writer.writerows(kept)
+    dataset_curation.write_rows(os.path.normpath(os.path.join(DATA_ROOT, rel)), columns, rows)
+    return rel
 
-    emb_source = _resolve_emb_source(parent_source)  # None if the parent has no embeddings
-    rec = db.create_dataset_record(name, description, rel, parent_source, emb_source, len(kept))
+
+@app.post("/api/datasets")
+def create_dataset() -> ResponseReturnValue:
+    """Carve a child dataset from a parent's selection.
+
+    Body: {name, description, parent_source, image_names:[...], query_image_names:[...],
+    complement_top_k, cloud_source}. Writes a child CSV from the retained parent rows
+    plus optional feature-similar cloud-complement rows and registers all parent edges.
+    """
+    body = request.get_json(silent=True) or {}
+    try:
+        spec = dataset_curation.parse_create_request(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    parent_path = os.path.normpath(os.path.join(DATA_ROOT, spec.parent_source))
+    if not os.path.isfile(parent_path):
+        return jsonify({"error": "parent dataset not found"}), 404
+
+    parents = [spec.parent_source]
+    cloud_path = None
+    if spec.complement_top_k:
+        cloud_path = os.path.normpath(os.path.join(DATA_ROOT, spec.cloud_source))
+        if not os.path.isfile(cloud_path):
+            return jsonify({"error": "cloud dataset not found"}), 404
+        if spec.cloud_source != spec.parent_source:
+            parents.append(spec.cloud_source)
+    try:
+        derived = dataset_curation.derive_dataset(
+            parent_path,
+            spec.image_names,
+            cloud_path=cloud_path,
+            query_image_names=spec.query_image_names,
+            top_k=spec.complement_top_k,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    rel = _write_child_csv(spec.name, derived.columns, derived.rows)
+
+    emb_source = _resolve_emb_source(spec.parent_source)  # None if the parent has no embeddings
+    rec = db.create_dataset_record(spec.name, spec.description, rel, spec.parent_source, emb_source, len(derived.rows))
+    db.set_dataset_parents(rec["source"], parents)
     return jsonify(
         {
             "id": rec["id"],
@@ -637,11 +621,100 @@ def create_dataset() -> ResponseReturnValue:
             "description": rec["description"],
             "source": rec["source"],
             "parent_source": rec["parent_source"],
+            "parent_sources": parents,
+            "row_count": rec["row_count"],
+            "complement_count": derived.complement_count,
+            "deletable": True,
+            "has_embeddings": bool(rec["emb_source"]),
+        }
+    ), 201
+
+
+@app.post("/api/datasets/merge")
+def merge_datasets() -> ResponseReturnValue:
+    """Create a dataset holding the de-duplicated union of two or more datasets.
+
+    Body: {name, description, sources:[...]}. Every source becomes a parent. The new dataset has
+    no runs. It inherits embeddings only when all sources share the same embeddings file.
+    """
+    try:
+        spec = dataset_curation.parse_merge_request(request.get_json(silent=True) or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    paths = [os.path.normpath(os.path.join(DATA_ROOT, source)) for source in spec.sources]
+    if not all(os.path.isfile(path) for path in paths):
+        return jsonify({"error": "dataset not found"}), 404
+    if any(_lfs_pointer_info(path) is not None for path in paths):
+        return jsonify({"error": "a source is a Git LFS pointer"}), 409
+    try:
+        columns, rows = dataset_curation.combine_sources(paths)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    rel = _write_child_csv(spec.name, columns, rows)
+    emb_sources = {_resolve_emb_source(source) for source in spec.sources}
+    emb_source = emb_sources.pop() if len(emb_sources) == 1 else None
+    rec = db.create_dataset_record(spec.name, spec.description, rel, spec.sources[0], emb_source, len(rows))
+    db.set_dataset_parents(rec["source"], spec.sources)
+    return jsonify(
+        {
+            "id": rec["id"],
+            "name": rec["name"],
+            "description": rec["description"],
+            "source": rec["source"],
+            "parent_source": rec["parent_source"],
+            "parent_sources": spec.sources,
             "row_count": rec["row_count"],
             "deletable": True,
             "has_embeddings": bool(rec["emb_source"]),
         }
     ), 201
+
+
+@app.post("/api/datasets/<int:ds_id>/parents")
+def set_dataset_lineage(ds_id: int) -> ResponseReturnValue:
+    """Replace the lineage parents of a registered dataset (used by the partition CLI).
+
+    Body: {parent_sources:[...]}. Every parent must exist on disk, and no dataset may become its
+    own ancestor.
+    """
+    rec = db.get_created_dataset(ds_id)
+    if rec is None:
+        return jsonify({"error": "not found"}), 404
+    try:
+        parents = dataset_curation.parse_parent_sources(request.get_json(silent=True) or {}, rec["source"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not all(os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, parent))) for parent in parents):
+        return jsonify({"error": "parent dataset not found"}), 404
+    parent_map = db.dataset_parent_map()
+    if any(rec["source"] in _ancestors(parent, parent_map) for parent in parents):
+        return jsonify({"error": "that would create a lineage cycle"}), 400
+    db.set_dataset_parents(rec["source"], parents)
+    return jsonify({**_created_dataset_json(db.get_created_dataset(ds_id) or rec), "parent_sources": parents})
+
+
+def _ancestors(source: str, parent_map: dict[str, list[str]]) -> set[str]:
+    seen: set[str] = set()
+    stack = [source]
+    while stack:
+        for parent in parent_map.get(stack.pop(), []):
+            if parent not in seen:
+                seen.add(parent)
+                stack.append(parent)
+    return seen
+
+
+def _created_dataset_json(rec: dict) -> dict:
+    return {
+        "id": rec["id"],
+        "name": rec["name"],
+        "description": rec["description"],
+        "source": rec["source"],
+        "parent_source": rec["parent_source"],
+        "row_count": rec["row_count"],
+        "deletable": rec["source"] != dataset_curation.CLOUD_SOURCE,
+        "has_embeddings": bool(rec["emb_source"]),
+    }
 
 
 def _remove_file(path: str) -> None:
@@ -658,6 +731,9 @@ def remove_dataset(ds_id: int) -> ResponseReturnValue:
     from images (parent_source is None) also removes its embeddings JSON, staged
     images folder, and provenance sidecars.
     """
+    existing = db.get_created_dataset(ds_id)
+    if existing and existing["source"] == dataset_curation.CLOUD_SOURCE:
+        return jsonify({"error": "Cloud Dataset is a protected workspace dataset"}), 409
     rec = db.delete_created_dataset(ds_id)
     if rec is None:
         return jsonify({"error": "dataset not found"}), 404
@@ -1053,8 +1129,10 @@ def _projection_response(source: str, variant: str | None, method: str, cache_ke
 
     try:
         matrix = _base_matrix(source, variant)
-    except (FileNotFoundError, ValueError) as e:
-        return jsonify({"error": str(e)}), 404
+    except (FileNotFoundError, ValueError):
+        # File and parsing errors can name server paths; log them, answer with a fixed message.
+        app.logger.warning("embeddings unavailable for %s (%s)", source, variant, exc_info=True)
+        return jsonify({"error": "embeddings not found or unreadable for this dataset"}), 404
     positions = projections.project(matrix, method)
     _COMPUTE_CACHE[cache_key] = positions
     return jsonify({"positions": positions})
@@ -1088,8 +1166,10 @@ def _clusters_response(source: str, variant: str | None, k: int, cache_key: tupl
     """Compute, cache and return spherical k-means labels for one (dataset, variant, k)."""
     try:
         matrix = _base_matrix(source, variant)
-    except (FileNotFoundError, ValueError) as e:
-        return jsonify({"error": str(e)}), 404
+    except (FileNotFoundError, ValueError):
+        # File and parsing errors can name server paths; log them, answer with a fixed message.
+        app.logger.warning("embeddings unavailable for %s (%s)", source, variant, exc_info=True)
+        return jsonify({"error": "embeddings not found or unreadable for this dataset"}), 404
     n = matrix.shape[0]
     if n < 2:
         return jsonify({"labels": [0] * n})
@@ -1152,12 +1232,12 @@ def start_embedding_analysis() -> ResponseReturnValue:
     payload = request.get_json(silent=True) or {}
     try:
         source = _safe_source(str(payload.get("source", "")).strip())
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"error": "invalid source path"}), 400
     try:
         variant = _safe_variant(str(payload.get("variant", "")).strip())
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"error": "invalid variant"}), 400
     try:
         k = max(1, min(50, int(payload.get("k", 20))))
     except (TypeError, ValueError):
@@ -1262,8 +1342,8 @@ def embedding_compare() -> ResponseReturnValue:
     """
     try:
         source = _safe_source(request.args.get("source", "").strip())
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
+    except ValueError:
+        return jsonify({"error": "invalid source path"}), 400
     variant = request.args.get("variant", "").strip()
     if not variant or not re.fullmatch(r"[A-Za-z0-9_-]+", variant):
         return jsonify({"error": "valid variant required"}), 400
@@ -1281,8 +1361,9 @@ def _compare_response(source: str, variant: str, cache_key: tuple) -> ResponseRe
     try:
         paths = _dataset_paths(source)
         comp = _load_emb_by_name(source, variant)
-    except (FileNotFoundError, ValueError) as e:
-        return jsonify({"error": str(e)}), 404
+    except (FileNotFoundError, ValueError):
+        app.logger.warning("embeddings unavailable for comparing %s (%s)", source, variant, exc_info=True)
+        return jsonify({"error": "dataset or comparison embeddings not found or unreadable"}), 404
 
     name_to_row: dict[str, int] = {}
     for i, p in enumerate(paths):

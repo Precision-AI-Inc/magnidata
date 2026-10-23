@@ -1,0 +1,73 @@
+.dataset-graph {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  border: 1px solid var(--c-border);
+  border-radius: 16px;
+  background: radial-gradient(circle at 8% 50%, var(--c-accent-light), transparent 32%), var(--c-surface);
+  overflow: hidden;
+  --xy-edge-stroke: var(--c-accent);
+  --xy-edge-stroke-width: 1.5;
+  --xy-controls-button-background-color-default: var(--c-surface);
+  --xy-controls-button-background-color-hover-default: var(--c-hover);
+  --xy-controls-button-color-default: var(--c-t2);
+  --xy-controls-button-border-color-default: var(--c-border);
+  --xy-minimap-background-color-default: var(--c-raised);
+  --dataset-minimap-mask: color-mix(in srgb, var(--c-surface) 72%, transparent);
+}
+.dataset-graph .react-flow__pane { cursor: grab; }
+.dataset-graph .react-flow__pane:active { cursor: grabbing; }
+.dataset-graph .react-flow__edge-path { opacity: .58; }
+.dataset-graph .react-flow__edge.selected .react-flow__edge-path { stroke: var(--c-accent); }
+.dataset-graph .react-flow__controls,
+.dataset-graph .react-flow__minimap { border: 1px solid var(--c-border); border-radius: 10px; box-shadow: 0 4px 16px rgba(2, 20, 33, .12); overflow: hidden; }
+.dataset-graph .react-flow__controls-button { border-bottom-color: var(--c-border); }
+.dataset-graph .react-flow__controls-button svg { fill: currentColor; }
+.dataset-graph .react-flow__minimap { width: 150px; height: 96px; }
+.dataset-graph__hint { padding: 6px 9px; border: 1px solid var(--c-border); border-radius: 8px; background: color-mix(in srgb, var(--c-surface) 90%, transparent); color: var(--c-t3); font-size: 10px; pointer-events: none; }
+.dataset-graph__node {
+  position: relative;
+  /* React Flow sets pointer-events: none on nodes with no handlers, which would disable the card's delete button. */
+  pointer-events: all;
+  cursor: pointer;
+  transition: opacity .25s ease, box-shadow .25s ease, border-color .25s ease, transform .25s ease;
+  width: 210px;
+  border: 1px solid var(--c-border-2);
+  border-radius: 12px;
+  background: var(--c-surface);
+  box-shadow: 0 5px 18px rgba(2, 20, 33, .1);
+}
+.dataset-graph__handle { width: 7px; height: 7px; border: 2px solid var(--c-surface); background: var(--c-accent); pointer-events: none; }
+.dataset-graph__node--cloud { border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-light), 0 8px 24px rgba(2, 20, 33, .13); }
+.dataset-graph__open { width: 100%; min-height: 82px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 11px; text-align: left; border-radius: inherit; color: var(--c-t1); }
+.dataset-graph__node:hover { border-color: var(--c-accent); }
+.dataset-graph__node--selected { border-color: var(--c-accent); transform: translateY(-2px); box-shadow: 0 0 0 3px var(--c-accent), 0 12px 30px rgba(2, 20, 33, .22); }
+.dataset-graph__node--related { border-color: var(--c-accent); box-shadow: 0 0 0 2px var(--c-accent-light), 0 6px 20px rgba(2, 20, 33, .14); }
+.dataset-graph__node--dimmed { opacity: .42; }
+.dataset-graph .react-flow__edge-path { transition: opacity .25s ease, stroke-width .25s ease; }
+.dataset-graph .dataset-graph__edge--lineage .react-flow__edge-path { opacity: 1; stroke-width: 2.4; }
+.dataset-graph .dataset-graph__edge--dimmed .react-flow__edge-path { opacity: .15; }
+.dataset-graph:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .dataset-graph__node, .dataset-graph .react-flow__edge-path { transition: none; } .dataset-graph__node--selected { transform: none; } }
+.dataset-graph__icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: var(--c-accent-light); color: var(--c-accent); }
+.dataset-graph__copy { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.dataset-graph__copy strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
+.dataset-graph__copy small { color: var(--c-t3); font-size: 10px; }
+.dataset-graph__parents { grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; color: var(--c-t3); font-size: 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.dataset-graph__delete { position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 6px; color: var(--c-t3); background: transparent; cursor: pointer; z-index: 3; }
+.dataset-graph__delete:hover { color: #dc2626; background: rgba(239, 68, 68, .1); }
+.spin { animation: spin .7s linear infinite; }
+
+@media (max-width: 760px) {
+  .dataset-graph { min-height: 340px; }
+  .dataset-graph__hint { display: none; }
+  .dataset-graph .react-flow__minimap { width: 112px; height: 76px; }
+}
+.dataset-graph .dataset-graph__mini { fill: var(--c-border-2); }
+.dataset-graph .dataset-graph__mini--accent { fill: var(--c-accent); }
+
+.dataset-graph__badge { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; color: var(--c-t3); background: var(--c-raised); transition: color .2s ease, background .2s ease, box-shadow .2s ease; }
+.dataset-graph__badge--active { color: #8a5a00; background: #fcd34d; box-shadow: 0 0 0 0 rgba(245, 158, 11, .55); animation: dataset-badge-pulse 1.8s ease-out infinite; }
+@keyframes dataset-badge-pulse { 70% { box-shadow: 0 0 0 7px rgba(245, 158, 11, 0); } 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); } }
+@media (prefers-reduced-motion: reduce) { .dataset-graph__badge--active { animation: none; } }

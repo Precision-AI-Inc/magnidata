@@ -70,3 +70,6 @@ precisionai/magnidata/data_user/
 # Avoids AGENTS.md
 AGENTS.md
 docs/paper/
+
+# Machine-specific AgriTune feature-store mounts (User Guide: Train with AgriTune)
+/docker-compose.agritune-store.yml

@@ -128,6 +128,30 @@ describe('paramsFromRun', () => {
   })
 })
 
+describe('AgriTune optimisation settings', () => {
+  const agritune = {
+    input_resolution: { type: 'choice' as const, choices: ['image_size', 'native'] },
+    accumulation_steps: { type: 'int' as const, min: 1, max: 64 },
+    grad_clip_norm: { type: 'float' as const, min: 0, max: 100 },
+    weight_decay: { type: 'float' as const, min: 0, max: 1 },
+  }
+
+  it('checks them only when set', () => {
+    expect(validateParams({ ...valid }, agritune)).toEqual({})
+    expect(validateParams({ ...valid, accumulation_steps: 32, grad_clip_norm: 1, weight_decay: 0.01, input_resolution: 'native' }, agritune)).toEqual({})
+    expect(validateParams({ ...valid, accumulation_steps: 0 }, agritune).accumulation_steps).toMatch(/between 1 and 64/)
+    expect(validateParams({ ...valid, accumulation_steps: 1.5 }, agritune).accumulation_steps).toMatch(/whole/)
+    expect(validateParams({ ...valid, input_resolution: 'full' as TrainParams['input_resolution'] }, agritune).input_resolution).toMatch(/one of/)
+  })
+  it('are restored for a retrain and never sent for reference presets', () => {
+    expect(paramsFromRun({ input_resolution: 'native', accumulation_steps: '32', grad_clip_norm: '1.0', weight_decay: '0.01' }))
+      .toEqual({ input_resolution: 'native', accumulation_steps: 32, grad_clip_norm: 1, weight_decay: 0.01 })
+    const sent = launchParams({ ...valid, input_resolution: 'native', accumulation_steps: 4, grad_clip_norm: 1, weight_decay: 0.05 }, 'reference')
+    for (const key of ['input_resolution', 'accumulation_steps', 'grad_clip_norm']) expect(sent).not.toHaveProperty(key)
+    expect(sent.weight_decay).toBe(0.05)
+  })
+})
+
 describe('validateParams for AgriTune providers', () => {
   const agritune = {
     feature_provider: { type: 'choice' as const, choices: ['cached', 'hybrid', 'online'] },

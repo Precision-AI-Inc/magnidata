@@ -29,6 +29,13 @@ export interface TrainParams {
   feature_preload?: 'none' | 'host' | 'device'
   augmentation_mode?: 'none' | 'offline' | 'online' | 'hybrid'
   agritune_loss?: 'ce' | 'bce' | 'dice' | 'ce_dice' | 'bce_dice'
+  /** AgriTune: `native` encodes the original images and trains on masks at their own size. */
+  input_resolution?: 'image_size' | 'native'
+  /** AgriTune: micro-batches per optimizer step. */
+  accumulation_steps?: number
+  /** AgriTune: maximum gradient norm; 0 turns clipping off. */
+  grad_clip_norm?: number
+  weight_decay?: number
 }
 
 export type FieldErrors = Partial<Record<keyof TrainParams, string>>
@@ -36,6 +43,8 @@ export type FieldErrors = Partial<Record<keyof TrainParams, string>>
 const NUMERIC: (keyof TrainParams)[] = [
   'epochs', 'batch_size', 'image_size', 'seed', 'top_k_predictions', 'lr', 'val_fraction', 'score_every',
 ]
+/** Checked like NUMERIC, but only when the preset sets them. */
+const OPTIONAL_NUMERIC: (keyof TrainParams)[] = ['accumulation_steps', 'grad_clip_norm', 'weight_decay']
 
 function range(bound: Bound, params: TrainParams): [number, number] {
   const max = typeof bound.max === 'string' ? Number(params[bound.max as keyof TrainParams]) : (bound.max ?? Infinity)
@@ -45,7 +54,7 @@ function range(bound: Bound, params: TrainParams): [number, number] {
 /** Client-side mirror of the API's bounds; returns one message per invalid field (empty when valid). */
 export function validateParams(params: TrainParams, bounds: Record<string, Bound>): FieldErrors {
   const errors: FieldErrors = {}
-  for (const field of NUMERIC) {
+  for (const field of [...NUMERIC, ...OPTIONAL_NUMERIC.filter(f => params[f] !== undefined)]) {
     const bound = bounds[field]
     const value = params[field] as number
     if (!bound) continue
@@ -73,7 +82,7 @@ export function validateParams(params: TrainParams, bounds: Record<string, Bound
       errors.loss_weights = `weights must be between ${weights?.min ?? 0} and ${weights?.max ?? 10}`
     }
   }
-  for (const field of ['feature_provider', 'feature_preload', 'augmentation_mode', 'agritune_loss'] as const) {
+  for (const field of ['feature_provider', 'feature_preload', 'augmentation_mode', 'agritune_loss', 'input_resolution'] as const) {
     const value = params[field]
     const choices = bounds[field]?.choices
     if (value !== undefined && choices && !choices.includes(value)) errors[field] = `must be one of ${choices.join(', ')}`
@@ -86,11 +95,14 @@ export function validateParams(params: TrainParams, bounds: Record<string, Bound
 
 /** Settings the AgriTune engine does not use; the API rejects them, so they are never sent for its presets. */
 const REFERENCE_ONLY: (keyof TrainParams)[] = ['loss_terms', 'num_workers', 'split_mode', 'pretrained']
+/** Settings only AgriTune understands; never sent for reference presets. */
+const AGRITUNE_ONLY: (keyof TrainParams)[] = ['input_resolution', 'accumulation_steps', 'grad_clip_norm']
 
 /** The parameters to POST for a launch: the dialog state minus anything the preset's engine would reject. */
 export function launchParams(params: TrainParams, engine: string): Partial<TrainParams> {
   const out: Partial<TrainParams> = { ...params }
   if (engine === 'agritune') for (const key of REFERENCE_ONLY) delete out[key]
+  else for (const key of AGRITUNE_ONLY) delete out[key]
   // Only cached features can be preloaded; left out, the API turns preload off for the other providers.
   if (engine !== 'agritune' || out.feature_provider !== 'cached') delete out.feature_preload
   return out
@@ -140,6 +152,7 @@ export function progressLabel(
 
 const SETTINGS: (keyof TrainParams)[] = [
   'epochs', 'score_every', 'batch_size', 'image_size', 'lr', 'val_fraction', 'seed', 'top_k_predictions',
+  'accumulation_steps', 'grad_clip_norm', 'weight_decay',
 ]
 
 /** Training settings of an earlier run (MLflow param strings), to preload the Train dialog for a retrain. */
@@ -155,6 +168,7 @@ export function paramsFromRun(params: Record<string, string>): Partial<TrainPara
   if (params.num_workers !== undefined && Number.isInteger(Number(params.num_workers))) out.num_workers = Number(params.num_workers)
   if (params.feature_provider && ['cached', 'hybrid', 'online'].includes(params.feature_provider)) out.feature_provider = params.feature_provider as TrainParams['feature_provider']
   if (params.feature_preload && ['none', 'host', 'device'].includes(params.feature_preload)) out.feature_preload = params.feature_preload as TrainParams['feature_preload']
+  if (params.input_resolution === 'image_size' || params.input_resolution === 'native') out.input_resolution = params.input_resolution
   if (params.augmentation_mode && ['none', 'offline', 'online', 'hybrid'].includes(params.augmentation_mode)) out.augmentation_mode = params.augmentation_mode as TrainParams['augmentation_mode']
   if (params.agritune_loss && ['ce', 'bce', 'dice', 'ce_dice', 'bce_dice'].includes(params.agritune_loss)) out.agritune_loss = params.agritune_loss as TrainParams['agritune_loss']
   if (params.loss_terms) {

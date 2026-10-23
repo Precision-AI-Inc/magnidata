@@ -3,8 +3,10 @@
 
 """Tests for the AgriTune adapter; they need the sibling AgriTune checkout and skip without it."""
 
+import csv
 import importlib
 import importlib.util
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -42,14 +44,29 @@ def _run(preset="agritune_mlp_probe", **params):
     )
 
 
-def _palette(agritune):
-    return SimpleNamespace(num_classes=2)
+def _staged(agritune, tmp_path, **fields):
+    return agritune.StagedDataset(tmp_path / "m.csv", SimpleNamespace(num_classes=2), False, **fields)
+
+
+def _source(dataset):
+    return str(dataset.csv.relative_to(dataset.root))
+
+
+def _write_existing_manifest(dataset, names):
+    """Write an AgriTune manifest keying the synthetic images by foreign sample IDs, as `features build` input."""
+    path = dataset.root / "existing" / "manifest.csv"
+    path.parent.mkdir()
+    with path.open("w") as handle:
+        handle.write("sample_id,image_path,mask_path\n")
+        for name in names:
+            handle.write(f"ext-{name},../data_user/syn/images/{name},../data_user/syn/masks/{name}\n")
+    return path
 
 
 def test_cpu_is_used_when_requested(agritune, monkeypatch, tmp_path):
     monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
 
-    config = agritune._config(_run(), tmp_path, tmp_path / "m.csv", _palette(agritune))
+    config = agritune._config(_run(), tmp_path, _staged(agritune, tmp_path))
 
     assert config.device == "cpu"
     assert config.trainer.precision.mode == "fp32"
@@ -61,7 +78,7 @@ def test_requesting_cuda_without_a_gpu_fails_clearly(agritune, monkeypatch, tmp_
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
     with pytest.raises(RuntimeError, match="CUDA requested but not available"):
-        agritune._config(_run(), tmp_path, tmp_path / "m.csv", _palette(agritune))
+        agritune._config(_run(), tmp_path, _staged(agritune, tmp_path))
 
 
 @pytest.mark.parametrize("workers", [0, 2])
@@ -70,13 +87,11 @@ def test_prepare_manifest_stages_resized_images_and_index_masks(agritune, synthe
     image_module = importlib.import_module("PIL.Image")
     root = synthetic_dataset.root
 
-    manifest, palette = agritune._prepare_manifest(
-        "run1", str(synthetic_dataset.csv.relative_to(root)), root, 16, workers
-    )
+    staged = agritune._prepare_manifest("run1", _source(synthetic_dataset), root, 16, workers=workers)
 
-    rows = manifest.read_text().splitlines()[1:]
+    rows = staged.manifest.read_text().splitlines()[1:]
     assert len(rows) == len(synthetic_dataset.names)
-    assert palette.colors == tuple(synthetic_dataset.colors)
+    assert staged.palette.colors == tuple(synthetic_dataset.colors)
     staged = root / "data_user" / ".agritune" / "run1"
     with image_module.open(staged / "images" / synthetic_dataset.names[0]) as image:
         assert image.size == (16, 16)
@@ -92,7 +107,7 @@ def test_cached_features_are_preloaded_in_half_precision_and_shuffled(agritune, 
     monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
 
     config = agritune._config(
-        _run(feature_provider="cached", feature_preload="host"), tmp_path, tmp_path / "m.csv", _palette(agritune)
+        _run(feature_provider="cached", feature_preload="host"), tmp_path, _staged(agritune, tmp_path)
     )
 
     assert config.feature_provider == "cached"
@@ -104,7 +119,7 @@ def test_cached_features_are_preloaded_in_half_precision_and_shuffled(agritune, 
 def test_runs_without_preload_keep_agritune_defaults(agritune, monkeypatch, tmp_path):
     monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
 
-    config = agritune._config(_run(feature_provider="hybrid"), tmp_path, tmp_path / "m.csv", _palette(agritune))
+    config = agritune._config(_run(feature_provider="hybrid"), tmp_path, _staged(agritune, tmp_path))
 
     assert config.feature_preload == "none"
     assert config.feature_preload_dtype is None
@@ -116,8 +131,8 @@ def test_encode_dataset_fills_the_store_once(agritune, synthetic_dataset, monkey
     monkeypatch.delenv("AGRITUNE_ENCODER_BASE_URL", raising=False)
     root = synthetic_dataset.root
     total = len(synthetic_dataset.names)
-    manifest, palette = agritune._prepare_manifest("run1", str(synthetic_dataset.csv.relative_to(root)), root, 32)
-    config = agritune._config(_run(feature_provider="cached", feature_preload="host"), root, manifest, palette)
+    staged = agritune._prepare_manifest("run1", _source(synthetic_dataset), root, 32)
+    config = agritune._config(_run(feature_provider="cached", feature_preload="host"), root, staged)
     store = agritune.DirectoryFeatureStore(config.feature_store_dir)
 
     agritune._encode_dataset(config, store)
@@ -127,3 +142,113 @@ def test_encode_dataset_fills_the_store_once(agritune, synthetic_dataset, monkey
     assert "offline fake encoder" in output
     assert f"encoding features {total}/{total} ({total} new, 0 stored)" in output
     assert f"encoding features {total}/{total} (0 new, {total} stored)" in output
+
+
+def test_native_staging_keeps_the_original_images_and_mask_size(agritune, synthetic_dataset, capsys):
+    image_module = importlib.import_module("PIL.Image")
+    root = synthetic_dataset.root
+
+    staged = agritune._prepare_manifest("run1", _source(synthetic_dataset), root, 16, native=True)
+
+    with staged.manifest.open() as handle:
+        rows = list(csv.DictReader(handle))
+    assert {Path(row["image_path"]).parent for row in rows} == {root / "data_user" / "syn" / "images"}
+    assert not any((root / "data_user" / ".agritune" / "run1" / "images").iterdir())
+    height, width = synthetic_dataset.size
+    with image_module.open(rows[0]["mask_path"]) as mask:
+        assert mask.size == (width, height)
+    assert staged.native is True
+    assert "at their original size" in capsys.readouterr().out
+
+
+def test_native_staging_rejects_images_of_different_sizes(agritune, synthetic_dataset):
+    image_module = importlib.import_module("PIL.Image")
+    name = synthetic_dataset.names[0]
+    folder = synthetic_dataset.root / "data_user" / "syn"
+    image_module.new("RGB", (40, 30)).save(folder / "images" / name)
+    image_module.new("RGB", (40, 30)).save(folder / "masks" / name)
+
+    with pytest.raises(ValueError, match="every image the same size"):
+        agritune._prepare_manifest("run1", _source(synthetic_dataset), synthetic_dataset.root, 16, native=True)
+
+
+def test_an_existing_store_is_reused_under_its_own_sample_ids(agritune, synthetic_dataset, monkeypatch, capsys):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+    monkeypatch.delenv("AGRITUNE_ENCODER_BASE_URL", raising=False)
+    monkeypatch.delenv("AGRITUNE_ENCODER_MODEL", raising=False)
+    root = synthetic_dataset.root
+    names = synthetic_dataset.names
+    existing_manifest = _write_existing_manifest(synthetic_dataset, names)
+    existing = agritune.ExistingStore(existing_manifest, root / "existing" / "store", "sharded", 3, "")
+    store = agritune.ShardedFeatureStore(existing.root, entries_per_shard=existing.entries_per_shard)
+    fingerprint = agritune.EncoderFingerprint(model="fake-encoder", revision="fake-v1", preprocessing="")
+    encoder, _ = agritune.build_encoder(base_url=None, api_key=None, model="fake-encoder", preprocessing="")
+    asyncio = importlib.import_module("asyncio")
+    asyncio.run(
+        agritune.build_features(str(existing_manifest), store=store, encoder=encoder, encoder_fingerprint=fingerprint)
+    )
+    store.flush()
+
+    staged = agritune._prepare_manifest("run1", _source(synthetic_dataset), root, 16, native=True, existing=existing)
+    config = agritune._config(_run(feature_provider="cached"), root, staged)
+    agritune._encode_dataset(config, agritune.ShardedFeatureStore(existing.root, entries_per_shard=3))
+
+    with staged.manifest.open() as handle:
+        assert {row["sample_id"] for row in csv.DictReader(handle)} == {f"ext-{name}" for name in names}
+    assert staged.image_names == {f"ext-{name}": name for name in names}
+    assert config.feature_store_dir == str(existing.root)
+    assert config.store_type == "sharded"
+    assert config.encoder_fingerprint.preprocessing == ""
+    total = len(names)
+    assert f"encoding features {total}/{total} (0 new, {total} stored)" in capsys.readouterr().out
+
+
+def test_an_existing_store_missing_an_image_is_not_used(agritune, synthetic_dataset, capsys):
+    root = synthetic_dataset.root
+    existing_manifest = _write_existing_manifest(synthetic_dataset, synthetic_dataset.names[1:])
+    existing = agritune.ExistingStore(existing_manifest, root / "existing" / "store", "sharded", 3, "")
+
+    staged = agritune._prepare_manifest("run1", _source(synthetic_dataset), root, 16, native=True, existing=existing)
+
+    assert staged.existing is None
+    assert staged.image_names == {}
+    assert "existing feature store not used: 1 of" in capsys.readouterr().out
+
+
+def test_native_runs_key_their_own_features_apart_from_square_ones(agritune, monkeypatch, tmp_path):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+
+    native = agritune._config(
+        _run(), tmp_path, agritune.StagedDataset(tmp_path / "m.csv", SimpleNamespace(num_classes=2), True)
+    )
+    square = agritune._config(_run(), tmp_path, _staged(agritune, tmp_path))
+
+    assert native.encoder_fingerprint.preprocessing == "magnidata-native-v1"
+    assert square.encoder_fingerprint.preprocessing == "magnidata-square-v1"
+
+
+def test_optimiser_and_trainer_settings_reach_agritune(agritune, monkeypatch, tmp_path):
+    monkeypatch.setenv("MAGNIDATA_TRAIN_DEVICE", "cpu")
+    run = _run(accumulation_steps="32", grad_clip_norm="1.0", weight_decay="0.02", lr="0.001", batch_size="128")
+
+    config = agritune._config(run, tmp_path, _staged(agritune, tmp_path))
+    unclipped = agritune._config(_run(grad_clip_norm="0.0"), tmp_path, _staged(agritune, tmp_path))
+
+    assert config.trainer.accumulation_steps == 32
+    assert config.trainer.grad_clip_norm == 1.0
+    assert config.optimizer.weight_decay == 0.02
+    assert config.optimizer.lr == 0.001
+    assert config.batch_size == 128
+    assert unclipped.trainer.grad_clip_norm is None
+
+
+def test_existing_store_is_read_from_the_environment(agritune, monkeypatch, tmp_path):
+    monkeypatch.delenv("AGRITUNE_EXISTING_MANIFEST", raising=False)
+    assert agritune.existing_store_from_env() is None
+    monkeypatch.setenv("AGRITUNE_EXISTING_MANIFEST", str(tmp_path / "manifest.csv"))
+    monkeypatch.setenv("AGRITUNE_EXISTING_STORE", str(tmp_path / "store"))
+    monkeypatch.setenv("AGRITUNE_EXISTING_ENTRIES_PER_SHARD", "200")
+
+    existing = agritune.existing_store_from_env()
+
+    assert existing == agritune.ExistingStore(tmp_path / "manifest.csv", tmp_path / "store", "sharded", 200, "")

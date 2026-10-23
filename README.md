@@ -82,6 +82,9 @@ since a second `COMPOSE_FILE` line overrides the first), then run
 (`https://embeddings.precision.ai/v1`) with the key from AgriTune's own `../agritune/.env`
 (`AGRITUNE_ENCODER_API_KEY`); they encode a dataset into the feature store once and then train from features
 preloaded into RAM. Set `AGRITUNE_ENCODER_BASE_URL=` (empty) in `.env` to use the offline fake encoder instead.
+With *Encoder input: Original image size* they encode images unchanged (masks at their own size) instead of
+squaring them, and a store already built by `agritune features build` can be read in place by pointing the trainer
+at it with `AGRITUNE_EXISTING_MANIFEST` and `AGRITUNE_EXISTING_STORE` (see the User Guide, *Train with AgriTune*).
 
 The dataset catalog (`precisionai/magnidata/confi.yaml`) ships empty. From the portal's
 "Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or

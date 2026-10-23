@@ -173,6 +173,40 @@ def test_cached_features_can_be_preloaded_on_the_device(client, mlflow_store):
     assert mlflow_store.get_run(response.get_json()["run_id"])["params"]["feature_preload"] == "device"
 
 
+def test_agritune_launch_records_the_report_settings(client, mlflow_store):
+    params = {
+        "input_resolution": "native",
+        "batch_size": 128,
+        "accumulation_steps": 32,
+        "grad_clip_norm": 1.0,
+        "lr": 0.001,
+        "weight_decay": 0.01,
+        "amp": False,
+        "val_fraction": 0.25,
+        "epochs": 100,
+        "score_every": 100,
+    }
+    response = client.post(
+        "/api/training/runs",
+        json={"dataset_source": "data_user/syn.csv", "preset": "agritune_mlp_probe", "params": params},
+    )
+
+    assert response.status_code == 201
+    logged = mlflow_store.get_run(response.get_json()["run_id"])["params"]
+    assert logged["input_resolution"] == "native"
+    assert logged["batch_size"] == "128"
+    assert logged["accumulation_steps"] == "32"
+    assert logged["grad_clip_norm"] == "1.0"
+    assert logged["weight_decay"] == "0.01"
+
+
+def test_reference_presets_accept_weight_decay(client, mlflow_store):
+    response = client.post("/api/training/runs", json={**VALID, "params": {"weight_decay": 0.05}})
+
+    assert response.status_code == 201
+    assert mlflow_store.get_run(response.get_json()["run_id"])["params"]["weight_decay"] == "0.05"
+
+
 def test_launch_records_parent_and_weights(client, mlflow_store):
     parent = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
     client.post(f"/api/runs/{parent}/cancel")
@@ -198,7 +232,8 @@ def test_experiment_prefix_is_configurable(client, mlflow_store, monkeypatch):
         ({"epochs": True}, "params.epochs"),
         ({"epochs": 5, "score_every": 6}, "params.score_every"),
         ({"score_every": 0}, "params.score_every"),
-        ({"batch_size": 65}, "params.batch_size"),
+        ({"batch_size": 257}, "params.batch_size"),
+        ({"weight_decay": 2}, "params.weight_decay"),
         ({"image_size": 100}, "params.image_size"),
         ({"image_size": 130}, "params.image_size"),
         ({"image_size": 2048}, "params.image_size"),
@@ -362,6 +397,11 @@ def test_launch_and_cancel_are_visible_immediately_despite_the_runs_cache(client
         ("agritune_mlp_probe", {"feature_preload": "disk"}, "params.feature_preload"),
         ("agritune_mlp_probe", {"feature_provider": "hybrid", "feature_preload": "host"}, "params.feature_preload"),
         ("agritune_mlp_probe", {"augmentation_mode": "online"}, "params.augmentation_mode"),
+        ("tiny_unet", {"accumulation_steps": 4}, "params.accumulation_steps"),
+        ("tiny_unet", {"grad_clip_norm": 1.0}, "params.grad_clip_norm"),
+        ("tiny_unet", {"input_resolution": "native"}, "params.input_resolution"),
+        ("agritune_mlp_probe", {"input_resolution": "full"}, "params.input_resolution"),
+        ("agritune_mlp_probe", {"accumulation_steps": 0}, "params.accumulation_steps"),
         ("agritune_mlp_probe", {"agritune_loss": "focal"}, "params.agritune_loss"),
     ],
 )

@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- AgriTune runs can encode images at their original size (*Encoder input: Original image size*, `input_resolution:
+  native`) instead of squaring them to the image size, which for 798×532 tiles gives the encoder a 57×38 patch grid
+  instead of 18×18; masks are then trained at their own size. They can also read a feature store already built by
+  `agritune features build` in place (`AGRITUNE_EXISTING_MANIFEST`/`AGRITUNE_EXISTING_STORE` on the trainer) when
+  every image matches that store's manifest, keeping its sample IDs and split. New settings: gradient accumulation
+  and clipping (AgriTune) and weight decay (both engines); the batch size limit is now 256.
 - AgriTune presets default to a new *Encode once, then train from the store* feature provider (`cached`): every
   image is encoded into the feature store before training, skipped on later runs over the same images, and the
   features and masks can be preloaded into RAM or GPU memory (`feature_preload`, half precision, shuffled each

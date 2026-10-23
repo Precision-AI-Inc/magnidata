@@ -806,6 +806,8 @@ function AgriTune() {
           <tr><td>Preset</td><td><strong>MLP Probe</strong> is the fast, lightweight decoder. <strong>TokenFPN</strong> is the multi-scale one and normally benefits from a GPU.</td></tr>
           <tr><td>Feature provider</td><td><strong>Encode once, then train from the store</strong> (the default) encodes every image before training and then reads only the local feature store, which is the fastest and the only provider that can preload. <strong>Hybrid cache</strong> asks the encoder during training for images it has not seen yet; it is needed for augmentation. <strong>Online</strong> asks it every time.</td></tr>
           <tr><td>Preload features</td><td>With the store provider, load every image&apos;s features and mask once before training (features in half precision), then shuffle them each epoch. <strong>Into RAM</strong> fits most machines; <strong>Into GPU memory</strong> is faster still but must fit beside the model: about 250 KB per image at 256&nbsp;px with the hosted encoder, so 150,000 images need about 38&nbsp;GB plus 10&nbsp;GB of masks. <strong>No</strong> reads the store each epoch.</td></tr>
+          <tr><td>Encoder input</td><td><strong>Resized to Image size</strong> squares every image before encoding. <strong>Original image size</strong> sends the image files unchanged and trains on masks at their own size, so the encoder sees every pixel: for 798&times;532 tiles that is a 57&times;38 patch grid instead of 18&times;18 at 256&nbsp;px, which matters most for small plants and boundaries. Every image must have the same size; encoding takes longer and the features are about 6&times; larger.</td></tr>
+          <tr><td>Gradient accumulation, gradient clip norm, weight decay</td><td>Optimizer settings passed to AgriTune as they are: micro-batches per optimizer step (an effective batch of batch size &times; steps), the maximum gradient norm (0 turns clipping off), and AdamW weight decay.</td></tr>
           <tr><td>Image augmentation</td><td>None, fixed augmented samples, fresh every epoch, or hybrid. Augmentation creates new image content and therefore new features, so it costs extra encoder calls and needs the hybrid or online provider.</td></tr>
           <tr><td>Loss objective</td><td>Cross entropy, binary cross entropy, Dice, or a combination. It decides which component losses (<code>cce</code>, <code>bce</code>, <code>dice</code>) are recorded.</td></tr>
           <tr><td>Epochs, batch size, image size, learning rate, validation fraction, seed, score every N, hardest predictions</td><td>Same meaning as for the reference trainer. Validation images are chosen at random by the validation fraction.</td></tr>
@@ -814,6 +816,21 @@ function AgriTune() {
       <p>
         Settings that only the reference trainer understands (loss-term checkboxes, loader processes, pretrained weights, the dataset&apos;s split column) are hidden for AgriTune presets,
         and the API refuses them rather than ignoring them.
+      </p>
+      <h3>Reuse features you already built</h3>
+      <p>
+        If <code>agritune features build</code> has already encoded these images, the trainer can read that store in place
+        instead of encoding again. Tell it where the store and the manifest it was built from are, as the trainer sees
+        them, in the git-ignored <code>docker-compose.agritune-store.yml</code> (replace the example paths), then rebuild the trainer:
+      </p>
+      <Cmd id="agrituneExistingStore" />
+      <p>
+        A run with <strong>Original image size</strong> and <strong>Encode once, then train from the store</strong> uses
+        the store when every image of the dataset matches a row of that manifest by file name: it takes that manifest&apos;s
+        sample IDs and image files, so the keys and the random split match the earlier runs, and per-image results still
+        appear under the dataset&apos;s own image names. Otherwise the run log says how many images are missing and the
+        run encodes as usual. <code>AGRITUNE_EXISTING_PREPROCESSING</code> must be the label the store was built with
+        (empty for <code>agritune features build</code>).
       </p>
       <h3>Good to know</h3>
       <ul>

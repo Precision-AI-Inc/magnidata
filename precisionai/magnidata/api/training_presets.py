@@ -21,9 +21,10 @@ MAX_SOURCE_LENGTH = 500
 BOUNDS: dict[str, dict[str, Any]] = {
     "epochs": {"type": "int", "min": 1, "max": 200},
     "score_every": {"type": "int", "min": 1, "max": "epochs"},
-    "batch_size": {"type": "int", "min": 1, "max": 64},
+    "batch_size": {"type": "int", "min": 1, "max": 256},
     "image_size": {"type": "int", "min": 128, "max": 1024, "multiple_of": 32},
     "lr": {"type": "float", "min": 1e-6, "max": 1e-1},
+    "weight_decay": {"type": "float", "min": 0.0, "max": 1.0},
     "val_fraction": {"type": "float", "min": 0.05, "max": 0.5},
     "seed": {"type": "int", "min": 0, "max": 2**31 - 1},
     "split_mode": {"type": "choice", "choices": list(SPLIT_MODES)},
@@ -37,9 +38,14 @@ BOUNDS: dict[str, dict[str, Any]] = {
     "feature_preload": {"type": "choice", "choices": ["none", "host", "device"]},
     "augmentation_mode": {"type": "choice", "choices": ["none", "offline", "online", "hybrid"]},
     "agritune_loss": {"type": "choice", "choices": ["ce", "bce", "dice", "ce_dice", "bce_dice"]},
+    "input_resolution": {"type": "choice", "choices": ["image_size", "native"]},
+    "accumulation_steps": {"type": "int", "min": 1, "max": 64},
+    "grad_clip_norm": {"type": "float", "min": 0.0, "max": 100.0},
 }
 
-AGRITUNE_FIELDS = ("feature_provider", "feature_preload", "augmentation_mode", "agritune_loss")
+AGRITUNE_FIELDS = ("feature_provider", "feature_preload", "augmentation_mode", "agritune_loss", "input_resolution")
+# Numeric AgriTune-only settings; grad_clip_norm 0 turns clipping off.
+AGRITUNE_NUMBERS = ("accumulation_steps", "grad_clip_norm")
 AGRITUNE_LOSS_TERMS: dict[str, list[str]] = {
     "ce": ["cce"],
     "bce": ["bce"],
@@ -101,6 +107,10 @@ PRESETS: dict[str, dict[str, Any]] = {
             "pretrained": False,
             "feature_provider": "cached",
             "feature_preload": "host",
+            "input_resolution": "image_size",
+            "accumulation_steps": 1,
+            "grad_clip_norm": 0.0,
+            "weight_decay": 0.01,
             "augmentation_mode": "none",
             "agritune_loss": "ce_dice",
         },
@@ -118,6 +128,10 @@ PRESETS: dict[str, dict[str, Any]] = {
             "pretrained": False,
             "feature_provider": "cached",
             "feature_preload": "host",
+            "input_resolution": "image_size",
+            "accumulation_steps": 1,
+            "grad_clip_norm": 0.0,
+            "weight_decay": 0.01,
             "augmentation_mode": "none",
             "agritune_loss": "ce_dice",
         },
@@ -190,7 +204,7 @@ def _loss_weights(value: Any, terms: list[str]) -> dict[str, float]:
 def _check_engine_fields(engine: str, overrides: dict[str, Any]) -> None:
     """Reject overrides that the preset's engine would ignore."""
     if engine == "reference":
-        for field in AGRITUNE_FIELDS:
+        for field in (*AGRITUNE_FIELDS, *AGRITUNE_NUMBERS):
             if field in overrides:
                 raise ValueError(f"params.{field}: only available for AgriTune presets")
         return
@@ -223,6 +237,17 @@ def _resolve_preload(p: dict[str, Any], overrides: dict[str, Any]) -> None:
         raise ValueError("params.feature_preload: requires feature_provider cached")
 
 
+def _optimiser_settings(engine: str, p: dict[str, Any]) -> dict[str, Any]:
+    """Validate weight decay (either engine, when given) and AgriTune's accumulation and gradient clipping."""
+    out: dict[str, Any] = {}
+    if "weight_decay" in p:
+        out["weight_decay"] = _number("params.weight_decay", p["weight_decay"], 0.0, 1.0)
+    if engine == "agritune":
+        out["accumulation_steps"] = _integer("params.accumulation_steps", p["accumulation_steps"], 1, 64)
+        out["grad_clip_norm"] = _number("params.grad_clip_norm", p["grad_clip_norm"], 0.0, 100.0)
+    return out
+
+
 def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(overrides) - set(BOUNDS))
     if unknown:
@@ -243,7 +268,7 @@ def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     terms = AGRITUNE_LOSS_TERMS[choices["agritune_loss"]] if engine == "agritune" else _loss_terms(p["loss_terms"])
     out: dict[str, Any] = {
         "epochs": _integer("params.epochs", p["epochs"], 1, 200),
-        "batch_size": _integer("params.batch_size", p["batch_size"], 1, 64),
+        "batch_size": _integer("params.batch_size", p["batch_size"], 1, 256),
         "image_size": _integer("params.image_size", p["image_size"], 128, 1024, 32),
         "lr": _number("params.lr", p["lr"], 1e-6, 1e-1),
         "val_fraction": _number("params.val_fraction", p["val_fraction"], 0.05, 0.5),
@@ -264,6 +289,7 @@ def _resolve(preset: str, overrides: dict[str, Any]) -> dict[str, Any]:
     out["amp"] = p["amp"]
     if "num_workers" in p:
         out["num_workers"] = _integer("params.num_workers", p["num_workers"], 0, 16)
+    out.update(_optimiser_settings(engine, p))
     out.update(choices)
     return out
 

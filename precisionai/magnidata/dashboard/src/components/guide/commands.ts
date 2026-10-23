@@ -31,6 +31,9 @@ export const COMMANDS = {
   agrituneEnable:
     "if grep -q '^COMPOSE_FILE=' .env 2>/dev/null; then\n  grep -q 'docker-compose.agritune.yml' .env || sed -i '/^COMPOSE_FILE=/s/$/:docker-compose.agritune.yml/' .env\nelse\n  echo 'COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml' >> .env\nfi\ndocker compose up -d --build",
   agrituneEncoder: "echo 'AGRITUNE_ENCODER_API_KEY=replace-me' >> ../agritune/.env\ndocker compose up -d --build trainer",
+  // Writes a separate, git-ignored override so an existing docker-compose.local.yml is never overwritten.
+  agrituneExistingStore:
+    "cat > docker-compose.agritune-store.yml <<'EOF'\nservices:\n  trainer:\n    volumes:\n      - /data/my-dataset:/data/my-dataset:ro\n    environment:\n      AGRITUNE_EXISTING_MANIFEST: /data/my-dataset/manifest.csv\n      AGRITUNE_EXISTING_STORE: /data/my-dataset/features-sharded\n      AGRITUNE_EXISTING_STORE_TYPE: sharded\n      AGRITUNE_EXISTING_ENTRIES_PER_SHARD: '200'\n      AGRITUNE_EXISTING_PREPROCESSING: ''\nEOF\ngrep -q 'docker-compose.agritune-store.yml' .env || sed -i '/^COMPOSE_FILE=/s/$/:docker-compose.agritune-store.yml/' .env\ndocker compose up -d --build trainer",
   agrituneOffline: "echo 'AGRITUNE_ENCODER_BASE_URL=' >> .env\ndocker compose up -d --build trainer",
   features:
     'python -m precisionai.magnidata.tools.features --input images.csv --output features.csv --skip-nima',

@@ -30,6 +30,13 @@ const FIELDS: { key: keyof TrainParams; label: string; step?: number }[] = [
   { key: 'seed', label: 'Seed' },
 ]
 
+/** AgriTune optimisation settings, shown with its other controls. */
+const AGRITUNE_NUMBERS: { key: keyof TrainParams; label: string; step?: number }[] = [
+  { key: 'accumulation_steps', label: 'Gradient accumulation steps' },
+  { key: 'grad_clip_norm', label: 'Gradient clip norm (0 = off)', step: 0.1 },
+  { key: 'weight_decay', label: 'Weight decay', step: 0.001 },
+]
+
 function initial(defaults: Record<string, unknown>): TrainParams {
   return defaults as unknown as TrainParams
 }
@@ -181,6 +188,24 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
                 <option value="hybrid">Hybrid</option>
               </select>
             </label>
+            <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Encoder input
+              <select value={params.input_resolution ?? 'image_size'} onChange={e => set('input_resolution', e.target.value as TrainParams['input_resolution'])}
+                      aria-invalid={!!errors.input_resolution} className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
+                <option value="image_size">Resized to Image size (square)</option>
+                <option value="native">Original image size (all images alike)</option>
+              </select>
+              {errors.input_resolution && <span role="alert" className="block mt-0.5" style={{ color: 'var(--color-danger)' }}>{errors.input_resolution}</span>}
+            </label>
+            {AGRITUNE_NUMBERS.map(f => (
+              <label key={f.key} className="text-xs" style={{ color: 'var(--c-t2)' }}>{f.label}
+                <input type="number" value={params[f.key] === undefined || Number.isNaN(params[f.key] as number) ? '' : (params[f.key] as number)}
+                       min={presets.bounds[f.key]?.min} max={presets.bounds[f.key]?.max as number | undefined} step={f.step ?? 1}
+                       aria-invalid={!!errors[f.key]}
+                       onChange={e => set(f.key, (e.target.value === '' ? NaN : Number(e.target.value)) as never)}
+                       className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={{ ...inputStyle, borderColor: errors[f.key] ? 'var(--color-danger)' : 'var(--c-border)' }} />
+                {errors[f.key] && <span role="alert" className="block mt-0.5" style={{ color: 'var(--color-danger)' }}>{errors[f.key]}</span>}
+              </label>
+            ))}
             <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Loss objective
               <select value={params.agritune_loss ?? 'ce_dice'} onChange={e => set('agritune_loss', e.target.value as TrainParams['agritune_loss'])}
                       className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>

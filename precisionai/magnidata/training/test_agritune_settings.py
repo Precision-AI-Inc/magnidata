@@ -12,7 +12,9 @@ def test_every_setting_is_well_formed():
     assert len(settings.BY_KEY) == len(settings.SETTINGS)
     for setting in settings.SETTINGS:
         assert setting.type in settings.SETTING_TYPES, setting.key
-        assert setting.group and setting.label and setting.help, setting.key
+        assert setting.group, setting.key
+        assert setting.label, setting.key
+        assert setting.help, setting.key
         if setting.type == "choice":
             assert setting.default in setting.choices, setting.key
 

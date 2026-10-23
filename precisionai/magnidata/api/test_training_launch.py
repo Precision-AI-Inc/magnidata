@@ -234,7 +234,9 @@ def test_presets_serve_the_advanced_agritune_settings(client):
         "decoder.hidden_dims",
         "feature_augmentation.patch_dropout_probability",
     } <= keys
-    assert next(item for item in advanced if item["key"] == "decoder.num_queries")["presets"] == ["agritune_mask_former"]
+    assert next(item for item in advanced if item["key"] == "decoder.num_queries")["presets"] == [
+        "agritune_mask_former"
+    ]
     assert "agritune_mlp_probe" not in next(item for item in advanced if item["key"] == "decoder.hidden_dim")["presets"]
 
 

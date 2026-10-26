@@ -683,9 +683,14 @@ def start_demo_build(demo_key: str) -> str:
         # loudly rather than silently building the wrong thing.
         raise BuildValidationError(f"demo {demo_key!r} is not buildable yet")
 
-    existing = db.get_created_dataset_by_source(f"{USER_DATA_REL}/{stem}.csv")
+    source = f"{USER_DATA_REL}/{stem}.csv"
+    existing = db.get_created_dataset_by_source(source)
     if existing is not None:
-        raise BuildValidationError(f"the {demo['name']} demo dataset has already been built")
+        if os.path.isfile(os.path.join(DATA_ROOT, source)):
+            raise BuildValidationError(f"the {demo['name']} demo dataset has already been built")
+        # The records live in a persistent volume while data_user/ is a bind mount, so a fresh
+        # checkout can keep a record whose CSV is gone. /api/datasets already hides such records.
+        db.delete_created_dataset(existing["id"])
     _acquire_build_slot(demo["name"])
 
     job_id = _new_job(demo["name"])

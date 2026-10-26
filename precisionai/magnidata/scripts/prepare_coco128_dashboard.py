@@ -20,6 +20,7 @@ precisionai/magnidata/confi.yaml.
 from __future__ import annotations
 
 import argparse
+import colorsys
 import csv
 import hashlib
 import json
@@ -32,14 +33,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 COCO128_URL = "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128-seg.zip"
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+# The trainer reads colour masks and accepts at most 32 classes (background included), while COCO128
+# uses about 70. The largest classes keep their own colour; every other class shares one.
+MASK_CLASS_LIMIT = 15
+OTHER_MASK_COLOUR = (128, 128, 128)
 
 # Ultralytics COCO128 uses the standard 80-class COCO taxonomy in YOLO labels.
 COCO80 = [
@@ -390,6 +397,54 @@ def write_coco_json(path: Path, image_name: str, width: int, height: int, instan
     path.write_text(json.dumps(doc, indent=2, sort_keys=True))
 
 
+def _class_colour(rank: int) -> tuple[int, int, int]:
+    """Return a distinct, saturated colour for the class at ``rank`` (never near-black or grey)."""
+    r, g, b = colorsys.hsv_to_rgb((rank * 0.6180339887498949) % 1.0, 0.65, 0.95)
+    return round(r * 255), round(g * 255), round(b * 255)
+
+
+def write_class_masks(stage_labels: Path, stage_masks: Path, class_limit: int = MASK_CLASS_LIMIT) -> int:
+    """Rasterize the staged COCO polygon files into one colour mask PNG per image.
+
+    The ``class_limit`` classes with the most polygon area across the dataset get their own
+    colour and every other class shares ``OTHER_MASK_COLOUR``. Background is black. Larger
+    polygons are drawn first so a small object is not hidden by the one it sits on.
+
+    Parameters
+    ----------
+    stage_labels : Path
+        Directory of per-image COCO polygon JSON files written by :func:`write_coco_json`.
+    stage_masks : Path
+        Destination directory; ``<stem>.png`` is written for every ``<stem>.json``.
+    class_limit : int
+        Number of classes that keep a colour of their own.
+
+    Returns
+    -------
+    int
+        The number of masks written.
+    """
+    docs = {path: json.loads(path.read_text()) for path in sorted(stage_labels.glob("*.json"))}
+    area_by_class: Counter[int] = Counter()
+    for doc in docs.values():
+        for ann in doc["annotations"]:
+            area_by_class[ann["category_id"]] += ann["area"]
+    ranked = sorted(area_by_class, key=lambda class_id: (-area_by_class[class_id], class_id))
+    colours = {class_id: _class_colour(rank) for rank, class_id in enumerate(ranked[:class_limit])}
+
+    stage_masks.mkdir(parents=True, exist_ok=True)
+    for path, doc in docs.items():
+        size = doc["images"][0]
+        mask = Image.new("RGB", (size["width"], size["height"]), (0, 0, 0))
+        draw = ImageDraw.Draw(mask)
+        for ann in sorted(doc["annotations"], key=lambda a: -a["area"]):
+            colour = colours.get(ann["category_id"], OTHER_MASK_COLOUR)
+            for polygon in ann["segmentation"]:
+                draw.polygon(polygon, fill=colour)
+        mask.save(stage_masks / f"{path.stem}.png")
+    return len(docs)
+
+
 def stage_file(src: Path, dst: Path, mode: str) -> None:
     """Copy, hardlink, or symlink one image into the staging directory.
 
@@ -715,6 +770,7 @@ def stage_coco128(
         if missing_label:
             missing_yolo_labels += 1
 
+    mask_count = write_class_masks(stage_labels, stage_root / "masks")
     _write_manifest_csv(manifest, rows)
     _write_metadata_csv(stage_meta, metadata_rows)
     checksums.write_text("\n".join(checksum_lines) + "\n")
@@ -726,12 +782,13 @@ def stage_coco128(
         "rows": len(rows),
         "annotations": annotation_count,
         "missing_yolo_label_files": missing_yolo_labels,
+        "masks": mask_count,
         "clusters": clusters,
         "manifest": str(manifest.relative_to(root)),
         "checksums": str(checksums.relative_to(root)),
     }
     log(f"Manifest: {stats['manifest']}")
-    log(f"Staged {annotation_count} real segmentation instance(s) as COCO polygons")
+    log(f"Staged {annotation_count} real segmentation instance(s) as COCO polygons and {mask_count} colour mask(s)")
     return manifest, stats
 
 

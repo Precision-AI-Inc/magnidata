@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The COCO128 demo can be trained on: its build now writes a colour mask per image next to the polygon labels
+  (the 15 largest classes keep their own colour, the rest share one), where before the trainer refused it with
+  "dataset has no segmentation masks to train on". A COCO128 built earlier has no masks; delete it and prepare it
+  again.
+- A demo dataset whose record outlived its files (the database volume persists while `data_user/` belongs to the
+  checkout, so a fresh clone keeps the record) is built again instead of failing with "the AgriStress-500 demo
+  dataset has already been built" while the dataset list shows it as not added.
 - Code scanning: the MLflow artifact cache only accepts real run ids and refuses artifact paths outside a run's
   folder; data paths are checked for containment in the form CodeQL recognises; the embedding and MLflow-status
   endpoints return fixed error messages and log the underlying error, which could contain server paths.

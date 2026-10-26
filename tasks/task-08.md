@@ -26,9 +26,11 @@ and may only tune whitelisted parameters within bounds.
 `api/trainer_backend.py`:
 ```python
 class TrainerBackend(Protocol):
-    def submit(self, spec: LaunchSpec) -> str: ...   # returns MLflow run id
-    def cancel(self, run_id: str) -> str: ...        # returns resulting status
-    def available(self) -> dict: ...                 # {"available", "reason", "worker_heartbeat"}
+    def submit(self, spec: LaunchSpec) -> str: ...  # returns MLflow run id
+    def cancel(self, run_id: str) -> str: ...  # returns resulting status
+    def available(self) -> dict: ...  # {"available", "reason", "worker_heartbeat"}
+
+
 class MlflowQueueBackend: ...
 ```
 - `submit`: experiment `magnidata/<dataset slug>` (create if missing; overridable via

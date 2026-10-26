@@ -70,12 +70,12 @@ Use `LossRecorder` (`training/recorder.py`) so every trainer writes identical fi
 needs only numpy; values may be numpy arrays, lists or detached torch tensors.
 
 ```python
-sink = MlflowSink(run_id)                      # training/mlflow_sink.py
+sink = MlflowSink(run_id)  # training/mlflow_sink.py
 rec = LossRecorder(["dice", "cce"], sink, scratch_dir)
 rec.write_split({"a.png": "train", "b.png": "val"})
 rec.begin_epoch(1)
 rec.add_batch(names, "train", {"total": total, "dice": dice, "cce": cce})
-rec.end_epoch()                                # logs magnidata/per_sample/epoch_0001.csv
+rec.end_epoch()  # logs magnidata/per_sample/epoch_0001.csv
 ```
 
 For a run that already exists, attach files after the fact; a long-format file with an
@@ -129,7 +129,7 @@ import torch.nn.functional as F
 from precisionai.magnidata.training.mlflow_sink import MlflowSink
 from precisionai.magnidata.training.recorder import LossRecorder
 
-sink = MlflowSink(run_id)                       # uses MLFLOW_TRACKING_URI
+sink = MlflowSink(run_id)  # uses MLFLOW_TRACKING_URI
 recorder = LossRecorder(["cce", "dice"], sink, scratch_dir)
 recorder.write_split({"a.png": "train", "b.png": "val"})
 
@@ -138,15 +138,16 @@ for epoch in range(1, epochs + 1):
     model.eval()
     recorder.begin_epoch(epoch)
     with torch.no_grad():
-        for names, images, masks in score_loader:        # no augmentation
+        for names, images, masks in score_loader:  # no augmentation
             logits = model(images)
             cce = F.cross_entropy(logits, masks, reduction="none").mean((1, 2))
-            dice = per_image_dice_loss(logits, masks)    # shape [B]
+            dice = per_image_dice_loss(logits, masks)  # shape [B]
             recorder.add_batch(
-                names, "train",                           # one split label, or one per image
+                names,
+                "train",  # one split label, or one per image
                 {"total": cce + dice, "cce": cce, "dice": dice},
             )
-    recorder.end_epoch()                                   # logs magnidata/per_sample/epoch_NNNN.csv
+    recorder.end_epoch()  # logs magnidata/per_sample/epoch_NNNN.csv
     model.train()
 ```
 

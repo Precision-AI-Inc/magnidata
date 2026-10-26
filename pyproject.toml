@@ -73,7 +73,7 @@ dev = [
     "pre-commit>=3.7",
     # Pinned to the rev in .pre-commit-config.yaml — a different ruff version
     # reports a different rule set, so an unpinned local run would disagree with CI.
-    "ruff==0.16.7",
+    "ruff==0.17.1",
     "pyright>=1.1",
     "genbadge[coverage]>=1.1",
 ]
@@ -180,6 +180,7 @@ ignore = [
     "D203",    # one-blank-line-before-class (conflicts with D211)
     "D213",    # multi-line-summary-second-line (conflicts with D212)
     "PLR0913", # too many arguments — common in evaluation functions
+    "PLR0917", # too many positional arguments — same case as PLR0913; first reported by ruff 0.16
     "PLR2004", # magic value comparisons — acceptable in tests/metrics
     "ANN401",  # typing.Any is allowed for genuinely dynamic types
     "S311",    # pseudo-random generators are intentional in scientific code

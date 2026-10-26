@@ -584,7 +584,8 @@ def create_dataset() -> ResponseReturnValue:
     try:
         spec = dataset_curation.parse_create_request(body)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        app.logger.warning("Invalid create_dataset request: %s", exc)
+        return jsonify({"error": "invalid dataset creation request"}), 400
 
     parent_path = os.path.normpath(os.path.join(DATA_ROOT, spec.parent_source))
     if not os.path.isfile(parent_path):

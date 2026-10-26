@@ -641,8 +641,8 @@ def merge_datasets() -> ResponseReturnValue:
     """
     try:
         spec = dataset_curation.parse_merge_request(request.get_json(silent=True) or {})
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+    except ValueError:
+        return jsonify({"error": "invalid merge request"}), 400
     paths = [os.path.normpath(os.path.join(DATA_ROOT, source)) for source in spec.sources]
     if not all(os.path.isfile(path) for path in paths):
         return jsonify({"error": "dataset not found"}), 404

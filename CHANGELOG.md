@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   available) instead of always using the CPU, and fail with a clear message when `cuda` is requested without a GPU.
 - The Train dialog no longer sends reference-only settings for AgriTune presets, which the API rejected with a 400.
 - Cancelling an AgriTune run stops it within seconds instead of at the end of the current epoch.
+- The release workflow's GitHub Release job sets `GH_REPO`, so `gh` no longer fails with *not a git repository* when
+  it creates, uploads to and publishes the release from a job that has no checkout.
 
 ### Added
 

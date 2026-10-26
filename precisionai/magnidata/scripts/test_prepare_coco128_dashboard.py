@@ -17,6 +17,8 @@ import types
 import numpy as np
 from PIL import Image
 
+from precisionai.magnidata.training.dataset_check import has_masks
+
 from . import prepare_coco128_dashboard as mod
 
 # A 0.4x0.4 (normalized) square polygon, YOLO-segment format: class_id x1 y1 x2 y2 ... xn yn.
@@ -134,6 +136,68 @@ def test_stage_coco128_custom_stage_root(tmp_path):
     with open(manifest, newline="") as f:
         rows = list(csv.DictReader(f))
     assert rows[0]["image_path"].startswith("data_user/coco128_test_images/")
+
+
+def test_stage_coco128_writes_masks_the_trainer_can_find(tmp_path):
+    root = tmp_path
+    coco_root = _make_coco_root(root)
+    custom_root = root / "data_user" / "coco128_test_images"
+
+    manifest, stats = mod.stage_coco128(_args(), root, coco_root, stage_root=custom_root)
+
+    assert stats["masks"] == 2
+    assert has_masks(manifest, root)
+    with Image.open(custom_root / "masks" / "img0.png") as im:
+        mask = np.asarray(im.convert("RGB"))
+    assert mask.shape == (10, 10, 3)
+    assert mask[0, 0].tolist() == [0, 0, 0]
+    assert mask[5, 5].tolist() == list(mod._class_colour(0))
+
+
+def _write_labels(stage_labels, name, instances, size=100):
+    mod.write_coco_json(stage_labels / f"{name}.json", f"{name}.jpg", size, size, instances)
+
+
+def _box(class_id, x1, y1, x2, y2):
+    return mod.YoloInstance(class_id, ((x1, y1), (x2, y1), (x2, y2), (x1, y2)))
+
+
+def test_write_class_masks_folds_classes_beyond_the_limit_into_other(tmp_path):
+    labels = tmp_path / "labels"
+    big, medium, small = _box(0, 0.0, 0.0, 0.5, 0.5), _box(1, 0.6, 0.0, 0.9, 0.3), _box(2, 0.6, 0.6, 0.7, 0.7)
+    _write_labels(labels, "a", [small, big, medium])
+
+    written = mod.write_class_masks(labels, tmp_path / "masks", class_limit=1)
+
+    assert written == 1
+    with Image.open(tmp_path / "masks" / "a.png") as im:
+        mask = np.asarray(im.convert("RGB"))
+    assert mask[25, 25].tolist() == list(mod._class_colour(0))
+    assert mask[15, 75].tolist() == list(mod.OTHER_MASK_COLOUR)
+    assert mask[65, 65].tolist() == list(mod.OTHER_MASK_COLOUR)
+    assert mask[95, 5].tolist() == [0, 0, 0]
+
+
+def test_write_class_masks_draws_small_objects_over_large_ones(tmp_path):
+    labels = tmp_path / "labels"
+    _write_labels(labels, "a", [_box(0, 0.0, 0.0, 1.0, 1.0), _box(1, 0.4, 0.4, 0.6, 0.6)])
+
+    mod.write_class_masks(labels, tmp_path / "masks")
+
+    with Image.open(tmp_path / "masks" / "a.png") as im:
+        mask = np.asarray(im.convert("RGB"))
+    assert mask[50, 50].tolist() == list(mod._class_colour(1))
+    assert mask[10, 10].tolist() == list(mod._class_colour(0))
+
+
+def test_write_class_masks_without_instances_is_all_background(tmp_path):
+    labels = tmp_path / "labels"
+    _write_labels(labels, "empty", [])
+
+    mod.write_class_masks(labels, tmp_path / "masks")
+
+    with Image.open(tmp_path / "masks" / "empty.png") as im:
+        assert not np.asarray(im.convert("RGB")).any()
 
 
 def _fake_features_embeddings(monkeypatch):

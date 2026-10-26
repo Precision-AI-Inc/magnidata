@@ -44,6 +44,8 @@ export interface CSVData {
   batchCol:  string | null
   clusterCol: string | null  // predetermined cluster/partition column, if present
   fileName:  string
+  /** Columns merged in from a training run (per-sample losses); see lib/mergeRunColumns */
+  runColumns?: string[]
 }
 
 // ── Filters ────────────────────────────────────────────────────────────────────
@@ -65,4 +67,4 @@ export interface Note {
 }
 
 // ── Tabs ───────────────────────────────────────────────────────────────────────
-export type TabId = 'overview' | 'table' | 'visual-explorer' | 'charts' | 'schema'
+export type TabId = 'overview' | 'table' | 'visual-explorer' | 'charts' | 'schema' | 'experiments'

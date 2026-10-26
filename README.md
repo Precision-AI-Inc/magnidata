@@ -23,7 +23,12 @@ PCA/t-SNE/cluster view over a dataset's embedding space.
   one-click "demo" builds of COCO128 / AgriStress-500).
 - **`precisionai/magnidata/dashboard/`** — the React + Vite + Three.js portal: parallel
   coordinates, histograms, a data table, an image/mask/overlay preview, and the 3D
-  embeddings view.
+  embeddings view, plus an Experiments tab for training runs.
+- **Training feedback loop** — train segmentation models from the dashboard, store every run in
+  a local MLflow, and turn per-image losses into dataset axes so persistently hard images can
+  be found, curated into a new dataset and trained on again. See the
+  [recipe](precisionai/magnidata/docs/recipes/training-feedback-loop.md) and the
+  [training contract](precisionai/magnidata/docs/training-contract.md).
 
 Coding standards, naming conventions, and tooling configuration for the Python side are
 governed by [CLAUDE.md](CLAUDE.md). This repository was migrated from an existing,
@@ -41,9 +46,45 @@ cd magnidata
 docker compose up --build
 #   portal -> http://localhost:5175
 #   api    -> http://localhost:5051/api/health
+#   mlflow -> http://localhost:5052   (experiment tracking UI)
 ```
 
-The API container also prints those local access URLs during startup.
+**New here?** Open **User Guide** in the portal. It is a self-contained, illustrated guide that takes you from
+`docker compose up` through loading AgriStress-500, partitioning it into sub-datasets from the command line,
+exploring, training and curating a better dataset, with every command and screenshot included.
+Its **Train with AgriTune** chapter explains the optional frozen-feature decoder presets, hosted encoder
+configuration, the offline fake-encoder smoke test, and how component losses become Explorer axes.
+
+The API container also prints those local access URLs during startup. The stack has four
+services:
+
+| Service | Port | Role |
+|---|---|---|
+| `web` | 5175 | the dashboard (React, served by nginx) |
+| `api` | 5051 | Flask API; proxies MLflow, never runs training |
+| `mlflow` | 5052 | MLflow tracking server and UI; data in the `magnidata-mlflow` volume |
+| `trainer` | — | worker that trains runs scheduled from the dashboard (CPU by default; on a GPU host add `docker-compose.gpu.yml` — see below) |
+
+To train on an NVIDIA GPU (needs the NVIDIA container toolkit), put
+`COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` in the git-ignored `.env`, then run
+`docker compose up --build` as usual. Check it with
+`docker compose exec trainer python -c "import torch; print(torch.cuda.is_available())"`. The trainer's
+log (first line `device=…`) is uploaded to the run's `logs/` artifacts while it trains.
+
+To run the reference trainer outside Docker: `pip install -e ".[training]"`, then
+`python -m precisionai.magnidata.training.train --dataset data_user/<name>.csv --data-root precisionai/magnidata`.
+The AgriTune presets are optional. To build them into the trainer image, clone
+`git@github.com:Precision-AI-Inc/agritune.git` next to this repository (so `../agritune` exists) and add
+`docker-compose.agritune.yml` to `COMPOSE_FILE` in the git-ignored `.env`
+(`COMPOSE_FILE=docker-compose.yml:docker-compose.agritune.yml`; with the GPU file, list all three on that one line,
+since a second `COMPOSE_FILE` line overrides the first), then run
+`docker compose up --build`. Without it the stack builds and runs as before. AgriTune runs use the hosted encoder
+(`https://embeddings.precision.ai/v1`) with the key from AgriTune's own `../agritune/.env`
+(`AGRITUNE_ENCODER_API_KEY`); they encode a dataset into the feature store once and then train from features
+preloaded into RAM. Set `AGRITUNE_ENCODER_BASE_URL=` (empty) in `.env` to use the offline fake encoder instead.
+With *Encoder input: Original image size* they encode images unchanged (masks at their own size) instead of
+squaring them, and a store already built by `agritune features build` can be read in place by pointing the trainer
+at it with `AGRITUNE_EXISTING_MANIFEST` and `AGRITUNE_EXISTING_STORE` (see the User Guide, *Train with AgriTune*).
 
 The dataset catalog (`precisionai/magnidata/confi.yaml`) ships empty. From the portal's
 "Bring Your Own Data" dialog, either prepare a self-contained demo (COCO128 or
@@ -162,9 +203,11 @@ precisionai/magnidata/
                 embeddings generator (images -> JSON) — see tools/README.md
   scripts/      Standalone dataset-preparation scripts (e.g. the COCO128 demo)
   dashboard/    React + Vite + Three.js portal, served by nginx in Docker
-  docs/         data-contract.md and recipes/ — file formats and end-to-end guides
+  training/     Training feedback loop: MLflow contract, per-sample loss recorder, reference
+                trainer and worker (torch only where noted)
+  docs/         data-contract.md, training-contract.md and recipes/ — file formats and guides
   confi.yaml    Dataset registry (which CSVs the portal lists)
-Dockerfile.api, Dockerfile.dashboard, docker-compose.yml   at the repo root
+Dockerfile.api, Dockerfile.dashboard, Dockerfile.trainer, docker-compose.yml   at the repo root
 docs/           Sphinx (HTML + LaTeX/PDF) for the Python package
 ```
 

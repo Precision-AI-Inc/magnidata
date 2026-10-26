@@ -159,6 +159,7 @@ repos:
 # optional dep pattern
 try:
     import plotly.graph_objects as go  # type: ignore[import]
+
     _PLOTLY_AVAILABLE = True
 except ImportError:
     _PLOTLY_AVAILABLE = False

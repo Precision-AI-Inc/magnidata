@@ -50,6 +50,27 @@
   gap: 12px;
 }
 
+.train-dialog-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+@media (max-width: 560px) {
+  .byod-overlay {
+    align-items: flex-end;
+  }
+
+  .byod-panel {
+    width: 100% !important;
+    max-width: 100vw;
+    max-height: 94vh;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .train-dialog-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .byod-choice {
   display: flex;
   align-items: center;

@@ -1,8 +1,7 @@
 import { useCallback, useRef, useState } from 'react'
 import { api, errorText } from '../api'
 import type { BuildJobStatus, DatasetMeta } from '../api'
-
-const POLL_MS = 1500
+import { lostBuildMessage, POLL_MS, pollRetryDelay } from '../lib/buildPoll'
 
 function isActive(job: BuildJobStatus | null): boolean {
   return !!job && job.status !== 'done' && job.status !== 'error'
@@ -23,9 +22,11 @@ export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
   const [job, setJob]     = useState<BuildJobStatus | null>(null)
   const [dismissed, setDismissed] = useState(false)
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const failures = useRef({ count: 0, since: 0 })
 
   const poll = useCallback((jobId: string) => {
     api.getBuildJob(jobId).then(status => {
+      failures.current = { count: 0, since: 0 }
       setJob(status)
       if (status.status === 'done') {
         if (status.dataset) onDone(status.dataset)
@@ -33,7 +34,17 @@ export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
         pollTimer.current = setTimeout(() => poll(jobId), POLL_MS)
       }
     }).catch(e => {
-      setJob({ status: 'error', percent: 0, message: 'Lost track of the build', error: errorText(e) })
+      const failed = failures.current
+      failed.count += 1
+      if (failed.count === 1) failed.since = Date.now()
+      const delay = pollRetryDelay(e, failed.count, Date.now() - failed.since)
+      if (delay === null) {
+        setJob({ status: 'error', percent: 0, message: lostBuildMessage(e), error: errorText(e) })
+        return
+      }
+      // Keep the last known progress; the build carries on server-side while we reconnect.
+      setJob(prev => (prev ? { ...prev, message: 'Connection lost, retrying…' } : prev))
+      pollTimer.current = setTimeout(() => poll(jobId), delay)
     })
   }, [onDone])
 

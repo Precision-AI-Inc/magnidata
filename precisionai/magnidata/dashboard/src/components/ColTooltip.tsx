@@ -1,6 +1,6 @@
 import { useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { COL_DESCS, GROUP_COLORS } from '../data/colDescs'
+import { colDesc, GROUP_COLORS } from '../data/colDescs'
 
 interface Props {
   col: string
@@ -10,7 +10,7 @@ interface Props {
 }
 
 export function ColTooltip({ col, children, style, className }: Props) {
-  const desc = COL_DESCS[col]
+  const desc = colDesc(col)
   const [rect, setRect] = useState<DOMRect | null>(null)
 
   if (!desc) return <span style={style} className={className}>{children}</span>

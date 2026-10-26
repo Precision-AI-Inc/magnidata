@@ -21,6 +21,8 @@ from typing import Any, TextIO
 
 import numpy as np
 
+from precisionai.magnidata.training.contract import image_path_column
+
 
 class _JsonStreamReader:
     """Incremental JSON reader: decodes one value at a time from a chunk-by-chunk file read."""
@@ -110,15 +112,6 @@ def iter_entries(path: str, chunk_size: int = 1 << 20) -> Iterator[tuple[str, li
             value = reader.decode()
             if isinstance(value, list):
                 yield os.path.basename(key), value
-
-
-def image_path_column(cols: Sequence[str]) -> str | None:
-    """Return the column holding each row's image path, or None for an empty header."""
-    for c in cols:
-        lc = c.lower()
-        if lc == "image_path" or ("image" in lc and "path" in lc):
-            return c
-    return next((c for c in cols if "path" in c.lower()), cols[0] if cols else None)
 
 
 def csv_image_paths(csv_path: str) -> list[str]:

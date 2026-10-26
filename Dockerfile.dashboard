@@ -7,7 +7,9 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-RUN npm run build
+# Normalise permissions: depending on the builder's umask the output can come out
+# 0660 (group-only), which the unprivileged nginx worker can't read -> 403.
+RUN npm run build && chmod -R a+rX dist
 
 # ── Stage 2: serve ────────────────────────────────────────────────────────────
 FROM nginx:1.27-alpine

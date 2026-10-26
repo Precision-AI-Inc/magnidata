@@ -1,0 +1,21 @@
+# GPU override for the trainer worker. Needs the NVIDIA container toolkit on the host.
+# Enable it with plain `docker compose up --build` by putting this in the git-ignored .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
+# Or pass both files: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# torch 2.14.0 is published on the cu130 wheel index (cu128 stops at 2.11); the driver must
+# support CUDA 13. RTX 50xx (Blackwell, sm_120) needs cu128 or newer.
+services:
+  trainer:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu130
+    environment:
+      MAGNIDATA_TRAIN_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

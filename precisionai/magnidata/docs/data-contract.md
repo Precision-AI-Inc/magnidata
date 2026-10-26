@@ -82,3 +82,8 @@ Any precomputed vectors — from any model, generated anywhere — work as long 
 conform to the JSON shape above and the naming convention. Drop the file into `data/`;
 no `confi.yaml` entry is needed (embeddings are discovered by filename against the
 dataset's CSV stem, not registered separately).
+
+## Training runs
+
+Per-sample loss artifacts logged to MLflow by training runs, and the tags and metric keys
+that link them to a dataset, are specified in [training-contract.md](training-contract.md).

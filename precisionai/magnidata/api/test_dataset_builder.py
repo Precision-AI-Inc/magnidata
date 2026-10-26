@@ -17,6 +17,7 @@ import io
 import json
 import os
 import time
+from pathlib import Path
 
 import dataset_builder
 import db
@@ -147,6 +148,25 @@ def test_upload_build_end_to_end_without_embeddings(monkeypatch):
     assert not os.path.isfile(rec["source"].replace(".csv", ".json"))
 
 
+def _recording_features_run(calls):
+    def run(input_csv, output_csv, **kwargs):
+        calls.append(kwargs)
+        _fake_features_run(input_csv, output_csv, **kwargs)
+
+    return run
+
+
+def test_upload_build_extracts_features_in_parallel(monkeypatch):
+    calls = []
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _recording_features_run(calls))
+    monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 5)
+
+    job = _wait_for_job(dataset_builder.start_upload_build([UploadedImage("a.png", b"AAAA")], [], None, "Set", ""))
+
+    assert job["status"] == "done"
+    assert calls[0]["workers"] == 5
+
+
 def _wait_for_build_slot(timeout=2.0):
     # A job reports "done" before its worker's `finally` cleans up and frees the slot.
     deadline = time.monotonic() + timeout
@@ -184,8 +204,9 @@ def test_upload_build_stages_provided_embeddings_file(monkeypatch):
     rec = db.get_created_dataset_by_source(job["dataset"]["source"])
     assert rec is not None
     assert rec["emb_source"] == rec["source"].replace(".csv", ".json")
-    with open(rec["emb_source"], "rb") as f:
-        assert f.read() == FAKE_EMBEDDINGS
+    with open(rec["emb_source"]) as f:
+        stored = json.load(f)["embeddings"]
+    assert list(stored.values()) == [[0.1, 0.2]]  # vectors kept, re-keyed to the staged image name
 
 
 def test_upload_build_with_annotations_stages_matching_labels(monkeypatch):
@@ -343,11 +364,31 @@ def test_start_demo_build_fails_if_shipped_embeddings_dont_match_images(monkeypa
 
 
 def test_start_demo_build_rejects_if_already_built():
-    db.create_dataset_record(
-        dataset_builder.COCO128_NAME, "", f"data_user/{dataset_builder.COCO128_STEM}.csv", None, None, 1
-    )
-    with pytest.raises(dataset_builder.BuildValidationError):
+    source = f"data_user/{dataset_builder.COCO128_STEM}.csv"
+    db.create_dataset_record(dataset_builder.COCO128_NAME, "", source, None, None, 1)
+    Path(source).write_text("image_path\n")
+    with pytest.raises(dataset_builder.BuildValidationError, match="already been built"):
         dataset_builder.start_demo_build("coco128")
+
+
+@pytest.mark.parametrize(
+    ("demo_key", "stem", "worker"),
+    [
+        ("coco128", dataset_builder.COCO128_STEM, "_run_demo_build"),
+        ("agristress500", dataset_builder.AGRISTRESS_STEM, "_run_agristress_build"),
+    ],
+)
+def test_start_demo_build_replaces_record_whose_csv_is_gone(monkeypatch, demo_key, stem, worker):
+    # A persisted DB can outlive data_user/ (fresh checkout): the dataset list hides such a record,
+    # so the demo must be buildable again rather than reported as already built.
+    source = f"data_user/{stem}.csv"
+    stale = db.create_dataset_record("Stale", "", source, None, None, 1)
+    monkeypatch.setattr(dataset_builder, worker, lambda job_id: None)
+
+    job_id = dataset_builder.start_demo_build(demo_key)
+
+    assert dataset_builder.get_job(job_id) is not None
+    assert db.get_created_dataset(stale["id"]) is None
 
 
 def test_start_demo_build_rejects_concurrent_build(monkeypatch, tmp_path):
@@ -373,9 +414,13 @@ def _tiny_png_bytes(color=(200, 50, 50)):
 class _FakeResponse:
     def __init__(self, data):
         self._data = data
+        self._pos = 0
 
-    def read(self):
-        return self._data
+    def read(self, size=-1):
+        end = len(self._data) if size is None or size < 0 else self._pos + size
+        chunk = self._data[self._pos : end]
+        self._pos += len(chunk)
+        return chunk
 
     def __enter__(self):
         return self
@@ -466,15 +511,12 @@ def test_start_agristress_build_end_to_end(monkeypatch):
 
 
 def test_start_agristress_build_rejects_if_already_built():
+    source = f"data_user/{dataset_builder.AGRISTRESS_STEM}.csv"
     db.create_dataset_record(
-        dataset_builder.AGRISTRESS_NAME,
-        "",
-        f"data_user/{dataset_builder.AGRISTRESS_STEM}.csv",
-        None,
-        f"data_user/{dataset_builder.AGRISTRESS_STEM}.json",
-        1,
+        dataset_builder.AGRISTRESS_NAME, "", source, None, f"data_user/{dataset_builder.AGRISTRESS_STEM}.json", 1
     )
-    with pytest.raises(dataset_builder.BuildValidationError):
+    Path(source).write_text("image_path\n")
+    with pytest.raises(dataset_builder.BuildValidationError, match="already been built"):
         dataset_builder.start_demo_build("agristress500")
 
 
@@ -559,6 +601,18 @@ def test_local_build_defaults_dataset_name_to_folder_name(tmp_path, monkeypatch)
     job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "  ", ""))
 
     assert job["dataset"]["name"] == "MMDE-POC"
+
+
+def test_local_build_extracts_features_in_parallel(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _recording_features_run(calls))
+    monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 5)
+    _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
+
+    job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
+
+    assert job["status"] == "done"
+    assert calls[0]["workers"] == 5
 
 
 def test_local_build_manifest_points_at_image_sets_without_copying(tmp_path, monkeypatch):
@@ -646,3 +700,53 @@ def test_build_job_reports_the_dataset_name(tmp_path, monkeypatch):
     job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
 
     assert job["name"] == "MMDE POC"
+
+
+def test_upload_build_rekeys_embeddings_to_the_staged_image_names(monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    images = [UploadedImage("weeds/a.png", b"AAAA"), UploadedImage("soil/b.png", b"BBBB")]
+    embeddings = json.dumps({"embeddings": {"a.png": [0.1, 0.2], "b.png": [0.3, 0.4]}}).encode()
+
+    job = _wait_for_job(dataset_builder.start_upload_build(images, [], embeddings, "Keyed Set", ""))
+
+    assert job["status"] == "done"
+    rec = db.get_created_dataset_by_source(job["dataset"]["source"])
+    assert rec is not None
+    with open(rec["emb_source"].replace(".csv", ".json")) as handle:
+        keys = set(json.load(handle)["embeddings"])
+    staged = set(os.listdir(rec["source"].replace(".csv", "_images") + "/images"))
+    assert keys == staged
+
+
+def test_upload_build_rejects_embeddings_that_match_no_image(monkeypatch):
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    images = [UploadedImage("a.png", b"AAAA")]
+    embeddings = json.dumps({"embeddings": {"unrelated.png": [0.1]}}).encode()
+
+    job = _wait_for_job(dataset_builder.start_upload_build(images, [], embeddings, "Mismatched Set", ""))
+
+    assert job["status"] == "error"
+    assert "match the uploaded images" in job["error"]
+
+
+def test_agristress_build_reuses_staged_files_on_retry(monkeypatch):
+    _fake_urlopen_agristress(monkeypatch)
+    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    first = dataset_builder._agristress_file_pairs()
+    stage = Path(dataset_builder.DATA_ROOT) / dataset_builder.USER_DATA_REL / "retry_images"
+    images_dir, masks_dir, thumbs_dir = (stage / d for d in ("images", "masks", "thumbnails"))
+    for d in (images_dir, masks_dir, thumbs_dir):
+        d.mkdir(parents=True)
+    basename, image_rel, mask_rel = first[0]
+    dataset_builder._download_agristress_pair(images_dir, masks_dir, thumbs_dir, "retry", image_rel, mask_rel, basename)
+
+    def no_network(url, timeout=None):
+        raise AssertionError("staged files must not be downloaded again")
+
+    monkeypatch.setattr(dataset_builder.urllib.request, "urlopen", no_network)
+    row = dataset_builder._download_agristress_pair(
+        images_dir, masks_dir, thumbs_dir, "retry", image_rel, mask_rel, basename
+    )
+
+    assert row["cluster"] == "L0"
+    assert not list(stage.rglob("*.part"))

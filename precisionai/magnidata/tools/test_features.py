@@ -16,7 +16,7 @@ import pytest
 from PIL import Image
 
 from . import coco_labels, image_source, pixel_features, quality_features
-from .features import process_row
+from .features import process_row, run
 from .metadata_join import camera_angle_category
 from .schema import OUTPUT_COLUMNS
 
@@ -236,3 +236,18 @@ def test_schema_complete(tmp_path):
     img = make_dataset(tmp_path, "s", rgb, [(1, _rect(0, 0, 10, 20))], CATS)
     row = pr(img)
     assert list(row.keys()) == OUTPUT_COLUMNS  # exact column set + order
+
+
+def test_parallel_run_matches_serial_run(tmp_path):
+    images = [
+        make_dataset(tmp_path, f"s{i}", np.full((60, 60, 3), 40 * i, np.uint8), [(1, _rect(0, 0, 30, 60))], CATS)
+        for i in range(5)
+    ]
+    source = tmp_path / "input.csv"
+    source.write_text("image_path\n" + "\n".join(images) + "\n")
+    serial, parallel = tmp_path / "serial.csv", tmp_path / "parallel.csv"
+
+    run(str(source), str(serial), skip_nima=True, workers=1)
+    run(str(source), str(parallel), skip_nima=True, workers=3)
+
+    assert serial.read_text() == parallel.read_text()

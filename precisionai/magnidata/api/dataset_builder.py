@@ -40,7 +40,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
-import io
 import json
 import os
 import re
@@ -50,6 +49,7 @@ import threading
 import urllib.parse
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +143,7 @@ AGRISTRESS_HF_RESOLVE_BASE = "https://huggingface.co/datasets/precisionaiinc/Agr
 # computes embeddings itself (see the module docstring), so these are brought in as-is.
 AGRISTRESS_EMBEDDINGS_URL = "https://d379glmvb7evte.cloudfront.net/internal/data/embeddings/SEED-Embeddings.json"
 AGRISTRESS_THUMB_MAX = 720
+AGRISTRESS_DOWNLOAD_WORKERS = 8
 
 # Static demo registry (GET /api/datasets/demos serves this verbatim).
 DEMOS: list[dict] = [
@@ -267,12 +268,13 @@ def _dataset_meta(rec: dict) -> dict:
     }
 
 
-def _cleanup_partial(stem: str) -> None:
+def _cleanup_partial(stem: str, keep_images: bool = False) -> None:
     base = os.path.join(DATA_ROOT, USER_DATA_REL, stem)
     for suffix in (".csv", ".csv.provenance.json", ".json", ".json.provenance.json", "_projections.json"):
         with contextlib.suppress(OSError):
             os.remove(base + suffix)
-    shutil.rmtree(base + "_images", ignore_errors=True)
+    if not keep_images:
+        shutil.rmtree(base + "_images", ignore_errors=True)
 
 
 def _uploaded_size(upload: bytes | staging_mod.UploadedImage) -> int:
@@ -315,6 +317,20 @@ def _write_uploaded_file(upload: bytes | staging_mod.UploadedImage, dest: str) -
         shutil.copyfile(upload.source_path, dest)
         return
     raise RuntimeError(f"uploaded file is missing content: {upload.relative_path}")
+
+
+def _write_remapped_embeddings(
+    upload: bytes | staging_mod.UploadedImage, dest: str, staged_names: dict[str, str]
+) -> None:
+    """Write the uploaded embeddings re-keyed to the staged image names; refuse a file that matches no image."""
+    document = json.loads(_read_uploaded_bytes(upload))
+    remapped = staging_mod.remap_embeddings(document["embeddings"], staged_names)
+    if not remapped:
+        raise BuildValidationError(
+            "none of the names in the embeddings file match the uploaded images; key each vector by its image file name"
+        )
+    with open(dest, "w") as handle:
+        json.dump({"embeddings": remapped}, handle)
 
 
 def _cleanup_upload_sources(*groups: Any) -> None:
@@ -431,16 +447,24 @@ def _run_upload_build(
     try:
         _update_job(job_id, status="staging", percent=15, message="Staging images…")
         stage_root = f"{USER_DATA_REL}/{stem}_images"
-        manifest_path = staging_mod.stage_images(images, stage_root, annotations=annotations)
+        staged_names: dict[str, str] = {}
+        manifest_path = staging_mod.stage_images(images, stage_root, annotations=annotations, staged_names=staged_names)
 
         _update_job(job_id, status="extracting_features", percent=60, message="Extracting features…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
-        features_mod.run(manifest_path, feature_csv_rel, device="cpu", skip_nima=True, image_mode="fullres")
+        features_mod.run(
+            manifest_path,
+            feature_csv_rel,
+            device="cpu",
+            skip_nima=True,
+            image_mode="fullres",
+            workers=_feature_workers(),
+        )
 
         emb_json_rel = None
         if embeddings_file is not None:
             emb_json_rel = f"{USER_DATA_REL}/{stem}.json"
-            _write_uploaded_file(embeddings_file, emb_json_rel)
+            _write_remapped_embeddings(embeddings_file, emb_json_rel, staged_names)
 
         if emb_json_rel is not None:
             _precompute_projections(job_id, feature_csv_rel, emb_json_rel)
@@ -612,7 +636,14 @@ def _run_local_build(
 
         _update_job(job_id, status="extracting_features", percent=30, message="Extracting features…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
-        features_mod.run(manifest_rel, feature_csv_rel, device="cpu", skip_nima=True, image_mode="fullres")
+        features_mod.run(
+            manifest_rel,
+            feature_csv_rel,
+            device="cpu",
+            skip_nima=True,
+            image_mode="fullres",
+            workers=_feature_workers(),
+        )
 
         _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
         row_count = _count_csv_rows(feature_csv_rel)
@@ -652,9 +683,14 @@ def start_demo_build(demo_key: str) -> str:
         # loudly rather than silently building the wrong thing.
         raise BuildValidationError(f"demo {demo_key!r} is not buildable yet")
 
-    existing = db.get_created_dataset_by_source(f"{USER_DATA_REL}/{stem}.csv")
+    source = f"{USER_DATA_REL}/{stem}.csv"
+    existing = db.get_created_dataset_by_source(source)
     if existing is not None:
-        raise BuildValidationError(f"the {demo['name']} demo dataset has already been built")
+        if os.path.isfile(os.path.join(DATA_ROOT, source)):
+            raise BuildValidationError(f"the {demo['name']} demo dataset has already been built")
+        # The records live in a persistent volume while data_user/ is a bind mount, so a fresh
+        # checkout can keep a record whose CSV is gone. /api/datasets already hides such records.
+        db.delete_created_dataset(existing["id"])
     _acquire_build_slot(demo["name"])
 
     job_id = _new_job(demo["name"])
@@ -736,6 +772,36 @@ def _urlopen(url: str, timeout: float) -> Any:
     return urllib.request.urlopen(url, timeout=timeout)
 
 
+FEATURE_WORKER_BYTES = int(1.25 * 1024**3)  # one worker peaks near 0.9 GB on a 6016x4016 image, plus headroom
+FEATURE_MEMORY_RESERVE_BYTES = 4 * 1024**3  # left for the OS, Docker and the API; WSL dies when this is exhausted
+FEATURE_MAX_WORKERS = 6
+
+
+def _available_memory_bytes() -> int | None:
+    """Return the memory the OS reports as available, or None where it cannot be read."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _feature_workers() -> int:
+    """Return how many processes feature extraction may use.
+
+    Bounded by CPU count (one core stays free for the API), a fixed cap, and available memory
+    minus a reserve, because full-resolution images are decoded to float arrays and too many
+    workers exhaust RAM (and take WSL down with it).
+    """
+    by_cpu = (os.cpu_count() or 2) - 1
+    available = _available_memory_bytes()
+    by_memory = (available - FEATURE_MEMORY_RESERVE_BYTES) // FEATURE_WORKER_BYTES if available is not None else 1
+    return max(1, min(by_cpu, FEATURE_MAX_WORKERS, by_memory))
+
+
 def _agristress_file_pairs() -> list[tuple[str, str, str]]:
     """List (basename, image_rel, mask_rel) for every image with a matching mask.
 
@@ -758,28 +824,37 @@ def _agristress_file_pairs() -> list[tuple[str, str, str]]:
     return [(b, images_by_basename[b], masks_by_basename[b]) for b in basenames]
 
 
+def _fetch_to_file(url: str, dest: Path) -> None:
+    """Stream a URL to ``dest`` via a temp file, so an interrupted download is never mistaken for a finished one."""
+    tmp = dest.with_name(dest.name + ".part")
+    with _urlopen(url, timeout=60) as resp, open(tmp, "wb") as f:
+        shutil.copyfileobj(resp, f, length=1024 * 1024)
+    tmp.replace(dest)
+
+
 def _download_agristress_pair(
     images_dir: Path, masks_dir: Path, thumbs_dir: Path, stem: str, image_rel: str, mask_rel: str, basename: str
 ) -> dict[str, str]:
     """Download one image/mask pair from Hugging Face and stage a local thumbnail.
 
-    Returns the manifest row (image_path, thumbnail_image, cluster, cluster_l2) for
-    this pair. The thumbnail is generated locally since AgriStress-500's originals run
-    tens of MB each (6016x4016).
+    Files already staged by an earlier attempt are reused. Returns the manifest row
+    (image_path, thumbnail_image, cluster, cluster_l2) for this pair. The thumbnail is
+    generated locally since AgriStress-500's originals run tens of MB each (6016x4016).
     """
     label = image_rel.split("/")[1]  # images/<label>/<basename>
-
-    with _urlopen(f"{AGRISTRESS_HF_RESOLVE_BASE}/{image_rel}", timeout=60) as resp:
-        image_bytes = resp.read()
-    (images_dir / basename).write_bytes(image_bytes)
-
-    with _urlopen(f"{AGRISTRESS_HF_RESOLVE_BASE}/{mask_rel}", timeout=60) as resp:
-        (masks_dir / basename).write_bytes(resp.read())
-
-    thumb = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    thumb.thumbnail((AGRISTRESS_THUMB_MAX, AGRISTRESS_THUMB_MAX), Image.Resampling.LANCZOS)
+    image_file, mask_file = images_dir / basename, masks_dir / basename
     thumb_name = os.path.splitext(basename)[0] + ".jpg"
-    thumb.save(thumbs_dir / thumb_name, "JPEG", quality=85)
+    thumb_file = thumbs_dir / thumb_name
+
+    if not image_file.exists():
+        _fetch_to_file(f"{AGRISTRESS_HF_RESOLVE_BASE}/{image_rel}", image_file)
+    if not mask_file.exists():
+        _fetch_to_file(f"{AGRISTRESS_HF_RESOLVE_BASE}/{mask_rel}", mask_file)
+    if not thumb_file.exists():
+        with Image.open(image_file) as source:
+            thumb = source.convert("RGB")
+        thumb.thumbnail((AGRISTRESS_THUMB_MAX, AGRISTRESS_THUMB_MAX), Image.Resampling.LANCZOS)
+        thumb.save(thumb_file, "JPEG", quality=85)
 
     return {
         "image_path": f"{USER_DATA_REL}/{stem}_images/images/{basename}",
@@ -834,14 +909,21 @@ def _run_agristress_build(job_id: str) -> None:
         for d in (images_dir, masks_dir, thumbs_dir):
             d.mkdir(parents=True, exist_ok=True)
 
-        manifest_rows = []
         total = len(pairs)
-        for i, (basename, image_rel, mask_rel) in enumerate(pairs):
-            pct = 5 + int(55 * i / total)
-            _update_job(job_id, status="staging", percent=pct, message="Downloading AgriStress-500…")
-            manifest_rows.append(
-                _download_agristress_pair(images_dir, masks_dir, thumbs_dir, stem, image_rel, mask_rel, basename)
-            )
+        with ThreadPoolExecutor(max_workers=AGRISTRESS_DOWNLOAD_WORKERS) as pool:
+            futures = [
+                pool.submit(
+                    _download_agristress_pair, images_dir, masks_dir, thumbs_dir, stem, image_rel, mask_rel, basename
+                )
+                for basename, image_rel, mask_rel in pairs
+            ]
+            manifest_rows = []
+            for i, future in enumerate(futures):
+                manifest_rows.append(future.result())
+                pct = 5 + int(55 * (i + 1) / total)
+                _update_job(
+                    job_id, status="staging", percent=pct, message=f"Downloading AgriStress-500 ({i + 1}/{total})…"
+                )
 
         manifest_path = stage_root / f"{stem}_input.csv"
         with open(manifest_path, "w", newline="") as f:
@@ -852,7 +934,12 @@ def _run_agristress_build(job_id: str) -> None:
         _update_job(job_id, status="extracting_features", percent=65, message="Extracting features locally…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
         features_mod.run(
-            str(manifest_path.relative_to(root)), feature_csv_rel, device="cpu", skip_nima=True, image_mode="fullres"
+            str(manifest_path.relative_to(root)),
+            feature_csv_rel,
+            device="cpu",
+            skip_nima=True,
+            image_mode="fullres",
+            workers=_feature_workers(),
         )
         _reattach_thumbnails(os.path.join(DATA_ROOT, feature_csv_rel), manifest_rows)
 
@@ -874,5 +961,5 @@ def _run_agristress_build(job_id: str) -> None:
 
         _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
     except Exception as exc:
-        _cleanup_partial(stem)
+        _cleanup_partial(stem, keep_images=True)
         _update_job(job_id, status="error", percent=None, message=str(exc), error=str(exc))

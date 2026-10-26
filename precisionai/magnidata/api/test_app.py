@@ -10,6 +10,7 @@ monkeypatched.
 Run:  python -m pytest precisionai/magnidata/api/test_app.py -q
 """
 
+import csv
 import importlib
 import io
 import json
@@ -17,9 +18,21 @@ import os
 import threading
 from pathlib import Path
 
+import mlflow_store
 import numpy as np
 import pytest
+from conftest import seed_run
 from PIL import Image
+
+from precisionai.magnidata.training import contract
+
+
+def _write_feature_csv(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["image_path", "width", "score"])
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 @pytest.fixture
@@ -31,7 +44,7 @@ def app_client(tmp_path, monkeypatch):
     os.makedirs(tmp_path / "data_user", exist_ok=True)
 
     app_module = importlib.import_module("app")
-
+    monkeypatch.setattr(app_module.db, "DB_PATH", str(tmp_path / "test.db"))
     importlib.reload(app_module)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as client:
@@ -317,6 +330,81 @@ def test_get_build_job_404_for_unknown_id(app_client, monkeypatch):
 
 
 # ── DELETE /api/datasets/<id> cleanup ──────────────────────────────────────────────
+
+
+def test_cloud_union_lineage_and_complement_derivation(app_client):
+    client, app_module = app_client
+    root = Path(app_module.DATA_ROOT)
+    mini1 = "data_user/agristress500-mini1.csv"
+    mini2 = "data_user/agristress500-mini2.csv"
+    _write_feature_csv(
+        root / mini1,
+        [
+            {"image_path": "images/a.png", "width": "256", "score": "0"},
+            {"image_path": "images/b.png", "width": "256", "score": "10"},
+        ],
+    )
+    _write_feature_csv(
+        root / mini2,
+        [
+            {"image_path": "images/c.png", "width": "256", "score": "1"},
+            {"image_path": "images/d.png", "width": "256", "score": "9"},
+        ],
+    )
+    app_module.db.create_dataset_record("Mini 1", "", mini1, None, None, 2)
+    app_module.db.create_dataset_record("Mini 2", "", mini2, None, None, 2)
+
+    catalog = client.get("/api/datasets").get_json()
+    by_source = {dataset["source"]: dataset for dataset in catalog}
+    cloud = by_source[app_module.dataset_curation.CLOUD_SOURCE]
+    assert cloud["name"] == "Cloud Dataset"
+    assert cloud["row_count"] == 4
+    assert cloud["deletable"] is False
+    assert by_source[mini1]["parent_sources"] == [app_module.dataset_curation.CLOUD_SOURCE]
+    assert by_source[mini2]["parent_sources"] == [app_module.dataset_curation.CLOUD_SOURCE]
+
+    response = client.post(
+        "/api/datasets",
+        json={
+            "name": "Mini 1 complemented",
+            "parent_source": mini1,
+            "image_names": ["a.png", "b.png"],
+            "query_image_names": ["a.png"],
+            "complement_top_k": 1,
+        },
+    )
+    assert response.status_code == 201
+    derived = response.get_json()
+    assert derived["complement_count"] == 1
+    assert derived["row_count"] == 3
+    assert derived["parent_sources"] == [mini1, app_module.dataset_curation.CLOUD_SOURCE]
+    _, rows = app_module.dataset_curation.read_rows(root / derived["source"])
+    assert [Path(row["image_path"]).name for row in rows] == ["a.png", "b.png", "c.png"]
+
+
+def test_removal_only_dataset_has_current_dataset_as_sole_parent(app_client):
+    client, app_module = app_client
+    source = "data_user/current.csv"
+    _write_feature_csv(
+        Path(app_module.DATA_ROOT) / source,
+        [
+            {"image_path": "images/a.png", "width": "256", "score": "1"},
+            {"image_path": "images/b.png", "width": "256", "score": "2"},
+        ],
+    )
+    app_module.db.create_dataset_record("Current", "", source, None, None, 2)
+
+    response = client.post(
+        "/api/datasets",
+        json={
+            "name": "Removed B",
+            "parent_source": source,
+            "image_names": ["a.png"],
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.get_json()["parent_sources"] == [source]
 
 
 def test_remove_dataset_cleans_up_built_dataset_files(app_client):
@@ -862,3 +950,364 @@ def test_dataset_embeddings_is_not_cacheable(app_client, tmp_path):
 
     assert resp.status_code == 200
     assert resp.headers["Cache-Control"] == "no-store"
+
+
+def test_mlflow_status_reachable_and_unreachable(app_client, tmp_path):
+    client, _ = app_client
+    try:
+        mlflow_store.set_store(mlflow_store.MlflowStore(f"sqlite:///{tmp_path / 'mlflow.db'}"))
+        resp = client.get("/api/mlflow/status")
+        assert resp.status_code == 200
+        assert resp.get_json()["reachable"] is True
+
+        mlflow_store.set_store(mlflow_store.MlflowStore("http://127.0.0.1:1"))
+        resp = client.get("/api/mlflow/status")
+        assert resp.status_code == 200
+        assert resp.get_json()["reachable"] is False
+    finally:
+        mlflow_store.set_store(None)
+
+
+def test_experiment_routes_are_registered(app_client):
+    _, app_module = app_client
+    rules = {rule.rule for rule in app_module.app.url_map.iter_rules()}
+    assert {"/api/experiments", "/api/runs", "/api/runs/<run_id>/metrics", "/api/runs/<run_id>/link"} <= rules
+
+
+@pytest.fixture
+def masked_image(app_client, tmp_path, monkeypatch):
+    """A 20x10 green image with a red mask over its left half, in the <dataset>/images + masks layout."""
+    monkeypatch.chdir(tmp_path)  # these endpoints open paths relative to the working directory (/app in Docker)
+    folder = tmp_path / "ds"
+    (folder / "images").mkdir(parents=True)
+    (folder / "masks").mkdir()
+    Image.new("RGB", (20, 10), (10, 160, 10)).save(folder / "images" / "x.png")
+    mask = np.zeros((10, 20, 3), dtype=np.uint8)
+    mask[:, :10] = (230, 20, 20)
+    Image.fromarray(mask).save(folder / "masks" / "x.png")
+    return "ds/images/x.png", "ds/masks/x.png"
+
+
+def _pixel(resp, xy):
+    x, y = xy
+    return tuple(int(v) for v in np.asarray(Image.open(io.BytesIO(resp.data)).convert("RGB"))[y, x])
+
+
+def test_overlay_composites_mask_over_image(app_client, masked_image):
+    client, _ = app_client
+    img, mask = masked_image
+    resp = client.get(f"/api/overlay?img={img}&mask={mask}")
+    assert resp.status_code == 200
+    assert resp.mimetype == "image/jpeg"
+    assert _pixel(resp, (3, 5))[0] > 180  # masked half is red
+    assert _pixel(resp, (15, 5))[1] > 120  # background half keeps the green image
+
+
+def test_annotation_overlay_honours_alpha(app_client, masked_image):
+    client, _ = app_client
+    img, _ = masked_image
+    full = client.get(f"/api/annotation/overlay?path={img}&alpha=1")
+    assert full.status_code == 200
+    assert _pixel(full, (3, 5))[0] > 180
+    none = client.get(f"/api/annotation/overlay?path={img}&alpha=0")
+    assert _pixel(none, (3, 5))[1] > 120
+    half = _pixel(client.get(f"/api/annotation/overlay?path={img}&alpha=0.5"), (3, 5))
+    assert 80 < half[0] < 200
+    assert 40 < half[1] < 140
+
+
+def test_annotation_overlay_without_mask_is_404(app_client, tmp_path, monkeypatch):
+    client, _ = app_client
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "plain" / "images").mkdir(parents=True)
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(tmp_path / "plain" / "images" / "y.png")
+    assert client.get("/api/annotation/overlay?path=plain/images/y.png").status_code == 404
+    assert client.get("/api/annotation/overlay?path=../x.png").status_code == 400
+
+
+def test_mask_endpoint_makes_background_transparent(app_client, masked_image):
+    client, _ = app_client
+    _, mask = masked_image
+    resp = client.get(f"/api/mask?path={mask}")
+    assert resp.mimetype == "image/png"
+    alpha = np.asarray(Image.open(io.BytesIO(resp.data)).convert("RGBA"))[:, :, 3]
+    assert alpha[5, 3] == 255
+    assert alpha[5, 15] == 0
+
+
+# ── Dataset summary ────────────────────────────────────────────────────────────
+
+
+def test_dataset_summary_reports_stats_and_samples(app_client, tmp_path):
+    client, _ = app_client
+    rows = [{"image_path": f"images/{i}.png", "width": str(100 + i), "score": "0.5"} for i in range(30)]
+    _write_feature_csv(tmp_path / "data_user" / "s.csv", rows)
+
+    res = client.get("/api/datasets/summary?source=data_user/s.csv")
+
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["row_count"] == 30
+    assert body["column_count"] == 3
+    assert body["image_column"] == "image_path"
+    assert len(body["sample_images"]) == 8
+    assert body["mask_coverage"] == {"checked": 30, "with_masks": 0}
+    names = [c["name"] for c in body["numeric_columns"]]
+    assert names == ["width", "score"]
+    assert sum(body["numeric_columns"][0]["histogram"]) == 30
+
+
+def test_dataset_summary_rejects_bad_sources(app_client):
+    client, _ = app_client
+
+    assert client.get("/api/datasets/summary").status_code == 400
+    assert client.get("/api/datasets/summary?source=../etc/passwd").status_code == 400
+    assert client.get("/api/datasets/summary?source=data_user/missing.csv").status_code == 404
+
+
+def test_confi_datasets_report_row_count(app_client, tmp_path):
+    client, _ = app_client
+    _write_feature_csv(tmp_path / "data_user" / "c.csv", [{"image_path": "a.png", "width": "1", "score": "2"}])
+    (tmp_path / "confi.yaml").write_text("datasets:\n  - name: C\n    source: data_user/c.csv\n")
+
+    listed = client.get("/api/datasets").get_json()
+
+    assert next(d for d in listed if d["source"] == "data_user/c.csv")["row_count"] == 1
+
+
+# ── Dataset merge ──────────────────────────────────────────────────────────────
+
+
+def _merge(client, **body):
+    return client.post("/api/datasets/merge", json=body)
+
+
+def _two_sources(tmp_path):
+    _write_feature_csv(
+        tmp_path / "data_user" / "m1.csv",
+        [
+            {"image_path": "images/a.png", "width": "1", "score": "1"},
+            {"image_path": "images/b.png", "width": "2", "score": "2"},
+        ],
+    )
+    _write_feature_csv(
+        tmp_path / "data_user" / "m2.csv",
+        [
+            {"image_path": "images/b.png", "width": "2", "score": "2"},
+            {"image_path": "images/c.png", "width": "3", "score": "3"},
+        ],
+    )
+    return ["data_user/m1.csv", "data_user/m2.csv"]
+
+
+def test_merge_writes_deduplicated_union_with_every_parent(app_client, tmp_path):
+    client, _ = app_client
+    sources = _two_sources(tmp_path)
+
+    res = _merge(client, name="Both", sources=sources)
+
+    assert res.status_code == 201
+    body = res.get_json()
+    assert body["row_count"] == 3
+    assert body["parent_sources"] == sources
+    assert body["deletable"] is True
+    with open(tmp_path / body["source"]) as handle:
+        names = [row["image_path"] for row in csv.DictReader(handle)]
+    assert names == ["images/a.png", "images/b.png", "images/c.png"]
+    listed = next(d for d in client.get("/api/datasets").get_json() if d["source"] == body["source"])
+    assert listed["parent_sources"] == sources
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "message"),
+    [
+        ({"sources": ["a", "b"]}, 400, "invalid merge request"),
+        ({"name": "x", "sources": ["data_user/m1.csv"]}, 400, "invalid merge request"),
+        ({"name": "x", "sources": ["data_user/m1.csv", "data_user/m1.csv"]}, 400, "invalid merge request"),
+        ({"name": "x", "sources": ["data_user/m1.csv", "../etc/passwd"]}, 400, "invalid merge request"),
+        ({"name": "x", "sources": "data_user/m1.csv"}, 400, "invalid merge request"),
+        ({"name": "x", "sources": ["data_user/m1.csv", "data_user/missing.csv"]}, 404, "not found"),
+    ],
+)
+def test_merge_rejects_bad_requests(app_client, tmp_path, body, status, message):
+    client, _ = app_client
+    _two_sources(tmp_path)
+
+    res = _merge(client, **body)
+
+    assert res.status_code == status
+    assert message in res.get_json()["error"]
+
+
+def test_merge_rejects_sources_with_different_columns(app_client, tmp_path):
+    client, _ = app_client
+    sources = _two_sources(tmp_path)
+    (tmp_path / "data_user" / "odd.csv").write_text("image_path,other\nimages/z.png,1\n")
+
+    res = _merge(client, name="Odd", sources=[sources[0], "data_user/odd.csv"])
+
+    assert res.status_code == 400
+    assert "same CSV columns" in res.get_json()["error"]
+
+
+def test_merge_name_collisions_get_unique_files(app_client, tmp_path):
+    client, _ = app_client
+    sources = _two_sources(tmp_path)
+
+    first = _merge(client, name="Same", sources=sources).get_json()
+    second = _merge(client, name="Same", sources=sources).get_json()
+
+    assert first["source"] != second["source"]
+
+
+# ── Ground truth and prediction are different sources ──────────────────────────
+
+
+def _solid_png(color, size=(8, 6)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _center_pixel(data):
+    return tuple(int(v) for v in np.asarray(Image.open(io.BytesIO(data)).convert("RGB"))[3, 4])
+
+
+def test_annotation_overlay_and_run_prediction_show_different_masks(app_client, tmp_path, monkeypatch):
+    client, _ = app_client
+    monkeypatch.chdir(tmp_path)  # the annotation endpoints read relative image paths from the working directory
+    dataset = tmp_path / "data_user" / "ds"
+    (dataset / "images").mkdir(parents=True)
+    (dataset / "masks").mkdir()
+    (dataset / "images" / "a.png").write_bytes(_solid_png((10, 120, 10)))
+    (dataset / "masks" / "a.png").write_bytes(_solid_png((0, 0, 255)))  # ground truth: blue
+    (tmp_path / "data_user" / "ds.csv").write_text("image_path\ndata_user/ds/images/a.png\n")
+
+    store = mlflow_store.MlflowStore(f"sqlite:///{tmp_path / 'mlflow.db'}", artifact_root=(tmp_path / "art").as_uri())
+    mlflow_store.set_store(store)
+    try:
+        run_id = seed_run(
+            store,
+            tags={
+                contract.TAG_PER_SAMPLE_SCHEMA: contract.SCHEMA_VERSION,
+                contract.TAG_SCORED_EPOCHS: "1",
+                contract.TAG_DATASET_SOURCE: "data_user/ds.csv",
+            },
+            artifacts={contract.per_sample_path(1): "image_name,split,loss_total\na.png,train,0.5\n"},
+        )
+        prediction = tmp_path / "pred" / "a.png"
+        prediction.parent.mkdir()
+        prediction.write_bytes(_solid_png((255, 0, 0)))  # prediction: red
+        store._client.log_artifact(run_id, str(prediction), "magnidata/predictions/epoch_0001")
+
+        truth = client.get("/api/annotation/overlay?path=data_user/ds/images/a.png&alpha=1")
+        predicted = client.get(f"/api/runs/{run_id}/prediction?image=a.png&epoch=1&alpha=1")
+        truth_mask = client.get("/api/annotation/mask?path=data_user/ds/images/a.png")
+
+        assert truth.status_code == predicted.status_code == truth_mask.status_code == 200
+        blue, red = _center_pixel(truth.data), _center_pixel(predicted.data)
+        assert blue[2] > 200
+        assert blue[0] < 60
+        assert red[0] > 200
+        assert red[2] < 60
+        assert blue != red
+        assert _center_pixel(truth_mask.data) == (0, 0, 255)
+
+        # An image without a saved prediction has none: the prediction endpoint never falls back to the ground truth.
+        (dataset / "images" / "b.png").write_bytes(_solid_png((10, 120, 10)))
+        (dataset / "masks" / "b.png").write_bytes(_solid_png((0, 0, 255)))
+        assert client.get("/api/annotation/overlay?path=data_user/ds/images/b.png&alpha=1").status_code == 200
+        assert client.get(f"/api/runs/{run_id}/prediction?image=b.png&epoch=1&alpha=1").status_code == 404
+    finally:
+        mlflow_store.set_store(None)
+
+
+# ── Lineage updates ────────────────────────────────────────────────────────────
+
+
+def _register(client, name, tmp_path, parents=None):
+    sources = _two_sources(tmp_path)
+    return client.post("/api/datasets/merge", json={"name": name, "sources": sources}).get_json(), sources
+
+
+def test_set_lineage_replaces_parents_and_appears_in_listing(app_client, tmp_path):
+    client, _ = app_client
+    merged, sources = _register(client, "Child", tmp_path)
+
+    res = client.post(f"/api/datasets/{merged['id']}/parents", json={"parent_sources": [sources[1]]})
+
+    assert res.status_code == 200
+    assert res.get_json()["parent_sources"] == [sources[1]]
+    listed = next(d for d in client.get("/api/datasets").get_json() if d["source"] == merged["source"])
+    assert listed["parent_sources"] == [sources[1]]
+
+
+@pytest.mark.parametrize(
+    ("body", "status", "message"),
+    [
+        ({}, 400, "list"),
+        ({"parent_sources": []}, 400, "at least one"),
+        ({"parent_sources": ["../x.csv"]}, 400, "invalid"),
+        ({"parent_sources": ["data_user/missing.csv"]}, 404, "not found"),
+    ],
+)
+def test_set_lineage_rejects_bad_requests(app_client, tmp_path, body, status, message):
+    client, _ = app_client
+    merged, _ = _register(client, "Child", tmp_path)
+
+    res = client.post(f"/api/datasets/{merged['id']}/parents", json=body)
+
+    assert res.status_code == status
+    assert message in res.get_json()["error"]
+
+
+def test_set_lineage_rejects_self_cycles_and_unknown_datasets(app_client, tmp_path):
+    client, _ = app_client
+    merged, _ = _register(client, "Child", tmp_path)
+
+    own = client.post(f"/api/datasets/{merged['id']}/parents", json={"parent_sources": [merged["source"]]})
+    grandchild = client.post(
+        "/api/datasets/merge", json={"name": "Grandchild", "sources": [merged["source"], "data_user/m1.csv"]}
+    ).get_json()
+    cycle = client.post(f"/api/datasets/{merged['id']}/parents", json={"parent_sources": [grandchild["source"]]})
+
+    assert own.status_code == 400
+    assert cycle.status_code == 400
+    assert "cycle" in cycle.get_json()["error"]
+    assert client.post("/api/datasets/9999/parents", json={"parent_sources": ["x"]}).status_code == 404
+
+
+# ── Embeddings beside a created dataset ────────────────────────────────────────
+
+
+def test_created_dataset_picks_up_an_embeddings_file_placed_beside_its_csv(app_client, tmp_path):
+    client, _ = app_client
+    merged, _ = _register(client, "Embedded Later", tmp_path)
+    assert merged["has_embeddings"] is False
+    stem = merged["source"].removesuffix(".csv")
+
+    (tmp_path / f"{stem}.json").write_text(json.dumps({"embeddings": {"a.png": [0.1, 0.2]}}))
+
+    listed = next(d for d in client.get("/api/datasets").get_json() if d["source"] == merged["source"])
+    assert listed["has_embeddings"] is True
+    assert client.get(f"/api/dataset/embeddings?source={merged['source']}").status_code == 200
+
+
+def test_cloud_union_is_built_from_tile_parts_and_keeps_their_parent(app_client):
+    client, app_module = app_client
+    root = Path(app_module.DATA_ROOT)
+    curation = app_module.dataset_curation
+    full = "data_user/agristress500.csv"
+    part1, part2 = curation.TILE_SOURCES
+    _write_feature_csv(root / full, [{"image_path": "images/a.png", "width": "256", "score": "0"}])
+    _write_feature_csv(root / part1, [{"image_path": "images/a.png", "width": "256", "score": "0"}])
+    _write_feature_csv(root / part2, [{"image_path": "images/b.png", "width": "256", "score": "5"}])
+    app_module.db.create_dataset_record("Full", "", full, None, None, 1)
+    app_module.db.create_dataset_record("Part 1", "", part1, full, None, 1)
+    app_module.db.create_dataset_record("Part 2", "", part2, full, None, 1)
+
+    by_source = {dataset["source"]: dataset for dataset in client.get("/api/datasets").get_json()}
+
+    assert by_source[curation.CLOUD_SOURCE]["row_count"] == 2
+    assert by_source[part1]["parent_sources"] == [full, curation.CLOUD_SOURCE]
+    assert by_source[part2]["parent_sources"] == [full, curation.CLOUD_SOURCE]

@@ -608,7 +608,8 @@ def create_dataset() -> ResponseReturnValue:
             top_k=spec.complement_top_k,
         )
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
+        app.logger.info("Dataset derivation validation failed: %s", exc)
+        return jsonify({"error": "Invalid dataset derivation request"}), 400
 
     rel = _write_child_csv(spec.name, derived.columns, derived.rows)
 

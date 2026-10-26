@@ -1121,11 +1121,11 @@ def test_merge_writes_deduplicated_union_with_every_parent(app_client, tmp_path)
 @pytest.mark.parametrize(
     ("body", "status", "message"),
     [
-        ({"sources": ["a", "b"]}, 400, "name required"),
-        ({"name": "x", "sources": ["data_user/m1.csv"]}, 400, "at least two"),
-        ({"name": "x", "sources": ["data_user/m1.csv", "data_user/m1.csv"]}, 400, "at least two"),
-        ({"name": "x", "sources": ["data_user/m1.csv", "../etc/passwd"]}, 400, "invalid source"),
-        ({"name": "x", "sources": "data_user/m1.csv"}, 400, "list"),
+        ({"sources": ["a", "b"]}, 400, "invalid merge request"),
+        ({"name": "x", "sources": ["data_user/m1.csv"]}, 400, "invalid merge request"),
+        ({"name": "x", "sources": ["data_user/m1.csv", "data_user/m1.csv"]}, 400, "invalid merge request"),
+        ({"name": "x", "sources": ["data_user/m1.csv", "../etc/passwd"]}, 400, "invalid merge request"),
+        ({"name": "x", "sources": "data_user/m1.csv"}, 400, "invalid merge request"),
         ({"name": "x", "sources": ["data_user/m1.csv", "data_user/missing.csv"]}, 404, "not found"),
     ],
 )

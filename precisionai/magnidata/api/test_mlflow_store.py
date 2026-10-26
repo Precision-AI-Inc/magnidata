@@ -6,6 +6,7 @@
 Run:  python -m pytest precisionai/magnidata/api/test_mlflow_store.py -q
 """
 
+import socket
 import time
 
 import mlflow_store
@@ -24,14 +25,23 @@ def test_status_reachable(mlflow_store):
     assert status["version"]
 
 
+def _closed_local_port() -> int:
+    # A just-released ephemeral port is refused immediately everywhere; hardcoded low ports are
+    # silently dropped by some firewalls (e.g. WSL), which turns "refused" into a connect timeout.
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 def test_status_unreachable_returns_quickly():
-    store = MlflowStore("http://127.0.0.1:1")
+    url = f"http://127.0.0.1:{_closed_local_port()}"
+    store = MlflowStore(url)
     started = time.monotonic()
     status = store.status()
     assert time.monotonic() - started < 15
     assert status["reachable"] is False
     # A fixed message: the underlying connection error is logged, not returned to clients.
-    assert status["error"] == "MLflow is not reachable at http://127.0.0.1:1"
+    assert status["error"] == f"MLflow is not reachable at {url}"
 
 
 def test_run_entities_are_plain_dicts(mlflow_store):

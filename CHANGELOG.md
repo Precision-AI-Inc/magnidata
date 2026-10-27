@@ -7,52 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- `LICENSE.md` is the unmodified Apache License 2.0 text. It had reworded definitions and clauses (the "Work" and
-  "Contribution" definitions, no "Contributor" definition, and sections 8 and 9), so the repository was not under the
-  standard license and GitHub listed it as "Other" instead of Apache-2.0.
-- The COCO128 demo can be trained on: its build now writes a colour mask per image next to the polygon labels
-  (the 15 largest classes keep their own colour, the rest share one), where before the trainer refused it with
-  "dataset has no segmentation masks to train on". A COCO128 built earlier has no masks; delete it and prepare it
-  again.
-- A demo dataset whose record outlived its files (the database volume persists while `data_user/` belongs to the
-  checkout, so a fresh clone keeps the record) is built again instead of failing with "the AgriStress-500 demo
-  dataset has already been built" while the dataset list shows it as not added.
-- Code scanning: the MLflow artifact cache only accepts real run ids and refuses artifact paths outside a run's
-  folder; data paths are checked for containment in the form CodeQL recognises; the embedding and MLflow-status
-  endpoints return fixed error messages and log the underlying error, which could contain server paths.
-- The trainer has 16 GB of shared memory instead of 1 GB, so full-size reference training (for example LR-ASPP
-  at 798×532) no longer hangs when its data-loader workers run out of room for prefetched batches.
-- Run detail and run compare plot every metric of a run instead of only the first 20 keys, which left most
-  charts of an AgriTune run (about 140 per-class metrics) empty.
-- *Input resolution: Original size* no longer refuses datasets with more than one image size (SEEDPLANT mixes
-  798×532 and 810×540 tiles). It trains at the size most images share: AgriTune still encodes every image as it
-  is and resizes the other masks to that size (as AgriTune's own `geometric.resize` does), the reference trainer
-  resizes their images and masks, and the run log says how many were resized.
-- AgriTune runs launched from the portal use the hosted encoder (`https://embeddings.precision.ai/v1`) by default,
-  with the key read from AgriTune's own `../agritune/.env`, instead of silently falling back to the fake encoder,
-  whose features cannot teach the decoder anything but the most common class. The run log names the encoder in use;
-  `AGRITUNE_ENCODER_BASE_URL=` (empty) still selects the offline fake encoder.
-- AgriTune runs prepare their data in parallel (one process per spare core, at most 8) and log progress while they scan
-  mask colours and stage resized images, instead of working through a large dataset in one process for hours with an
-  empty log. The worker also starts trainers with unbuffered output, so a failure such as a full disk is recorded in
-  the run log rather than ending as a bare *trainer exited with code 120*.
-- Building a dataset from a server folder or a browser upload now extracts features with the same worker pool as the
-  AgriStress-500 build (up to 6 processes, bounded by CPU and memory) instead of a single process, so large folders
-  build several times faster.
-- A dataset build no longer shows *Lost track of the build — Failed to fetch* after one dropped status request while
-  it keeps running on the server: the portal retries with backoff for about three minutes, keeping the last progress,
-  and says plainly when an API restart has lost the build.
-- The User Guide's AgriTune setup adds the AgriTune file to an existing `COMPOSE_FILE` instead of appending a second
-  line that silently dropped the GPU file. The trainer's *AgriTune is required for this preset* error now names the
-  missing AgriTune module.
-- AgriTune runs now train on the device named by `MAGNIDATA_TRAIN_DEVICE` (default `auto`, so the GPU when one is
-  available) instead of always using the CPU, and fail with a clear message when `cuda` is requested without a GPU.
-- The Train dialog no longer sends reference-only settings for AgriTune presets, which the API rejected with a 400.
-- Cancelling an AgriTune run stops it within seconds instead of at the end of the current epoch.
-- The release workflow's GitHub Release job sets `GH_REPO`, so `gh` no longer fails with *not a git repository* when
-  it creates, uploads to and publishes the release from a job that has no checkout.
+## [0.1.1] - 2026-10-27
 
 ### Added
 
@@ -77,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     and presets unavailable) instead of trying a server that is not there, and the portal stops polling for runs and
     presets, so neither side logs a failure every few seconds. The portal's footer links to the GitHub repository, and
     the Space card (`deploy/huggingface/README.md`) follows the repository's README and lists both datasets.
+
+### Fixed
+
+- `LICENSE.md` is the unmodified Apache License 2.0 text. It had reworded definitions and clauses (the "Work" and
+  "Contribution" definitions, no "Contributor" definition, and sections 8 and 9), so the repository was not under the
+  standard license and GitHub listed it as "Other" instead of Apache-2.0.
+- The release workflow's GitHub Release job sets `GH_REPO`, so `gh` no longer fails with *not a git repository* when
+  it creates, uploads to and publishes the release from a job that has no checkout.
+
+## [0.1.0] - 2026-10-26
+
+_This release also carries the changes since 0.0.3: the earlier releases were not recorded separately._
+
+### Added
+
 - AgriTune ASPP, Pyramid Pooling, Segmenter and MaskFormer presets, so the portal offers all six AgriTune decoders,
   with each decoder's options (atrous rates, pool sizes, attention heads, MLP ratio, mask queries, widths and
   layers) under the Train dialog's advanced Decoder section; left empty, they keep that decoder's defaults.
@@ -190,7 +160,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   training on the CPU. The trainer now prints the device and per-batch/epoch/scoring progress (flushed, uploaded
   to MLflow every 30 s), logs `perf/epoch_seconds` and `perf/samples_per_sec`, and sets the `magnidata.device` and
   `magnidata.eta_seconds` tags, shown as a GPU/CPU badge and ETA in the Experiments table and run detail.
-
 - Close the loop: after saving a curated dataset, **Train on it** opens the Train dialog with the overlaid run's
   settings and records the run as its parent (shown as lineage in run detail and an optional "Parent run" column).
   **Export relabel queue** downloads the selected images with their losses, hardness and notes, hardest first.
@@ -269,22 +238,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `api -> http://localhost:5051/api/health`) in the API's startup log, driven by the
   `MAGNIDATA_PORTAL_URL` / `MAGNIDATA_API_URL` variables in `docker-compose.yml`.
 
-### Fixed
-
-- An embeddings file uploaded with a new dataset never matched its images: uploads are renamed when staged
-  (`<name>-<hash>.png`) but the file was stored keyed by the original names, so the Embeddings view had nothing to
-  draw. The portal now re-keys the vectors to the staged names and rejects a file that matches no image.
-- A dataset created in the portal (server-folder build, upload, tiles) had no way to gain embeddings afterwards. It now
-  picks up a `<csv stem>.json` placed beside its CSV, the same rule configured datasets already follow.
-- The image preview's ground-truth caption was unreadable (white text on a light bar); lineage card names now wrap
-  to two lines instead of truncating, and selecting a dataset frames its whole lineage instead of centring on it.
-- The image preview's **Prediction** tab showed the dataset's ground-truth overlay whenever the run had no saved
-  prediction for that image, so ground truth could be mistaken for model output. Each tab now maps to its own
-  source with no fallback (a missing prediction shows "No saved inference" and the Run inference button), and the
-  Mask, Overlay and Prediction views carry a caption naming their source.
-- Dataset cards in the lineage graph could not be clicked, so datasets could neither be opened in the Visual
-  Explorer nor deleted: React Flow disabled pointer events on its non-interactive nodes.
-
 ### Changed
 
 - Renamed the project to MagniData throughout: the distribution is now `magnidata`
@@ -314,6 +267,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The COCO128 demo can be trained on: its build now writes a colour mask per image next to the polygon labels
+  (the 15 largest classes keep their own colour, the rest share one), where before the trainer refused it with
+  "dataset has no segmentation masks to train on". A COCO128 built earlier has no masks; delete it and prepare it
+  again.
+- A demo dataset whose record outlived its files (the database volume persists while `data_user/` belongs to the
+  checkout, so a fresh clone keeps the record) is built again instead of failing with "the AgriStress-500 demo
+  dataset has already been built" while the dataset list shows it as not added.
+- Code scanning: the MLflow artifact cache only accepts real run ids and refuses artifact paths outside a run's
+  folder; data paths are checked for containment in the form CodeQL recognises; the embedding and MLflow-status
+  endpoints return fixed error messages and log the underlying error, which could contain server paths.
+- The trainer has 16 GB of shared memory instead of 1 GB, so full-size reference training (for example LR-ASPP
+  at 798×532) no longer hangs when its data-loader workers run out of room for prefetched batches.
+- Run detail and run compare plot every metric of a run instead of only the first 20 keys, which left most
+  charts of an AgriTune run (about 140 per-class metrics) empty.
+- *Input resolution: Original size* no longer refuses datasets with more than one image size (SEEDPLANT mixes
+  798×532 and 810×540 tiles). It trains at the size most images share: AgriTune still encodes every image as it
+  is and resizes the other masks to that size (as AgriTune's own `geometric.resize` does), the reference trainer
+  resizes their images and masks, and the run log says how many were resized.
+- AgriTune runs launched from the portal use the hosted encoder (`https://embeddings.precision.ai/v1`) by default,
+  with the key read from AgriTune's own `../agritune/.env`, instead of silently falling back to the fake encoder,
+  whose features cannot teach the decoder anything but the most common class. The run log names the encoder in use;
+  `AGRITUNE_ENCODER_BASE_URL=` (empty) still selects the offline fake encoder.
+- AgriTune runs prepare their data in parallel (one process per spare core, at most 8) and log progress while they scan
+  mask colours and stage resized images, instead of working through a large dataset in one process for hours with an
+  empty log. The worker also starts trainers with unbuffered output, so a failure such as a full disk is recorded in
+  the run log rather than ending as a bare *trainer exited with code 120*.
+- Building a dataset from a server folder or a browser upload now extracts features with the same worker pool as the
+  AgriStress-500 build (up to 6 processes, bounded by CPU and memory) instead of a single process, so large folders
+  build several times faster.
+- A dataset build no longer shows *Lost track of the build — Failed to fetch* after one dropped status request while
+  it keeps running on the server: the portal retries with backoff for about three minutes, keeping the last progress,
+  and says plainly when an API restart has lost the build.
+- The User Guide's AgriTune setup adds the AgriTune file to an existing `COMPOSE_FILE` instead of appending a second
+  line that silently dropped the GPU file. The trainer's *AgriTune is required for this preset* error now names the
+  missing AgriTune module.
+- AgriTune runs now train on the device named by `MAGNIDATA_TRAIN_DEVICE` (default `auto`, so the GPU when one is
+  available) instead of always using the CPU, and fail with a clear message when `cuda` is requested without a GPU.
+- The Train dialog no longer sends reference-only settings for AgriTune presets, which the API rejected with a 400.
+- Cancelling an AgriTune run stops it within seconds instead of at the end of the current epoch.
+- An embeddings file uploaded with a new dataset never matched its images: uploads are renamed when staged
+  (`<name>-<hash>.png`) but the file was stored keyed by the original names, so the Embeddings view had nothing to
+  draw. The portal now re-keys the vectors to the staged names and rejects a file that matches no image.
+- A dataset created in the portal (server-folder build, upload, tiles) had no way to gain embeddings afterwards. It now
+  picks up a `<csv stem>.json` placed beside its CSV, the same rule configured datasets already follow.
+- The image preview's ground-truth caption was unreadable (white text on a light bar); lineage card names now wrap
+  to two lines instead of truncating, and selecting a dataset frames its whole lineage instead of centring on it.
+- The image preview's **Prediction** tab showed the dataset's ground-truth overlay whenever the run had no saved
+  prediction for that image, so ground truth could be mistaken for model output. Each tab now maps to its own
+  source with no fallback (a missing prediction shows "No saved inference" and the Run inference button), and the
+  Mask, Overlay and Prediction views carry a caption naming their source.
+- Dataset cards in the lineage graph could not be clicked, so datasets could neither be opened in the Visual
+  Explorer nor deleted: React Flow disabled pointer events on its non-interactive nodes.
 - Resized training-cache eviction now uses the main cache entry's access time instead of the newer timestamp from
   its immutable colour-count companion, so least-recently-used ordering is deterministic and retains recent entries.
 - Loading a dataset could fail in the browser with a bare "Failed to fetch", console-only
@@ -349,4 +354,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry at a time (same 1 GiB file: 467 MB peak), and concurrent requests for the same
   dataset share a single parse.
 
-[Unreleased]: https://github.com/Precision-AI-Inc/magnidata/compare/0.0.3...HEAD
+[Unreleased]: https://github.com/Precision-AI-Inc/magnidata/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Precision-AI-Inc/magnidata/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/Precision-AI-Inc/magnidata/compare/0.0.3...v0.1.0

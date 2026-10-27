@@ -5,6 +5,7 @@
 # Precision AI MagniData
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
+[![Hugging Face Space](https://img.shields.io/badge/Hugging%20Face-Live%20demo-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/spaces/precisionaiinc/magnidata)
 
 ---
 
@@ -12,6 +13,9 @@ Precision AI Open Source Data Visualization Tool for exploring image datasets: a
 deterministic feature-extraction pipeline, a Flask API, and a React/Three.js dashboard
 for browsing images, segmentation masks, and embeddings — including a live 3D
 PCA/t-SNE/cluster view over a dataset's embedding space.
+
+**Try it without installing anything:** the [live demo on Hugging Face](https://huggingface.co/spaces/precisionaiinc/magnidata)
+has COCO128 and AgriStress-500 already loaded.
 
 - **`precisionai/magnidata/tools/`** — a domain-agnostic feature extractor: turns a folder of
   images (optionally with COCO-format segmentation annotations) into a single CSV of

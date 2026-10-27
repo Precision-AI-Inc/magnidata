@@ -28,7 +28,7 @@ Embeddings are joined to the table by image basename, and a mismatch silently be
 `api/preload_demo.py --bundle DIR` installs a bundle and registers it the way a demo build does (a first-class dataset
 with its own embeddings) and precomputes the 3D projections, so the first view is instant.
 
-The bundle lives in a public Hugging Face dataset repository used only by the Space, `precisionaiinc/AgriStress-500-Demo`
+The bundle lives in a public Hugging Face dataset repository used only by the Space, `precisionaiinc/AgriStress-500-Downsized`
 (public because AgriStress-500 is, which also means the build needs no token). It is deliberately not the published
 `precisionaiinc/AgriStress-500`: that is a public dataset other people load as an `imagefolder`, extra image folders
 would change what `load_dataset` returns, and a separate name keeps people from mistaking a downsized copy for the real
@@ -104,7 +104,7 @@ Docker), and the feature extractor spawns worker processes, so a script that dri
   endpoint is reachable (no 403) and the API serves no dashboard.
 - Full suite: 693 passed, 50 skipped (the torch and AgriTune tests, skipped as before), coverage 71.77% against the
   60% gate. `main` before this task: 589 passed, 69.51%. Ruff, ruff format and pyright are clean.
-- On Hugging Face: the public data repo `precisionaiinc/AgriStress-500-Demo` (1358 files, `cc-by-nc-4.0`) and the
+- On Hugging Face: the public data repo `precisionaiinc/AgriStress-500-Downsized` (1358 files, `cc-by-nc-4.0`) and the
   private Space `precisionaiinc/magnidata` were created, the Space building this branch. The first build, which
   includes `RUN --mount=type=bind,from=` and the bundle download, finished in about a minute and a half and the Space
   reached RUNNING on `cpu-basic`. A smoke test over HTTPS shows both datasets (128 and 451 rows, with embeddings), every
@@ -128,4 +128,7 @@ Docker), and the feature extractor spawns worker processes, so a script that dri
   jobs and compute caches are in-process: with two, polling a job could reach a worker that never started it. Only the
   Space's Dockerfile changes; `app.py`, the compose stack and the requirements are untouched, and a test pins the
   command and the single worker.
+- The data repo was renamed from `AgriStress-500-Demo` to `AgriStress-500-Downsized`, which says what it holds (a
+  downsized copy) and matches its card. Hugging Face redirects the old name; every reference in the repository, the
+  Space's `datasets:` list and the Dockerfile's `DEMO_DATA_REPO` default use the new one.
 - Not done: switching the Space's Dockerfile from `feature/hf-space` to `main` once this merges.

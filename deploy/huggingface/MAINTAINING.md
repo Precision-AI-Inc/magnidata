@@ -5,7 +5,7 @@ dashboard in one container with two datasets already loaded:
 
 - **COCO128** is built while the image is built, by the app's own demo build from its public download.
 - **AgriStress-500** is installed from a bundle in a Hugging Face dataset repo,
-  `precisionaiinc/AgriStress-500-Demo`. The originals are 12 GB, which is too much to build inside an image. That
+  `precisionaiinc/AgriStress-500-Downsized`. The originals are 12 GB, which is too much to build inside an image. That
   repo exists only for the Space; it is a downsized derivative, not the dataset, and its name keeps it distinct from
   the real `precisionaiinc/AgriStress-500` (`space-data-card.md` is its card).
 
@@ -55,9 +55,9 @@ covers just your account can read the organization but cannot create repositorie
 ### Create the repositories and upload
 
 ```bash
-hf repos create precisionaiinc/AgriStress-500-Demo --repo-type dataset
-hf upload precisionaiinc/AgriStress-500-Demo deploy/huggingface/space-data-card.md README.md --repo-type dataset
-hf upload precisionaiinc/AgriStress-500-Demo bundles/agristress500 agristress500 --repo-type dataset
+hf repos create precisionaiinc/AgriStress-500-Downsized --repo-type dataset
+hf upload precisionaiinc/AgriStress-500-Downsized deploy/huggingface/space-data-card.md README.md --repo-type dataset
+hf upload precisionaiinc/AgriStress-500-Downsized bundles/agristress500 agristress500 --repo-type dataset
 
 hf repos create precisionaiinc/magnidata --repo-type space --space-sdk docker --private
 ```
@@ -69,7 +69,7 @@ that means the build needs no token and anyone can rebuild the Space. The Space 
 switch it to public in its Settings when it is ready to release.
 
 To keep the data repo private instead, add `--private` to its `hf repos create`, create a fine-grained token with read
-access to `precisionaiinc/AgriStress-500-Demo` only, and add it in the Space's Settings as a **secret** named
+access to `precisionaiinc/AgriStress-500-Downsized` only, and add it in the Space's Settings as a **secret** named
 `HF_TOKEN`. Docker Spaces mount secrets into the build at `/run/secrets/<NAME>`, which is how the Dockerfile reads it.
 
 ### Upload the Space's files
@@ -133,7 +133,7 @@ write access comes from the organization, so before the switch, check who has it
   `contributor` can change only the repositories that member created; `read` and `no_access` cannot change anything.
   Keep `write` and `admin` for the people who maintain the Space, and give everyone else `read`.
 - **Resource Groups** (Team plan) narrow this to named people per repository: put `precisionaiinc/magnidata` and
-  `precisionaiinc/AgriStress-500-Demo` in one group and add only the maintainers with the `write` role. A repository
+  `precisionaiinc/AgriStress-500-Downsized` in one group and add only the maintainers with the `write` role. A repository
   belongs to one group, which is why both go in the same one. Test the result with a member whose org role is `read`.
 - **Discussions and pull requests** stay open to every signed-in user on a public Space. Disable them in the Space's
   Settings if the Space should take no outside contributions; the repository on GitHub is where those belong.

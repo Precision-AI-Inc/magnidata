@@ -1,6 +1,6 @@
 ---
 license: cc-by-nc-4.0
-pretty_name: AgriStress-500-Demo
+pretty_name: AgriStress-500-Downsized
 task_categories:
   - image-segmentation
 tags:
@@ -8,7 +8,7 @@ tags:
   - magnidata
 ---
 
-# AgriStress-500-Demo
+# AgriStress-500-Downsized
 
 A downsized copy of [AgriStress-500](https://huggingface.co/datasets/precisionaiinc/AgriStress-500), prepared for
 the MagniData demo Space. It exists only to feed that Space. **It is not the dataset**, and it is not meant for

@@ -18,7 +18,7 @@
 
 ARG MAGNIDATA_REPO=https://github.com/Precision-AI-Inc/magnidata.git
 ARG MAGNIDATA_REF=main
-ARG DEMO_DATA_REPO=precisionaiinc/AgriStress-500-Demo
+ARG DEMO_DATA_REPO=precisionaiinc/AgriStress-500-Downsized
 
 # ── Stage 1: source ───────────────────────────────────────────────────────────
 FROM alpine:3.20 AS source

@@ -4,7 +4,20 @@ import { batches, METRIC_KEYS_PER_REQUEST } from './lib/metrics'
 
 const BASE = '/api'
 
+// A deployment with no MLflow server (the demo) answers these locally, as the server would with a 503, instead of
+// asking every few seconds for something that cannot be there.
+const MLFLOW_BACKED = [
+  `${BASE}/mlflow/`, `${BASE}/experiments`, `${BASE}/runs`, `${BASE}/training/presets`, `${BASE}/datasets/experiment-counts`,
+]
+let mlflowOffline = false
+export function setMlflowOffline(offline: boolean): void {
+  mlflowOffline = offline
+}
+
 async function get<T>(url: string): Promise<T> {
+  if (mlflowOffline && MLFLOW_BACKED.some(prefix => url.startsWith(prefix))) {
+    throw new ApiError('503: MLflow is not part of this deployment', 503)
+  }
   const r = await fetch(url)
   if (!r.ok) {
     const body = await r.text()
@@ -152,6 +165,11 @@ export interface DemoEntry {
   name: string
   description: string
   enabled: boolean
+}
+
+export interface ServerConfig {
+  /** True on a demo deployment, where building datasets, training and experiments are turned off. */
+  demo_mode: boolean
 }
 
 export interface BuildLimits {
@@ -309,6 +327,7 @@ export const api = {
 
   // ── Build a dataset from images (BYOD) ──────────────────────────────────────
   listDemos: () => get<DemoEntry[]>(`${BASE}/datasets/demos`),
+  config: () => get<ServerConfig>(`${BASE}/config`),
   buildLimits: () => get<BuildLimits>(`${BASE}/datasets/build/limits`),
   buildDataset: (formData: FormData, onUploadProgress?: (percent: number) => void) =>
     postForm<{ job_id: string }>(`${BASE}/datasets/build`, formData, onUploadProgress),

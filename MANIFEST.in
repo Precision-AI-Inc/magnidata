@@ -13,4 +13,5 @@ include precisionai/magnidata/confi.yaml
 prune precisionai/magnidata/dashboard
 exclude precisionai/magnidata/api/.dockerignore
 prune docs
+prune deploy
 prune .github

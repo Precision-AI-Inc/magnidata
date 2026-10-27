@@ -16,6 +16,8 @@ interface Props {
   onViewExperiments: (source: string) => void
   onDelete: (id: number) => void
   onOpenByod: () => void
+  /** Why adding datasets and viewing experiments are off on this server, shown as their tooltip. */
+  demoReason?: string
   onUploadFile: (file: File) => void
   /** Reload the dataset catalogue after a merge created a new dataset. */
   onDatasetsChanged: () => Promise<unknown> | void
@@ -53,7 +55,7 @@ function useServices(): ServiceState {
   return state
 }
 
-export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDelete, onOpenByod, onUploadFile, onDatasetsChanged }: Props) {
+export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDelete, onOpenByod, demoReason, onUploadFile, onDatasetsChanged }: Props) {
   const services = useServices()
   const upload = useRef<HTMLInputElement>(null)
   const experiments = useExperimentCounts()
@@ -108,8 +110,10 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
           <p>Select a dataset to inspect it, then open it in the Visual Explorer or review its experiments.</p>
         </div>
         <div className="workspace-toolbar__actions">
-          <button className="btn-ghost" onClick={() => upload.current?.click()}><UploadCloud size={14} /> Upload CSV</button>
-          <button className="btn-primary" onClick={onOpenByod}><Plus size={14} /> Add dataset</button>
+          <button className="btn-ghost" onClick={() => upload.current?.click()} disabled={!!demoReason} title={demoReason}
+                  style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}><UploadCloud size={14} /> Upload CSV</button>
+          <button className="btn-primary" onClick={onOpenByod} disabled={!!demoReason} title={demoReason}
+                  style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}><Plus size={14} /> Add dataset</button>
           <input ref={upload} type="file" accept=".csv" hidden
                  onChange={event => {
                    const file = event.target.files?.[0]
@@ -125,7 +129,8 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
             ? <DatasetGraph datasets={datasets} selection={known} experiments={experiments} onSelect={select}
                             onOpen={onOpenDataset} onDelete={id => { setSelection([]); onDelete(id) }} />
             : (
-              <button className="workspace-empty" onClick={onOpenByod}>
+              <button className="workspace-empty" onClick={onOpenByod} disabled={!!demoReason} title={demoReason}
+                      style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
                 <UploadCloud size={22} />
                 <span><strong>Add your first dataset</strong><small>Upload images and labels or load a demo.</small></span>
               </button>
@@ -139,6 +144,7 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
                 datasets={datasets}
                 onOpenExplorer={() => onOpenDataset(dataset.source)}
                 onViewExperiments={() => onViewExperiments(dataset.source)}
+                experimentsDisabled={demoReason}
                 onDelete={id => { setSelection([]); onDelete(id) }}
                 onSelect={source => setSelection([source])}
                 onClose={() => setSelection([])}

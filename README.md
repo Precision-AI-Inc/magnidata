@@ -97,6 +97,16 @@ embeddings JSON. For larger uploads, raise both the API service's
 `DATASET_BUILD_MAX_TOTAL_BYTES` and `dashboard/nginx.conf`'s `client_max_body_size` — or
 use the `./image_sets` route, which bypasses the upload entirely.
 
+### Hugging Face Space
+
+[`deploy/huggingface/`](deploy/huggingface) builds MagniData as a single-container
+[Hugging Face Space](https://huggingface.co/spaces/precisionaiinc/magnidata) with COCO128 and AgriStress-500
+already loaded. Its Dockerfile clones this repository at a chosen branch or tag, builds the dashboard, builds
+COCO128 while the image is built and installs AgriStress-500 from a downsized bundle; the API serves the dashboard
+itself when `MAGNIDATA_STATIC_DIR` is set. The Space is a read-only demo (`MAGNIDATA_DEMO_MODE`), so anything that
+changes data, training and the Experiments tab are turned off there (no MLflow or trainer). See
+[`deploy/huggingface/MAINTAINING.md`](deploy/huggingface/MAINTAINING.md) to build it locally or update the Space.
+
 ---
 
 ## Installation (Python package only)

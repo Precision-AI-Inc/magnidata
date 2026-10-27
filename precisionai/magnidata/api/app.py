@@ -36,6 +36,7 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import normalize
 from werkzeug.datastructures import FileStorage
 from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.security import safe_join
 
 load_dotenv()
 
@@ -128,6 +129,82 @@ def _data_path(relative_path: str) -> str:
 def health() -> ResponseReturnValue:
     """Return service status and local-filesystem/datalake accessibility."""
     return jsonify({"status": "ok", "local": local_files.local_status()})
+
+
+# ── Demo deployment ────────────────────────────────────────────────────────────
+# Set on a deployment that ships its datasets preloaded and is open to anyone (the Hugging Face
+# Space). The server then refuses the requests below, which would change data shared by every
+# visitor, download data or train, and the dashboard shows those controls disabled. Unset, no hook
+# is registered and nothing about the API changes.
+DEMO_MODE = os.environ.get("MAGNIDATA_DEMO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
+DEMO_DISABLED_MESSAGE = "Disabled for the Demo"
+# (method, URL rule) pairs, so the id in a path does not matter. Each writes to the database or the
+# data folder, or starts a build, training or inference; the debug endpoint is unused by the dashboard.
+_DEMO_REFUSED = frozenset(
+    {
+        ("POST", "/api/datasets/build"),
+        ("POST", "/api/datasets"),
+        ("POST", "/api/datasets/merge"),
+        ("POST", "/api/datasets/<int:ds_id>/parents"),
+        ("DELETE", "/api/datasets/<int:ds_id>"),
+        ("POST", "/api/notes"),
+        ("PUT", "/api/notes/<int:note_id>"),
+        ("DELETE", "/api/notes/<int:note_id>"),
+        ("POST", "/api/partitions/commit"),
+        ("POST", "/api/training/runs"),
+        ("POST", "/api/runs/<run_id>/cancel"),
+        ("POST", "/api/runs/<run_id>/link"),
+        ("POST", "/api/runs/<run_id>/inference"),
+        ("GET", "/api/mask/debug"),
+    }
+)
+# The image endpoints open whichever file these parameters name. On an open server that must stay
+# inside DATA_ROOT, and a remote URL is never needed: every demo image is local.
+_DEMO_PATH_PARAMS = {
+    "/api/image": ("path",),
+    "/api/mask": ("path",),
+    "/api/overlay": ("img", "mask"),
+    "/api/annotation/mask": ("path",),
+    "/api/annotation/overlay": ("path",),
+}
+# The 3D view starts an analysis job per request, each in its own thread, and finished jobs are kept.
+DEMO_MAX_RUNNING_ANALYSES = 4
+DEMO_MAX_KEPT_ANALYSES = 50
+
+
+@app.get("/api/config")
+def get_config() -> ResponseReturnValue:
+    """Return the deployment settings the dashboard adapts to."""
+    return jsonify({"demo_mode": DEMO_MODE})
+
+
+def _demo_path_allowed(path: str) -> bool:
+    """Whether an image path names a file inside DATA_ROOT: no URL, no absolute path, no traversal."""
+    if local_files.is_remote_url(path):
+        return False
+    try:
+        _data_path(path)
+    except ValueError:
+        return False
+    return True
+
+
+if DEMO_MODE:
+
+    @app.before_request
+    def refuse_in_demo_mode() -> ResponseReturnValue | None:
+        """Refuse what a demo deployment disables, before a handler or an upload is read."""
+        rule = request.url_rule.rule if request.url_rule is not None else ""
+        if (request.method, rule) in _DEMO_REFUSED:
+            return jsonify({"error": DEMO_DISABLED_MESSAGE}), 403
+        for name in _DEMO_PATH_PARAMS.get(rule, ()):
+            value = request.args.get(name, "").strip()
+            if value and not _demo_path_allowed(value):
+                return jsonify({"error": "invalid path"}), 400
+        return None
+
+    # There is no MLflow server here: answer its questions at once, instead of retrying a dead address on every poll.
+    mlflow_store.set_store(mlflow_store.OfflineStore())
 
 
 # ── MLflow ─────────────────────────────────────────────────────────────────────
@@ -1228,6 +1305,19 @@ def _run_analysis_job(job_id: str, source: str, variant: str | None, k: int, red
         )
 
 
+def _make_room_for_analysis() -> bool:
+    """Demo mode: refuse a new analysis while too many run, and forget the oldest finished ones.
+
+    Call with ``_ANALYSIS_JOBS_LOCK`` held.
+    """
+    finished = [job_id for job_id, job in _ANALYSIS_JOBS.items() if job["status"] in {"done", "error"}]
+    if len(_ANALYSIS_JOBS) - len(finished) >= DEMO_MAX_RUNNING_ANALYSES:
+        return False
+    for job_id in finished[: max(0, len(finished) - DEMO_MAX_KEPT_ANALYSES + 1)]:
+        del _ANALYSIS_JOBS[job_id]
+    return True
+
+
 @app.post("/api/embedding/analysis")
 def start_embedding_analysis() -> ResponseReturnValue:
     """Start a background job returning one selected projection and K-means labels."""
@@ -1250,6 +1340,8 @@ def start_embedding_analysis() -> ResponseReturnValue:
 
     job_id = uuid.uuid4().hex
     with _ANALYSIS_JOBS_LOCK:
+        if DEMO_MODE and not _make_room_for_analysis():
+            return jsonify({"error": "too many analyses are running, try again in a moment"}), 429
         _ANALYSIS_JOBS[job_id] = {
             "job_id": job_id,
             "status": "queued",
@@ -1380,6 +1472,38 @@ def _compare_response(source: str, variant: str, cache_key: tuple) -> ResponseRe
     result = _compare_result(names, matrix, name_to_row)
     _COMPUTE_CACHE[cache_key] = result
     return jsonify(result)
+
+
+# ── Built dashboard ────────────────────────────────────────────────────────────
+# Set when this one process must serve the dashboard as well as the API (a Hugging Face
+# Space runs a single container, so there is no nginx in front). Unset, no routes are added.
+_static_dir_env = os.environ.get("MAGNIDATA_STATIC_DIR", "").strip()
+STATIC_DIR = os.path.abspath(_static_dir_env) if _static_dir_env else ""
+
+if STATIC_DIR:
+
+    @app.get("/", defaults={"path": ""})
+    @app.get("/<path:path>")
+    def serve_dashboard(path: str) -> ResponseReturnValue:
+        """Serve the built dashboard, falling back to index.html for client-side routes.
+
+        Mirrors dashboard/nginx.conf: hashed files under assets/ are cached forever and a
+        missing one is a 404 (index.html would reach the browser as a module script with a
+        text/html type, which it refuses), and index.html is always revalidated. An unknown
+        /api path is a JSON 404 rather than the dashboard.
+        """
+        if path == "api" or path.startswith("api/"):
+            return jsonify({"error": "not found"}), 404
+        if path.startswith("assets/"):
+            resp = send_from_directory(STATIC_DIR, path)
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return resp
+        candidate = safe_join(STATIC_DIR, path)
+        name = path if path and candidate and os.path.isfile(candidate) else "index.html"
+        resp = send_from_directory(STATIC_DIR, name)
+        if name == "index.html":
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
 
 def _access_banner() -> str | None:

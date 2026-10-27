@@ -1,3 +1,5 @@
+import { DEMO_DISABLED_REASON } from './demo'
+
 export interface Bound {
   type: 'int' | 'float' | 'choice' | 'list' | 'map' | 'bool'
   min?: number
@@ -118,10 +120,13 @@ export interface TrainState {
   workerAvailable: boolean
   workerReason?: string | null
   activeRunId: string | null
+  /** A demo deployment: training is off whatever the services report. */
+  demo?: boolean
 }
 
 /** Why "Train" is disabled, or null when it can be used. Earlier causes take precedence. */
 export function trainDisabledReason(s: TrainState): string | null {
+  if (s.demo) return DEMO_DISABLED_REASON
   if (!s.hasDataset) return 'Load a dataset to train on'
   if (!s.mlflowReachable) return 'MLflow is not reachable'
   if (!s.workerAvailable) return s.workerReason ? `Trainer worker unavailable: ${s.workerReason}` : 'Trainer worker unavailable'

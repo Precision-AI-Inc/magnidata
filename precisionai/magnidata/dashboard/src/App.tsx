@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Activity, ChevronLeft, ChevronRight, CloudDownload, Columns, Database, Download, FlaskConical, LayoutGrid, Loader2, Plus, Save, Share2, SlidersHorizontal, Table2, Trash2, X, BarChart2 } from 'lucide-react'
 import { rememberWorkspaceSelection } from './lib/workspaceSelection'
-import { api, errorText } from './api'
+import { api, errorText, setMlflowOffline } from './api'
 import type { DatasetMeta } from './api'
 import { useCSV } from './hooks/useCSV'
 import { useFilters } from './hooks/useFilters'
@@ -13,6 +13,8 @@ import { splitSummary } from './lib/split'
 import { useActiveRun } from './hooks/useActiveRun'
 import { TrainDialog } from './components/experiments/TrainDialog'
 import { paramsFromRun, progressLabel, trainDisabledReason } from './lib/train'
+import { DEMO_DISABLED_REASON } from './lib/demo'
+import { DemoContext } from './hooks/useDemoReason'
 import type { TrainParams } from './lib/train'
 import { buildRelabelCsv } from './lib/relabel'
 import { RunOverlayPicker } from './components/RunOverlayPicker'
@@ -66,6 +68,10 @@ export default function App() {
   const restoreAttempted = useRef(false)
   const [landingView, setLandingView] = useState<LandingView>('landing')
   const [showByod, setShowByod] = useState(false)
+  // True on a demo deployment, which ships its datasets preloaded: adding datasets, training
+  // and experiments stay visible but are disabled, with DEMO_DISABLED_REASON as the tooltip.
+  const [demoMode, setDemoMode] = useState(false)
+  const demoReason = demoMode ? DEMO_DISABLED_REASON : undefined
   const [experimentsDataset, setExperimentsDataset] = useState<string | null>(null)
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [pendingOverlay, setPendingOverlay] = useState<{ runId: string; compareWith?: string; source: string } | null>(null)
@@ -256,6 +262,16 @@ export default function App() {
     }
   }, [])
 
+  useEffect(() => {
+    let alive = true
+    api.config().then(config => {
+      if (!alive) return
+      setDemoMode(config.demo_mode === true)
+      setMlflowOffline(config.demo_mode === true)   // a demo has no MLflow: stop polling for runs and presets
+    }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+
   const deleteDataset = useCallback((id: number) => {
     const source = datasetMeta.find(dataset => dataset.id === id)?.source
     api.deleteDataset(id).then(() => {
@@ -312,7 +328,7 @@ export default function App() {
     clear()
     setDatasetSource(null)
     setTab('visual-explorer')
-    if (datasetMeta.length === 0) {
+    if (datasetMeta.length === 0 && !demoMode) {
       setShowByod(true)
       return
     }
@@ -411,6 +427,7 @@ export default function App() {
     workerAvailable: activeRun.presets?.backend.available ?? false,
     workerReason: activeRun.presets?.backend.reason,
     activeRunId: activeRun.active ? activeRun.run!.run_id : null,
+    demo: demoMode,
   })
   const trainOnLoaded = trainBlocked(!!data && !!datasetSource)
   const trainOnCreated = async () => {
@@ -662,12 +679,14 @@ export default function App() {
   const headerCopy = data && datasetPageCopy[tab] ? datasetPageCopy[tab]! : pageCopy[activeSection]
 
   return (
+    <DemoContext.Provider value={demoReason}>
     <div className="app-shell">
       <AppNavigation
         active={activeSection}
         onWorkspace={goHome}
         onExplorer={goToExplorer}
         onExperiments={goToExperiments}
+        experimentsDisabled={demoReason}
         onSchema={goToSchema}
         onHelp={goToHelp}
         hasDataset={!!data}
@@ -696,13 +715,14 @@ export default function App() {
             onViewExperiments={goToDatasetExperiments}
             onDelete={deleteDataset}
             onOpenByod={() => setShowByod(true)}
+            demoReason={demoReason}
             onUploadFile={file => handleLoad(file)}
             onDatasetsChanged={reloadDatasets}
           />
         )}
 
         {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'help' && (
-          <GuidePage onOpenByod={() => setShowByod(true)} />
+          <GuidePage onOpenByod={demoMode ? undefined : () => setShowByod(true)} />
         )}
 
         {!data && !loading && !restoringDataset && !fetchingDataset && !datasetLoadError && !error && tab !== 'schema' && landingView === 'experiments' && (
@@ -783,7 +803,7 @@ export default function App() {
               {data && (
                 <button className="btn-primary" disabled={!!trainOnLoaded} title={trainOnLoaded ?? 'Train a model on this dataset'}
                         onClick={() => { void activeRun.loadPresets(); setShowTrain(true) }}
-                        style={{ fontSize: 11, padding: '3px 10px', marginRight: 10, opacity: trainOnLoaded ? 0.5 : 1 }}>Train</button>
+                        style={{ fontSize: 11, padding: '3px 10px', marginRight: 10, opacity: trainOnLoaded ? 0.5 : 1, cursor: demoReason ? 'not-allowed' : undefined }}>Train</button>
               )}
               {data && !!data.runColumns?.length && (
                 <button className="btn-ghost" onClick={() => void exportRelabelQueue()}
@@ -926,12 +946,12 @@ export default function App() {
                        onKeyDown={e => { if (e.key === 'Enter') saveCurated() }}
                        style={{ fontSize: 11, padding: '4px 8px', borderRadius: 6, outline: 'none', width: 200,
                                 background: 'var(--c-raised)', border: '1px solid var(--c-border)', color: 'var(--c-t1)' }} />
-                <button onClick={saveCurated} disabled={!removalName.trim() || savingRemoval}
+                <button onClick={saveCurated} disabled={!removalName.trim() || savingRemoval || !!demoReason} title={demoReason}
                         style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 6,
-                                 fontSize: 11, fontWeight: 600, cursor: removalName.trim() && !savingRemoval ? 'pointer' : 'not-allowed',
-                                 background: removalName.trim() && !savingRemoval ? 'var(--c-accent)' : 'var(--c-raised)',
-                                 color: removalName.trim() && !savingRemoval ? '#fff' : 'var(--c-t3)',
-                                 border: `1px solid ${removalName.trim() && !savingRemoval ? 'var(--c-accent)' : 'var(--c-border)'}` }}>
+                                 fontSize: 11, fontWeight: 600, cursor: removalName.trim() && !savingRemoval && !demoReason ? 'pointer' : 'not-allowed',
+                                 background: removalName.trim() && !savingRemoval && !demoReason ? 'var(--c-accent)' : 'var(--c-raised)',
+                                 color: removalName.trim() && !savingRemoval && !demoReason ? '#fff' : 'var(--c-t3)',
+                                 border: `1px solid ${removalName.trim() && !savingRemoval && !demoReason ? 'var(--c-accent)' : 'var(--c-border)'}` }}>
                   {savingRemoval ? <Loader2 size={12} style={{ animation: 'spin 0.7s linear infinite' }} /> : <Save size={12} />}
                   {savingRemoval ? 'Creating…' : 'Create dataset'}
                 </button>
@@ -965,12 +985,12 @@ export default function App() {
                        onKeyDown={e => { if (e.key === 'Enter') saveAdded() }}
                        style={{ fontSize: 11, padding: '4px 8px', borderRadius: 6, outline: 'none', width: 200,
                                 background: 'var(--c-raised)', border: '1px solid var(--c-border)', color: 'var(--c-t1)' }} />
-                <button onClick={saveAdded} disabled={!addName.trim() || savingAdd}
+                <button onClick={saveAdded} disabled={!addName.trim() || savingAdd || !!demoReason} title={demoReason}
                         style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '4px 12px', borderRadius: 6,
-                                 fontSize: 11, fontWeight: 600, cursor: addName.trim() && !savingAdd ? 'pointer' : 'not-allowed',
-                                 background: addName.trim() && !savingAdd ? 'var(--c-accent)' : 'var(--c-raised)',
-                                 color: addName.trim() && !savingAdd ? '#fff' : 'var(--c-t3)',
-                                 border: `1px solid ${addName.trim() && !savingAdd ? 'var(--c-accent)' : 'var(--c-border)'}` }}>
+                                 fontSize: 11, fontWeight: 600, cursor: addName.trim() && !savingAdd && !demoReason ? 'pointer' : 'not-allowed',
+                                 background: addName.trim() && !savingAdd && !demoReason ? 'var(--c-accent)' : 'var(--c-raised)',
+                                 color: addName.trim() && !savingAdd && !demoReason ? '#fff' : 'var(--c-t3)',
+                                 border: `1px solid ${addName.trim() && !savingAdd && !demoReason ? 'var(--c-accent)' : 'var(--c-border)'}` }}>
                   {savingAdd ? <Loader2 size={12} style={{ animation: 'spin 0.7s linear infinite' }} /> : <Save size={12} />}
                   {savingAdd ? 'Creating…' : 'Create dataset'}
                 </button>
@@ -1056,7 +1076,7 @@ export default function App() {
                         <button className="btn-primary explorer-config__wide" disabled={!!trainOnLoaded}
                                 title={trainOnLoaded ?? 'Train a model on this dataset'}
                                 onClick={() => { void activeRun.loadPresets(); setShowTrain(true) }}
-                                style={{ opacity: trainOnLoaded ? 0.5 : 1 }}>
+                                style={{ opacity: trainOnLoaded ? 0.5 : 1, cursor: demoReason ? 'not-allowed' : undefined }}>
                           <FlaskConical size={14} /> Train model
                         </button>
                         <button className="btn-ghost explorer-config__wide" disabled={exportingSelection || !liveFilteredRows.length}
@@ -1073,7 +1093,9 @@ export default function App() {
                                      onKeyDown={event => { if (event.key === 'Enter') void saveSelection() }} />
                             </label>
                             <button className="btn-primary explorer-config__wide"
-                                    disabled={savingSelection || !selectionName.trim() || !liveFilteredRows.length}
+                                    disabled={savingSelection || !selectionName.trim() || !liveFilteredRows.length || !!demoReason}
+                                    title={demoReason}
+                                    style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
                                     onClick={() => void saveSelection()}>
                               {savingSelection ? <Loader2 size={13} className="spin" /> : <Database size={13} />}
                               Save {liveFilteredRows.length.toLocaleString()} samples as dataset
@@ -1114,7 +1136,9 @@ export default function App() {
                                    onChange={event => setComplementTopK(Math.max(1, Math.min(5000, Number(event.target.value) || 1)))} />
                           </label>
                           <button className="btn-primary explorer-config__wide"
-                                  disabled={savingComplement || !complementName.trim() || !liveFilteredRows.length || datasetSource === CLOUD_DATASET_SOURCE}
+                                  disabled={savingComplement || !complementName.trim() || !liveFilteredRows.length || datasetSource === CLOUD_DATASET_SOURCE || !!demoReason}
+                                  title={demoReason}
+                                  style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
                                   onClick={() => void createComplement()}>
                             {savingComplement ? <Loader2 size={13} className="spin" /> : <CloudDownload size={13} />}
                             {savingComplement ? 'Finding complement…' : 'Create complemented dataset'}
@@ -1248,5 +1272,6 @@ export default function App() {
         />
       )}
     </div>
+    </DemoContext.Provider>
   )
 }

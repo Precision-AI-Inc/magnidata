@@ -153,3 +153,4 @@ Reported after tasks 00–17 were done, diagnosed against the running stack on 2
 | task-40 | Every AgriTune decoder as a preset | 39 | completed | 416cd33 |
 | task-41 | Trainer shared memory for full-size training | 40 | completed | 694fa3a |
 | task-42 | Demo datasets: build again after a stale record, and train on COCO128 | 41 | completed | 68a0209 |
+| task-43 | Hugging Face Space with both demo datasets, sized for CPU Basic | 42 | completed | |

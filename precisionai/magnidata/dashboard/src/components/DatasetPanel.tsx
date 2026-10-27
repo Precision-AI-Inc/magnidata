@@ -8,6 +8,7 @@ import { useDatasetDetail } from '../hooks/useDatasetDetail'
 import { formatBytes, formatNumber, histogramHeights, lineageLinks, maskCoverage } from '../lib/datasetPanel'
 import { formatMetric } from '../lib/experiments'
 import { StatusBadge } from './experiments/ExperimentsTab'
+import { useDemoReason } from '../hooks/useDemoReason'
 import './DatasetPanel.css'
 
 interface Props {
@@ -15,6 +16,8 @@ interface Props {
   datasets: DatasetMeta[]
   onOpenExplorer: () => void
   onViewExperiments: () => void
+  /** Why viewing experiments is off on this server, shown as the button's tooltip. */
+  experimentsDisabled?: string
   onDelete?: (id: number) => void
   onSelect: (source: string) => void
   onClose: () => void
@@ -48,7 +51,8 @@ function Sparkline({ column }: { column: NumericColumnSummary }) {
   )
 }
 
-export function DatasetPanel({ dataset, datasets, onOpenExplorer, onViewExperiments, onDelete, onSelect, onClose }: Props) {
+export function DatasetPanel({ dataset, datasets, onOpenExplorer, onViewExperiments, experimentsDisabled, onDelete, onSelect, onClose }: Props) {
+  const demoReason = useDemoReason()
   const [tab, setTab] = useState<TabKey>('stats')
   const { summary, summaryError, runs, runsLoading } = useDatasetDetail(dataset.source)
   const links = lineageLinks(dataset, datasets)
@@ -72,9 +76,11 @@ export function DatasetPanel({ dataset, datasets, onOpenExplorer, onViewExperime
                 title={dataset.is_lfs_pointer ? 'Git LFS pointer — download the real files first' : undefined}>
           <ScanSearch size={14} /> Open in Visual Explorer
         </button>
-        <button className="btn-ghost" onClick={onViewExperiments}><FlaskConical size={14} /> View experiments</button>
+        <button className="btn-ghost" onClick={onViewExperiments} disabled={!!experimentsDisabled} title={experimentsDisabled}
+                style={experimentsDisabled ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}><FlaskConical size={14} /> View experiments</button>
         {dataset.deletable && dataset.id != null && onDelete && (
-          <button className="dataset-panel__delete" aria-label={`Delete ${dataset.name}`} title="Delete dataset"
+          <button className="dataset-panel__delete" aria-label={`Delete ${dataset.name}`} title={demoReason ?? 'Delete dataset'}
+                  disabled={!!demoReason} style={demoReason ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
                   onClick={() => {
                     if (window.confirm(`Delete dataset "${dataset.name}"? This cannot be undone.`)) onDelete(dataset.id!)
                   }}>

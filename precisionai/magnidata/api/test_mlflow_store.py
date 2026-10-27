@@ -11,7 +11,7 @@ import time
 import mlflow_store
 import pytest
 from conftest import seed_run
-from mlflow_store import MlflowNotFound, MlflowStore, MlflowUnavailable
+from mlflow_store import MlflowNotFound, MlflowStore, MlflowUnavailable, OfflineStore
 
 from precisionai.magnidata.training import contract
 
@@ -114,6 +114,27 @@ def test_get_store_builds_from_environment(monkeypatch, tmp_path):
         assert mlflow_store.get_store() is store
     finally:
         mlflow_store.set_store(None)
+
+
+def test_offline_store_reports_no_server_without_a_request_or_a_log_line(caplog):
+    store = OfflineStore()
+
+    with caplog.at_level("DEBUG"):
+        status = store.status()
+
+    assert status["reachable"] is False
+    assert status["tracking_uri"] is None
+    assert status["error"] == "This deployment has no MLflow server"
+    assert caplog.records == []
+
+
+def test_offline_store_refuses_every_request_at_once(caplog):
+    store = OfflineStore()
+
+    with caplog.at_level("DEBUG"), pytest.raises(MlflowUnavailable, match="no MLflow server"):
+        store.get_run("0" * 32)
+
+    assert caplog.records == []
 
 
 def test_unreachable_server_maps_to_unavailable(closed_port_url):

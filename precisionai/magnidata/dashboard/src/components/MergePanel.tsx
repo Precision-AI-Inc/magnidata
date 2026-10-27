@@ -3,6 +3,7 @@ import { GitMerge, Loader2, X } from 'lucide-react'
 import { api, errorText } from '../api'
 import type { DatasetMeta } from '../api'
 import { canMerge } from '../lib/workspaceSelection'
+import { useDemoReason } from '../hooks/useDemoReason'
 import './DatasetPanel.css'
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 
 /** Side panel shown while several datasets are selected: name the union and create it. */
 export function MergePanel({ datasets, selection, onMerged, onClear }: Props) {
+  const demoReason = useDemoReason()
   const [name, setName] = useState('')
   const [merging, setMerging] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -21,7 +23,7 @@ export function MergePanel({ datasets, selection, onMerged, onClear }: Props) {
   const rows = chosen.reduce((sum, d) => sum + (d.row_count ?? 0), 0)
 
   const merge = async () => {
-    if (!name.trim() || !canMerge(selection) || merging) return
+    if (!name.trim() || !canMerge(selection) || merging || demoReason) return
     setMerging(true)
     setError(null)
     try {
@@ -56,7 +58,8 @@ export function MergePanel({ datasets, selection, onMerged, onClear }: Props) {
           <label htmlFor="merge-name">New dataset name</label>
           <input id="merge-name" value={name} onChange={event => setName(event.target.value)} autoFocus
                  placeholder="Merged dataset" onKeyDown={event => { if (event.key === 'Enter') void merge() }} />
-          <button className="btn-primary" onClick={() => void merge()} disabled={!name.trim() || !canMerge(selection) || merging}>
+          <button className="btn-primary" onClick={() => void merge()} disabled={!name.trim() || !canMerge(selection) || merging || !!demoReason}
+                  title={demoReason} style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
             {merging ? <Loader2 size={14} className="spin" /> : <GitMerge size={14} />} Merge datasets
           </button>
           {error && <p className="dataset-panel__note dataset-panel__error" role="alert">{error}</p>}

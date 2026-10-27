@@ -4,10 +4,13 @@ import {
   BarChart2,
   BarChart3,
   FlaskConical,
+  Github,
   LayoutDashboard,
   ScanSearch,
   Table2,
 } from 'lucide-react'
+import { useDemoReason } from '../hooks/useDemoReason'
+import { REPO_URL } from '../lib/demo'
 import type { TabId } from '../types'
 
 export type AppSection = 'workspace' | 'explorer' | 'experiments' | 'schema' | 'help'
@@ -17,6 +20,8 @@ interface Props {
   onWorkspace: () => void
   onExplorer: () => void
   onExperiments: () => void
+  /** Why the Experiments section is off on this server, shown as its tooltip. */
+  experimentsDisabled?: string
   onSchema: () => void
   onHelp: () => void
   hasDataset: boolean
@@ -39,6 +44,7 @@ const DATASET_VIEWS: { id: TabId; label: string; icon: typeof ScanSearch }[] = [
 ]
 
 export function AppNavigation(props: Props) {
+  const demoReason = useDemoReason()
   const actions = {
     onWorkspace: props.onWorkspace,
     onExplorer: props.onExplorer,
@@ -66,6 +72,9 @@ export function AppNavigation(props: Props) {
               data-active={props.active === id}
               aria-current={props.active === id ? 'page' : undefined}
               onClick={actions[action]}
+              disabled={id === 'experiments' && !!props.experimentsDisabled}
+              title={id === 'experiments' ? props.experimentsDisabled : undefined}
+              style={id === 'experiments' && props.experimentsDisabled ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
             >
               <Icon size={17} strokeWidth={1.8} />
               <span>{label}</span>
@@ -100,10 +109,18 @@ export function AppNavigation(props: Props) {
         </button>
       </nav>
 
-      <div className="app-navigation__footer">
-        <span className="app-navigation__footer-icon"><Activity size={15} /></span>
-        <span><strong>Local workspace</strong><small><i className="app-navigation__status-dot" /> Services available</small></span>
-      </div>
+      {demoReason ? (
+        <a className="app-navigation__footer" href={REPO_URL} target="_blank" rel="noreferrer"
+           title="MagniData is open source: view the project on GitHub" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <span className="app-navigation__footer-icon"><Github size={15} /></span>
+          <span><strong>MagniData demo</strong><small>Open source on GitHub</small></span>
+        </a>
+      ) : (
+        <div className="app-navigation__footer">
+          <span className="app-navigation__footer-icon"><Activity size={15} /></span>
+          <span><strong>Local workspace</strong><small><i className="app-navigation__status-dot" /> Services available</small></span>
+        </div>
+      )}
     </aside>
   )
 }

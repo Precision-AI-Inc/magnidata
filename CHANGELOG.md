@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `LICENSE.md` is the unmodified Apache License 2.0 text. It had reworded definitions and clauses (the "Work" and
+  "Contribution" definitions, no "Contributor" definition, and sections 8 and 9), so the repository was not under the
+  standard license and GitHub listed it as "Other" instead of Apache-2.0.
 - The COCO128 demo can be trained on: its build now writes a colour mask per image next to the polygon labels
   (the 15 largest classes keep their own colour, the rest share one), where before the trainer refused it with
   "dataset has no segmentation masks to train on". A COCO128 built earlier has no masks; delete it and prepare it
@@ -53,6 +56,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A Hugging Face Space build in `deploy/huggingface/`, sized for the CPU Basic tier: one container serving the API
+  and the dashboard, with COCO128 built while the image is built and AgriStress-500 installed from a compact bundle,
+  so the first visitor finds both loaded. Nothing about the compose stack changes; the Space is an add-on.
+  - `scripts/export_demo_bundle.py` exports a built dataset as a bundle (images capped at a chosen size, thumbnails,
+    resized masks, and the table and embeddings renamed together), and `api/preload_demo.py` installs bundles and builds
+    demo datasets through the same endpoint the portal's demo button uses.
+  - `MAGNIDATA_STATIC_DIR` makes the API serve the built dashboard itself (no nginx). `MAGNIDATA_DEMO_MODE` is for a
+    deployment open to anyone: the server refuses with 403 every request that would change data shared by all
+    visitors or start work (dataset builds including the demo downloads, creating, merging, re-parenting and deleting
+    datasets, notes, partition commits, training, and cancelling, linking or running inference on a run), keeps image
+    paths inside the data folder, and caps the 3D view's background analyses. `GET /api/config` reports it, and the
+    portal shows the matching controls (Add dataset, Upload CSV, View experiments, Experiments, Train, delete, merge,
+    save as dataset, create partitions) disabled with a "Disabled for the Demo" tooltip. Both are off by default, and a
+    normal deployment is unchanged.
+  - The Space image serves the app with gunicorn (one worker process, 8 threads) instead of Flask's development
+    server. Only the Space's Dockerfile installs and starts it; `python app.py`, the compose stack and the
+    requirements are unchanged.
+  - In demo mode the server answers MLflow questions at once from an offline store (status `reachable: false`, runs
+    and presets unavailable) instead of trying a server that is not there, and the portal stops polling for runs and
+    presets, so neither side logs a failure every few seconds. The portal's footer links to the GitHub repository, and
+    the Space card (`deploy/huggingface/README.md`) follows the repository's README and lists both datasets.
 - AgriTune ASPP, Pyramid Pooling, Segmenter and MaskFormer presets, so the portal offers all six AgriTune decoders,
   with each decoder's options (atrous rates, pool sizes, attention heads, MLP ratio, mask queries, widths and
   layers) under the Train dialog's advanced Decoder section; left empty, they keep that decoder's defaults.

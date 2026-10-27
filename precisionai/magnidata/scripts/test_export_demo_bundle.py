@@ -42,8 +42,9 @@ def test_images_are_capped_and_masks_stay_the_same_size(synthetic_dataset, tmp_p
         assert thumbnail.size == (8, 6)
     with Image.open(images / "masks" / "img_00.png") as mask:
         assert mask.size == (16, 12)
-        colours = {colour for _, colour in mask.convert("RGB").getcolors()}
-    assert colours <= {(0, 0, 0), *synthetic_dataset.colors}
+        counted = mask.convert("RGB").getcolors()
+    assert counted is not None  # None means more than 256 colours, which a two-class mask never has
+    assert {colour for _, colour in counted} <= {(0, 0, 0), *synthetic_dataset.colors}
 
 
 def test_images_smaller_than_the_cap_are_not_enlarged(synthetic_dataset, tmp_path):

@@ -45,8 +45,8 @@ def seed_run(
 
 
 @pytest.fixture
-def mlflow_store(tmp_path: Path) -> MlflowStore:
+def mlflow_store(tmp_path: Path, mlflow_db: Path) -> MlflowStore:
     """Return a real MlflowStore backed by sqlite and a local artifact root in ``tmp_path``."""
     artifacts = tmp_path / "artifacts"
     artifacts.mkdir()
-    return MlflowStore(f"sqlite:///{tmp_path / 'mlflow.db'}", artifact_root=artifacts.as_uri())
+    return MlflowStore(f"sqlite:///{mlflow_db}", artifact_root=artifacts.as_uri())

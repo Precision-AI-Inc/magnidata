@@ -252,8 +252,8 @@ def test_runs_search_is_cached(client, mlflow_store, monkeypatch):
     assert len(calls) == 2
 
 
-def test_mlflow_down_returns_503(client):
-    store_module.set_store(MlflowStore("http://127.0.0.1:1"))
+def test_mlflow_down_returns_503(client, closed_port_url):
+    store_module.set_store(MlflowStore(closed_port_url))
     for url in ("/api/experiments", "/api/runs", f"/api/runs/{'0' * 32}"):
         resp = client.get(url)
         assert resp.status_code == 503
@@ -592,8 +592,8 @@ def test_experiment_counts_endpoint_reads_mlflow_runs(client, seeded, monkeypatc
     assert counts == {"data_user/a.csv": {"total": 3, "active": 0}, "data_user/b.csv": {"total": 3, "active": 0}}
 
 
-def test_experiment_counts_is_empty_when_mlflow_is_down(client):
-    store_module.set_store(MlflowStore("http://127.0.0.1:1"))
+def test_experiment_counts_is_empty_when_mlflow_is_down(client, closed_port_url):
+    store_module.set_store(MlflowStore(closed_port_url))
 
     resp = client.get("/api/datasets/experiment-counts")
 

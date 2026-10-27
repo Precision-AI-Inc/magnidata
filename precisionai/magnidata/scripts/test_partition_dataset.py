@@ -225,8 +225,10 @@ def test_missing_source_and_bad_arguments_fail_cleanly(
     assert _run(data_root, tmp_path, "--tile", "4") == 2
 
 
-def test_unreachable_api_reports_an_error(data_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert _run(data_root, tmp_path, "--api", "http://127.0.0.1:1") == 1
+def test_unreachable_api_reports_an_error(
+    data_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], closed_port_url: str
+) -> None:
+    assert _run(data_root, tmp_path, "--api", closed_port_url) == 1
 
     assert "cannot reach the API" in capsys.readouterr().err
 

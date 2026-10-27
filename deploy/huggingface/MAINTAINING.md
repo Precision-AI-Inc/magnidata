@@ -167,7 +167,10 @@ only.
 4. The last stage installs the API requirements and copies the API, `tools/`, `scripts/`, `training/` and the built
    dashboard. It runs `preload_demo.py --bundle ... coco128` as uid 1000: bundles are mounted from their stage, not
    copied, so the image holds one copy of the data, and the build fails here if anything cannot be installed.
-5. At run time one Flask process serves `/api` and the dashboard on port 7860.
+5. At run time gunicorn serves `/api` and the dashboard on port 7860, as one worker process with 8 threads. It has to
+   be one process: the 3D view's analysis jobs and the compute caches live in the process's memory, so a second worker
+   would be asked about jobs it never started. Flask's development server (`python app.py`) is what the compose stack
+   and a local run still use; only the Space's image installs and starts gunicorn.
 
 Settings that matter for the Space, all in the Dockerfile's `ENV`:
 

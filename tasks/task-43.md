@@ -123,4 +123,9 @@ Docker), and the feature extractor spawns worker processes, so a script that dri
   front matter, which is what shows them on the Space page.
 - Access once the Space is public is documented in `MAINTAINING.md`: organization roles, a Resource Group for the Space
   and the data repo, disabling discussions, and that whoever can merge to `main` controls what the Space runs.
+- The Space ran Flask's development server (`python app.py`), which warns that it is not for production. Its image now
+  installs gunicorn (pinned) and starts `gunicorn --workers 1 --threads 8 app:app`. One worker, because the analysis
+  jobs and compute caches are in-process: with two, polling a job could reach a worker that never started it. Only the
+  Space's Dockerfile changes; `app.py`, the compose stack and the requirements are untouched, and a test pins the
+  command and the single worker.
 - Not done: switching the Space's Dockerfile from `feature/hf-space` to `main` once this merges.

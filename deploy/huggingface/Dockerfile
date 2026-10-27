@@ -59,7 +59,7 @@ RUN useradd --create-home --uid 1000 user
 
 WORKDIR /app
 COPY --from=source /src/precisionai/magnidata/api/requirements.txt ./api-requirements.txt
-RUN pip install --no-cache-dir -r api-requirements.txt
+RUN pip install --no-cache-dir -r api-requirements.txt gunicorn==23.0.0
 
 # The package layout Dockerfile.api uses: tools/, scripts/ and training/ are imported as
 # precisionai.magnidata.*, while the API modules sit flat next to app.py.
@@ -110,5 +110,10 @@ RUN --mount=type=bind,from=bundles,source=/bundles,target=/bundles \
 # disabled. It starts only now: the step above drives the very endpoint it refuses.
 ENV MAGNIDATA_DEMO_MODE=1
 
+# gunicorn, not `python app.py` (Flask's development server, which is not meant to face visitors). One worker
+# process, because the 3D view's analysis jobs and the compute caches live in the process's memory: a second worker
+# would be asked about jobs it never started. Threads give the concurrency instead. /dev/shm keeps gunicorn's
+# heartbeat file off the container's overlay filesystem.
 EXPOSE 7860
-CMD ["python", "app.py"]
+CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "1", "--threads", "8", "--timeout", "120", \
+     "--worker-tmp-dir", "/dev/shm", "--access-logfile", "-", "app:app"]

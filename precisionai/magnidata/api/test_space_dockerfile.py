@@ -33,3 +33,18 @@ def test_demo_mode_is_switched_on_only_after_the_datasets_are_loaded(lines):
 
 def test_demo_mode_is_set_exactly_once(lines):
     assert sum("MAGNIDATA_DEMO_MODE" in line and not line.lstrip().startswith("#") for line in lines) == 1
+
+
+def test_the_space_is_served_by_gunicorn_not_the_development_server(lines):
+    start = _first(lines, "CMD [")
+    command = " ".join(line.strip() for line in lines[start:]).replace("\\", " ")
+    assert '"gunicorn"' in command
+    assert '"app:app"' in command
+    assert "app.py" not in command
+    assert any("pip install" in line and "gunicorn==" in line for line in lines)
+
+
+def test_gunicorn_runs_a_single_worker_because_analysis_jobs_live_in_process_memory(lines):
+    start = _first(lines, "CMD [")
+    command = " ".join(line.strip() for line in lines[start:])
+    assert '"--workers", "1"' in command

@@ -70,6 +70,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     portal shows the matching controls (Add dataset, Upload CSV, View experiments, Experiments, Train, delete, merge,
     save as dataset, create partitions) disabled with a "Disabled for the Demo" tooltip. Both are off by default, and a
     normal deployment is unchanged.
+  - The Space image serves the app with gunicorn (one worker process, 8 threads) instead of Flask's development
+    server. Only the Space's Dockerfile installs and starts it; `python app.py`, the compose stack and the
+    requirements are unchanged.
   - In demo mode the server answers MLflow questions at once from an offline store (status `reachable: false`, runs
     and presets unavailable) instead of trying a server that is not there, and the portal stops polling for runs and
     presets, so neither side logs a failure every few seconds. The portal's footer links to the GitHub repository, and

@@ -97,6 +97,15 @@ embeddings JSON. For larger uploads, raise both the API service's
 `DATASET_BUILD_MAX_TOTAL_BYTES` and `dashboard/nginx.conf`'s `client_max_body_size` — or
 use the `./image_sets` route, which bypasses the upload entirely.
 
+### Hugging Face Space
+
+[`deploy/huggingface/`](deploy/huggingface) builds MagniData as a single-container
+[Hugging Face Space](https://huggingface.co/spaces/precisionaiinc/magnidata) with the COCO128 demo already
+loaded. Its Dockerfile clones this repository at a chosen branch or tag, builds the dashboard, and builds the
+dataset while the image is built; the API serves the dashboard itself when `MAGNIDATA_STATIC_DIR` is set. Training
+and the Experiments tab are not part of it (no MLflow or trainer). See
+[`deploy/huggingface/MAINTAINING.md`](deploy/huggingface/MAINTAINING.md) to build it locally or update the Space.
+
 ---
 
 ## Installation (Python package only)

@@ -154,6 +154,11 @@ export interface DemoEntry {
   enabled: boolean
 }
 
+export interface ServerConfig {
+  /** True on a demo deployment, where building datasets, training and experiments are turned off. */
+  demo_mode: boolean
+}
+
 export interface BuildLimits {
   max_images: number
   max_upload_bytes: number
@@ -309,6 +314,7 @@ export const api = {
 
   // ── Build a dataset from images (BYOD) ──────────────────────────────────────
   listDemos: () => get<DemoEntry[]>(`${BASE}/datasets/demos`),
+  config: () => get<ServerConfig>(`${BASE}/config`),
   buildLimits: () => get<BuildLimits>(`${BASE}/datasets/build/limits`),
   buildDataset: (formData: FormData, onUploadProgress?: (percent: number) => void) =>
     postForm<{ job_id: string }>(`${BASE}/datasets/build`, formData, onUploadProgress),

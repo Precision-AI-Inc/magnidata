@@ -74,6 +74,10 @@ describe('trainDisabledReason', () => {
     expect(trainDisabledReason({ ...none, hasDataset: true, mlflowReachable: true, workerReason: 'last seen 90 s ago' })).toMatch(/last seen 90 s ago/)
     expect(trainDisabledReason({ ...none, hasDataset: true, mlflowReachable: true, workerAvailable: true })).toMatch(/Another training run/)
   })
+  it('puts the demo reason ahead of every other cause', () => {
+    expect(trainDisabledReason({ ...ok, demo: true })).toBe('Disabled for the Demo')
+    expect(trainDisabledReason({ hasDataset: false, mlflowReachable: false, workerAvailable: false, activeRunId: 'x', demo: true })).toBe('Disabled for the Demo')
+  })
 })
 
 describe('progressLabel', () => {

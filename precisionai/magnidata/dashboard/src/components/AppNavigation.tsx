@@ -17,6 +17,8 @@ interface Props {
   onWorkspace: () => void
   onExplorer: () => void
   onExperiments: () => void
+  /** Why the Experiments section is off on this server, shown as its tooltip. */
+  experimentsDisabled?: string
   onSchema: () => void
   onHelp: () => void
   hasDataset: boolean
@@ -66,6 +68,9 @@ export function AppNavigation(props: Props) {
               data-active={props.active === id}
               aria-current={props.active === id ? 'page' : undefined}
               onClick={actions[action]}
+              disabled={id === 'experiments' && !!props.experimentsDisabled}
+              title={id === 'experiments' ? props.experimentsDisabled : undefined}
+              style={id === 'experiments' && props.experimentsDisabled ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
             >
               <Icon size={17} strokeWidth={1.8} />
               <span>{label}</span>

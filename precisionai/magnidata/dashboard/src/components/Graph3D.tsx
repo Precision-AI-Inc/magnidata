@@ -14,6 +14,7 @@ import { imageNameOf } from '../hooks/usePartitions'
 import { BRAND_CATEGORICAL, BRAND_SEQ_STOPS, CLUSTER_PALETTE_100 } from '../data/vizColors'
 import { divergingRange, interpolateDiverging, isDivergingColumn } from '../lib/diverging'
 import { partitionColumns, splitColor, SPLIT_COLUMN } from '../lib/split'
+import { useDemoReason } from '../hooks/useDemoReason'
 
 // ── Palette & colorscale ───────────────────────────────────────────────────────
 const PALETTE = BRAND_CATEGORICAL
@@ -632,6 +633,7 @@ function ClusterViewToggle({ value, onChange, btnS, lblS }: {
 }
 
 export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, selectedRows, colorBy, onClusterSelect, onPointClick, partitions, onCommitClusterColumn }: Props) {
+  const demoReason = useDemoReason()
   const mountRef = useRef<HTMLDivElement>(null)
   const threeRef = useRef<ThreeState | null>(null)
 
@@ -1570,15 +1572,15 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <button
               onClick={commitPartitions}
-              disabled={!clusterLabels || committing || !selectedRows.length}
-              title={clusterLabels
+              disabled={!clusterLabels || committing || !selectedRows.length || !!demoReason}
+              title={demoReason ?? (clusterLabels
                 ? `Write the cluster id of the ${selectedRows.length.toLocaleString()} selected rows into the cluster column`
-                : 'Clustering not ready'}
+                : 'Clustering not ready')}
               style={{ ...btnS(false),
                        background: 'rgba(41,204,165,0.18)', color: 'rgba(141,231,184,0.95)',
                        border: '1px solid rgba(109,242,163,0.45)',
-                       cursor: (!clusterLabels || committing || !selectedRows.length) ? 'not-allowed' : 'pointer',
-                       opacity: (!clusterLabels || !selectedRows.length) ? 0.45 : 1 }}>
+                       cursor: (!clusterLabels || committing || !selectedRows.length || demoReason) ? 'not-allowed' : 'pointer',
+                       opacity: (!clusterLabels || !selectedRows.length || demoReason) ? 0.45 : 1 }}>
               {committing ? 'Partitioning…' : 'Create partitions'}
             </button>
             {commitMsg && (

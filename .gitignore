@@ -66,6 +66,8 @@ precisionai/magnidata/data_user/
 /image_sets/*
 !/image_sets/.gitkeep
 !/image_sets/README.md
+# Demo bundles exported for the Hugging Face Space (deploy/huggingface/MAINTAINING.md): hundreds of MB, hosted on Hugging Face
+/bundles/
 
 # Avoids AGENTS.md
 AGENTS.md

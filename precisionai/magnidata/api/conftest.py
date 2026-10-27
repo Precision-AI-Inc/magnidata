@@ -3,12 +3,38 @@
 
 """Shared fixtures for the API tests: a real MLflow store on a temporary sqlite database."""
 
+import importlib
 from collections.abc import Mapping
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from mlflow.entities import Metric
 from mlflow_store import MlflowStore
+
+
+def load_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **env: str | None) -> ModuleType:
+    """Import ``app`` afresh against a temporary data root, with the given environment variables.
+
+    app.py reads its configuration when it is imported, so every call reloads the module. A
+    ``None`` value removes that variable. The environment is restored when the test ends.
+    """
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setenv("DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("CONFIG_PATH", str(tmp_path / "confi.yaml"))
+    (tmp_path / "confi.yaml").write_text("datasets: []\n")
+    (tmp_path / "data_user").mkdir(exist_ok=True)
+    for name, value in env.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    app_module = importlib.import_module("app")
+    monkeypatch.setattr(app_module.db, "DB_PATH", str(tmp_path / "test.db"))
+    importlib.reload(app_module)
+    app_module.app.config["TESTING"] = True
+    return app_module
 
 
 def seed_run(

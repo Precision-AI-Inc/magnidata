@@ -23,6 +23,7 @@ import type { DatasetMeta, ExperimentCounts } from '../api'
 import { experimentBadge } from '../lib/experimentBadge'
 import { adjacentDataset, layoutDatasetGraph, lineageOf } from '../lib/datasetGraph'
 import type { GraphDirection } from '../lib/datasetGraph'
+import { useDemoReason } from '../hooks/useDemoReason'
 
 interface Props {
   datasets: DatasetMeta[]
@@ -62,6 +63,7 @@ function label(source: string, datasets: DatasetMeta[]): string {
 
 function DatasetNodeCard({ data }: NodeProps<DatasetFlowNode>) {
   const { dataset, datasets, emphasis, experiments, onDelete } = data
+  const demoReason = useDemoReason()
   const badge = experimentBadge(experiments)
   const isCloud = dataset.name === 'Cloud Dataset'
   const parents = dataset.parent_sources ?? (dataset.parent_source ? [dataset.parent_source] : [])
@@ -74,7 +76,9 @@ function DatasetNodeCard({ data }: NodeProps<DatasetFlowNode>) {
       {dataset.deletable && dataset.id != null && onDelete && (
         <button
           className="dataset-graph__delete nodrag nopan"
-          title="Delete dataset"
+          title={demoReason ?? 'Delete dataset'}
+          disabled={!!demoReason}
+          style={demoReason ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}
           aria-label={`Delete ${dataset.name}`}
           onClick={event => {
             event.stopPropagation()

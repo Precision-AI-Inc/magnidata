@@ -77,7 +77,7 @@ export function DatasetPanel({ dataset, datasets, onOpenExplorer, onViewExperime
           <ScanSearch size={14} /> Open in Visual Explorer
         </button>
         <button className="btn-ghost" onClick={onViewExperiments} disabled={!!experimentsDisabled} title={experimentsDisabled}
-                style={{ opacity: experimentsDisabled ? 0.5 : 1 }}><FlaskConical size={14} /> View experiments</button>
+                style={experimentsDisabled ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}><FlaskConical size={14} /> View experiments</button>
         {dataset.deletable && dataset.id != null && onDelete && (
           <button className="dataset-panel__delete" aria-label={`Delete ${dataset.name}`} title={demoReason ?? 'Delete dataset'}
                   disabled={!!demoReason} style={demoReason ? { opacity: 0.4, cursor: 'not-allowed' } : undefined}

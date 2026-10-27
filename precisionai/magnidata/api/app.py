@@ -203,6 +203,9 @@ if DEMO_MODE:
                 return jsonify({"error": "invalid path"}), 400
         return None
 
+    # There is no MLflow server here: answer its questions at once, instead of retrying a dead address on every poll.
+    mlflow_store.set_store(mlflow_store.OfflineStore())
+
 
 # ── MLflow ─────────────────────────────────────────────────────────────────────
 @app.get("/api/mlflow/status")

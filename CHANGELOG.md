@@ -64,9 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     visitors or start work (dataset builds including the demo downloads, creating, merging, re-parenting and deleting
     datasets, notes, partition commits, training, and cancelling, linking or running inference on a run), keeps image
     paths inside the data folder, and caps the 3D view's background analyses. `GET /api/config` reports it, and the
-    portal shows the matching controls (Add dataset, View experiments, Experiments, Train, delete, merge, save as
-    dataset, create partitions) disabled with a "Disabled for the Demo" tooltip. Both are off by default, and a normal
-    deployment is unchanged.
+    portal shows the matching controls (Add dataset, Upload CSV, View experiments, Experiments, Train, delete, merge,
+    save as dataset, create partitions) disabled with a "Disabled for the Demo" tooltip. Both are off by default, and a
+    normal deployment is unchanged.
+  - In demo mode the server answers MLflow questions at once from an offline store (status `reachable: false`, runs
+    and presets unavailable) instead of trying a server that is not there, and the portal stops polling for runs and
+    presets, so neither side logs a failure every few seconds. The portal's footer links to the GitHub repository, and
+    the Space card (`deploy/huggingface/README.md`) follows the repository's README and lists both datasets.
 - AgriTune ASPP, Pyramid Pooling, Segmenter and MaskFormer presets, so the portal offers all six AgriTune decoders,
   with each decoder's options (atrous rates, pool sizes, attention heads, MLP ratio, mask queries, widths and
   layers) under the Train dialog's advanced Decoder section; left empty, they keep that decoder's defaults.

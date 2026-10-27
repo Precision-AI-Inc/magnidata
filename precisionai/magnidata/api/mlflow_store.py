@@ -262,6 +262,32 @@ class MlflowStore:
         self._call(f"run {run_id}", self._client.set_terminated, run_id, status)
 
 
+class OfflineStore(MlflowStore):
+    """Stand-in for a deployment that has no MLflow server, such as the Hugging Face Space.
+
+    Every request fails at once with ``MlflowUnavailableError``, without a connection attempt or a log line, so a
+    dashboard that keeps polling for runs costs nothing and does not fill the log.
+    """
+
+    def __init__(self) -> None:
+        """Create the store; no connection is made until a request, and no request is ever sent."""
+        super().__init__(DEFAULT_TRACKING_URI)
+
+    def _call(self, what: str, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Refuse the request."""
+        raise MlflowUnavailableError(f"MLflow request for {what} failed: this deployment has no MLflow server")
+
+    def status(self) -> dict[str, Any]:
+        """Report that there is no MLflow server."""
+        return {
+            "reachable": False,
+            "tracking_uri": None,
+            "ui_url": None,
+            "version": None,
+            "error": "This deployment has no MLflow server",
+        }
+
+
 _state: dict[str, MlflowStore | None] = {"store": None}
 _state_lock = threading.Lock()
 

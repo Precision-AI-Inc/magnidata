@@ -100,10 +100,11 @@ use the `./image_sets` route, which bypasses the upload entirely.
 ### Hugging Face Space
 
 [`deploy/huggingface/`](deploy/huggingface) builds MagniData as a single-container
-[Hugging Face Space](https://huggingface.co/spaces/precisionaiinc/magnidata) with the COCO128 demo already
-loaded. Its Dockerfile clones this repository at a chosen branch or tag, builds the dashboard, and builds the
-dataset while the image is built; the API serves the dashboard itself when `MAGNIDATA_STATIC_DIR` is set. Training
-and the Experiments tab are not part of it (no MLflow or trainer). See
+[Hugging Face Space](https://huggingface.co/spaces/precisionaiinc/magnidata) with COCO128 and AgriStress-500
+already loaded. Its Dockerfile clones this repository at a chosen branch or tag, builds the dashboard, builds
+COCO128 while the image is built and installs AgriStress-500 from a downsized bundle; the API serves the dashboard
+itself when `MAGNIDATA_STATIC_DIR` is set. The Space is a read-only demo (`MAGNIDATA_DEMO_MODE`), so anything that
+changes data, training and the Experiments tab are turned off there (no MLflow or trainer). See
 [`deploy/huggingface/MAINTAINING.md`](deploy/huggingface/MAINTAINING.md) to build it locally or update the Space.
 
 ---

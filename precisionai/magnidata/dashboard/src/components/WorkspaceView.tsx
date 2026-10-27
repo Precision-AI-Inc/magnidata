@@ -110,9 +110,10 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
           <p>Select a dataset to inspect it, then open it in the Visual Explorer or review its experiments.</p>
         </div>
         <div className="workspace-toolbar__actions">
-          <button className="btn-ghost" onClick={() => upload.current?.click()}><UploadCloud size={14} /> Upload CSV</button>
+          <button className="btn-ghost" onClick={() => upload.current?.click()} disabled={!!demoReason} title={demoReason}
+                  style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}><UploadCloud size={14} /> Upload CSV</button>
           <button className="btn-primary" onClick={onOpenByod} disabled={!!demoReason} title={demoReason}
-                  style={{ opacity: demoReason ? 0.5 : 1 }}><Plus size={14} /> Add dataset</button>
+                  style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}><Plus size={14} /> Add dataset</button>
           <input ref={upload} type="file" accept=".csv" hidden
                  onChange={event => {
                    const file = event.target.files?.[0]
@@ -128,7 +129,8 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
             ? <DatasetGraph datasets={datasets} selection={known} experiments={experiments} onSelect={select}
                             onOpen={onOpenDataset} onDelete={id => { setSelection([]); onDelete(id) }} />
             : (
-              <button className="workspace-empty" onClick={onOpenByod} disabled={!!demoReason} title={demoReason}>
+              <button className="workspace-empty" onClick={onOpenByod} disabled={!!demoReason} title={demoReason}
+                      style={demoReason ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}>
                 <UploadCloud size={22} />
                 <span><strong>Add your first dataset</strong><small>Upload images and labels or load a demo.</small></span>
               </button>

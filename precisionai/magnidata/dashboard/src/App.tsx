@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Activity, ChevronLeft, ChevronRight, CloudDownload, Columns, Database, Download, FlaskConical, LayoutGrid, Loader2, Plus, Save, Share2, SlidersHorizontal, Table2, Trash2, X, BarChart2 } from 'lucide-react'
 import { rememberWorkspaceSelection } from './lib/workspaceSelection'
-import { api, errorText } from './api'
+import { api, errorText, setMlflowOffline } from './api'
 import type { DatasetMeta } from './api'
 import { useCSV } from './hooks/useCSV'
 import { useFilters } from './hooks/useFilters'
@@ -264,7 +264,11 @@ export default function App() {
 
   useEffect(() => {
     let alive = true
-    api.config().then(config => { if (alive) setDemoMode(config.demo_mode === true) }).catch(() => {})
+    api.config().then(config => {
+      if (!alive) return
+      setDemoMode(config.demo_mode === true)
+      setMlflowOffline(config.demo_mode === true)   // a demo has no MLflow: stop polling for runs and presets
+    }).catch(() => {})
     return () => { alive = false }
   }, [])
 
@@ -799,7 +803,7 @@ export default function App() {
               {data && (
                 <button className="btn-primary" disabled={!!trainOnLoaded} title={trainOnLoaded ?? 'Train a model on this dataset'}
                         onClick={() => { void activeRun.loadPresets(); setShowTrain(true) }}
-                        style={{ fontSize: 11, padding: '3px 10px', marginRight: 10, opacity: trainOnLoaded ? 0.5 : 1 }}>Train</button>
+                        style={{ fontSize: 11, padding: '3px 10px', marginRight: 10, opacity: trainOnLoaded ? 0.5 : 1, cursor: demoReason ? 'not-allowed' : undefined }}>Train</button>
               )}
               {data && !!data.runColumns?.length && (
                 <button className="btn-ghost" onClick={() => void exportRelabelQueue()}
@@ -1072,7 +1076,7 @@ export default function App() {
                         <button className="btn-primary explorer-config__wide" disabled={!!trainOnLoaded}
                                 title={trainOnLoaded ?? 'Train a model on this dataset'}
                                 onClick={() => { void activeRun.loadPresets(); setShowTrain(true) }}
-                                style={{ opacity: trainOnLoaded ? 0.5 : 1 }}>
+                                style={{ opacity: trainOnLoaded ? 0.5 : 1, cursor: demoReason ? 'not-allowed' : undefined }}>
                           <FlaskConical size={14} /> Train model
                         </button>
                         <button className="btn-ghost explorer-config__wide" disabled={exportingSelection || !liveFilteredRows.length}

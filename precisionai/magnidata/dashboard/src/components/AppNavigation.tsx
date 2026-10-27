@@ -4,10 +4,13 @@ import {
   BarChart2,
   BarChart3,
   FlaskConical,
+  Github,
   LayoutDashboard,
   ScanSearch,
   Table2,
 } from 'lucide-react'
+import { useDemoReason } from '../hooks/useDemoReason'
+import { REPO_URL } from '../lib/demo'
 import type { TabId } from '../types'
 
 export type AppSection = 'workspace' | 'explorer' | 'experiments' | 'schema' | 'help'
@@ -41,6 +44,7 @@ const DATASET_VIEWS: { id: TabId; label: string; icon: typeof ScanSearch }[] = [
 ]
 
 export function AppNavigation(props: Props) {
+  const demoReason = useDemoReason()
   const actions = {
     onWorkspace: props.onWorkspace,
     onExplorer: props.onExplorer,
@@ -105,10 +109,18 @@ export function AppNavigation(props: Props) {
         </button>
       </nav>
 
-      <div className="app-navigation__footer">
-        <span className="app-navigation__footer-icon"><Activity size={15} /></span>
-        <span><strong>Local workspace</strong><small><i className="app-navigation__status-dot" /> Services available</small></span>
-      </div>
+      {demoReason ? (
+        <a className="app-navigation__footer" href={REPO_URL} target="_blank" rel="noreferrer"
+           title="MagniData is open source: view the project on GitHub" style={{ textDecoration: 'none', color: 'inherit' }}>
+          <span className="app-navigation__footer-icon"><Github size={15} /></span>
+          <span><strong>MagniData demo</strong><small>Open source on GitHub</small></span>
+        </a>
+      ) : (
+        <div className="app-navigation__footer">
+          <span className="app-navigation__footer-icon"><Activity size={15} /></span>
+          <span><strong>Local workspace</strong><small><i className="app-navigation__status-dot" /> Services available</small></span>
+        </div>
+      )}
     </aside>
   )
 }

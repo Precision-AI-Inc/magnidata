@@ -93,6 +93,14 @@ hf upload precisionaiinc/magnidata deploy/huggingface/README.md README.md --repo
 
 Do this before the branch is deleted: a Space still pointing at a deleted branch fails its next rebuild.
 
+The card's YAML front matter is what the Space page shows: `title`, `emoji` and the two colours for its tile,
+`short_description` (60 characters at most) under the title, `tags`, and `datasets`, which lists both data repos on the
+page. The GitHub repository is linked three ways: the badge and the text in the card, the project link in the footer of
+the running portal (`REPO_URL` in `dashboard/src/lib/demo.ts`), and the repository's own README linking back to the
+Space. Hugging Face has no setting for a source repository, so the card is where that link lives. Keep the card's text
+in line with the repository's README, and re-upload `README.md` whenever it changes (a card-only commit does not
+rebuild the image).
+
 ### Watch the build
 
 ```bash
@@ -112,8 +120,32 @@ a minute and a half. On CPU Basic the Space sleeps after 48 hours without a visi
 
 To move the Space to a release, set the `MAGNIDATA_REF` default at the top of the `Dockerfile` to the tag and upload
 it again (Docker Spaces also pass Space variables to the build as build arguments). To rebuild from the same ref after
-new commits land on it, use a factory rebuild in the Space's Settings. A new bundle is a new `hf upload` to the data
-repo followed by a rebuild.
+new commits land on it, run `hf spaces restart precisionaiinc/magnidata --factory-reboot`. The clone is a cached build
+layer, so a plain restart, or a build with the cache, would keep running the old commit. A new bundle is a new
+`hf upload` to the data repo followed by the same rebuild.
+
+## Who can change the Space once it is public
+
+Making the Space public lets anyone open and run it, read its files and clone it. It does not let them change it:
+write access comes from the organization, so before the switch, check who has it.
+
+- **Organization roles** (org settings, Members). `write` and `admin` can push to the Space and change its settings;
+  `contributor` can change only the repositories that member created; `read` and `no_access` cannot change anything.
+  Keep `write` and `admin` for the people who maintain the Space, and give everyone else `read`.
+- **Resource Groups** (Team plan) narrow this to named people per repository: put `precisionaiinc/magnidata` and
+  `precisionaiinc/AgriStress-500-Demo` in one group and add only the maintainers with the `write` role. A repository
+  belongs to one group, which is why both go in the same one. Test the result with a member whose org role is `read`.
+- **Discussions and pull requests** stay open to every signed-in user on a public Space. Disable them in the Space's
+  Settings if the Space should take no outside contributions; the repository on GitHub is where those belong.
+- **Visibility** is set in the Space's Settings (or `hf repos settings precisionaiinc/magnidata --repo-type space
+  --public`). Team plans also offer *protected*: the app is public but its files are private and it cannot be cloned.
+  The Space holds nothing that needs hiding, so public is the right choice here.
+- **Secrets and variables.** The Space has none today. Variables are visible to everyone and copied into duplicates
+  of a public Space; secrets are neither. Keep it that way: nothing sensitive belongs in a Space.
+- **What the Space runs** is whatever `MAGNIDATA_REF` points at on GitHub when it is rebuilt, so the people who can
+  merge to `main` also control the Space. After the merge, protect `main` and pin the ref to a release tag.
+- **Tokens.** Anyone holding a token with `write` on the organization can push to the Space. Use fine-grained tokens
+  limited to the Space for anything automated, and `hf auth logout` on machines that no longer need access.
 
 ## Build and run locally
 
@@ -144,11 +176,14 @@ Settings that matter for the Space, all in the Dockerfile's `ENV`:
   and deleting datasets, notes, partition commits, training, and cancelling, linking or running inference on a run. It
   also keeps the image endpoints' `path` parameters inside the data folder (400 otherwise, which closes an
   arbitrary-file-read on an open server), refuses the unused mask debug endpoint, and caps the 3D view's background
-  analyses at 4 running and 50 kept. `GET /api/config` tells the portal to show the matching controls (Add dataset, View
-  experiments, the Experiments section, Train, delete, merge, save as dataset, create partitions) disabled with a
-  "Disabled for the Demo" tooltip. Unset, nothing changes.
+  analyses at 4 running and 50 kept. `GET /api/config` tells the portal to show the matching controls (Add dataset,
+  Upload CSV, View experiments, the Experiments section, Train, delete, merge, save as dataset, create partitions)
+  disabled with a "Disabled for the Demo" tooltip, and to link its footer to the GitHub repository. Unset, nothing
+  changes.
 - `MAGNIDATA_STATIC_DIR=/app/dashboard`: the API serves the built dashboard, since there is no nginx.
 - `MLFLOW_HTTP_REQUEST_MAX_RETRIES=0` and a 3 s timeout: there is no MLflow server, so a request to it must fail at once.
+  In demo mode the API also swaps in an offline MLflow store that answers without trying (and without logging), and the
+  portal does not poll for runs or presets, so the container log stays quiet.
 - `OMP_NUM_THREADS=2` (and the BLAS equivalents): CPU Basic gives 2 vCPUs, but the container can see the host's cores.
 
 Visitors can explore but cannot change anything: the preloaded datasets are part of the image and a restart restores

@@ -111,5 +111,16 @@ Docker), and the feature extractor spawns worker processes, so a script that dri
   refusal answering 403 or 400 as in the local image, 26 of 26 sampled overlays on each dataset and no failed read.
   Before anything was published the diff, the Space files and the bundle were scanned for secrets, personal details and
   local paths, and the bundle for EXIF and GPS data: none were found.
-- Not done: switching the Space's Dockerfile from `feature/hf-space` to `main` once this merges, and silencing the
-  MLflow polling in demo mode (the dashboard re-checks MLflow every 15 s and the server logs each failure).
+- MLflow in demo mode: the Space has no MLflow server, so the dashboard's polling (`/api/experiments`, `/api/runs`,
+  `/api/training/presets`, every 15 s) was answered with a 503 and a logged failure each time. In demo mode the server
+  now installs an `OfflineStore` that answers every MLflow call at once and without logging (status `reachable: false`),
+  and the dashboard, told by `/api/config`, does not send those requests at all (`setMlflowOffline` in `api.ts`).
+  A normal deployment keeps the real store and the polling; tests cover both.
+- Upload CSV is disabled in demo mode, with the same tooltip and cursor as the other controls. It only reads a file in
+  the browser, but a visitor's upload leads to Add dataset, which is off, so leaving it enabled was a dead end.
+- The portal's footer links to the GitHub repository in demo mode, and the Space card was rewritten to follow the
+  repository's README (logo, GitHub and licence badges, the same description) and to list both datasets in its
+  front matter, which is what shows them on the Space page.
+- Access once the Space is public is documented in `MAINTAINING.md`: organization roles, a Resource Group for the Space
+  and the data repo, disabling discussions, and that whoever can merge to `main` controls what the Space runs.
+- Not done: switching the Space's Dockerfile from `feature/hf-space` to `main` once this merges.

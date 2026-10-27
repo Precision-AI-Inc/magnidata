@@ -184,6 +184,34 @@ def test_a_normal_deployment_still_deletes_a_dataset(default_client):
     assert app_module.db.get_created_dataset(record["id"]) is None
 
 
+# ── There is no MLflow server ────────────────────────────────────────────────────
+
+
+def test_demo_mode_answers_mlflow_questions_at_once_and_quietly(demo_client, caplog):
+    client, _ = demo_client
+
+    with caplog.at_level("DEBUG"):
+        status = client.get("/api/mlflow/status")
+        presets = client.get("/api/training/presets")
+        experiments = client.get("/api/experiments")
+
+    assert status.status_code == 200
+    assert status.get_json()["reachable"] is False
+    assert presets.status_code == 200
+    assert presets.get_json()["mlflow"]["reachable"] is False
+    assert experiments.status_code == 503
+    assert experiments.get_json()["mlflow_unavailable"] is True
+    assert not [record for record in caplog.records if "MLflow" in record.getMessage()]
+
+
+def test_a_normal_deployment_still_uses_the_real_mlflow_store(default_client):
+    _, app_module = default_client
+
+    store = app_module.mlflow_store.get_store()
+
+    assert type(store) is app_module.mlflow_store.MlflowStore
+
+
 # ── Image paths stay inside the data folder ──────────────────────────────────────
 
 

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from types import ModuleType
 
+import mlflow_store as mlflow_store_module
 import pytest
 from mlflow.entities import Metric
 from mlflow_store import MlflowStore
@@ -30,6 +31,8 @@ def load_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **env: str | None)
             monkeypatch.delenv(name, raising=False)
         else:
             monkeypatch.setenv(name, value)
+    # A demo deployment installs an offline MLflow store when app.py loads; put the previous one back afterwards.
+    monkeypatch.setitem(mlflow_store_module._state, "store", None)
     app_module = importlib.import_module("app")
     monkeypatch.setattr(app_module.db, "DB_PATH", str(tmp_path / "test.db"))
     importlib.reload(app_module)

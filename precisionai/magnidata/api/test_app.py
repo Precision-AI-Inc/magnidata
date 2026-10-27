@@ -952,15 +952,15 @@ def test_dataset_embeddings_is_not_cacheable(app_client, tmp_path):
     assert resp.headers["Cache-Control"] == "no-store"
 
 
-def test_mlflow_status_reachable_and_unreachable(app_client, tmp_path):
+def test_mlflow_status_reachable_and_unreachable(app_client, mlflow_db, closed_port_url):
     client, _ = app_client
     try:
-        mlflow_store.set_store(mlflow_store.MlflowStore(f"sqlite:///{tmp_path / 'mlflow.db'}"))
+        mlflow_store.set_store(mlflow_store.MlflowStore(f"sqlite:///{mlflow_db}"))
         resp = client.get("/api/mlflow/status")
         assert resp.status_code == 200
         assert resp.get_json()["reachable"] is True
 
-        mlflow_store.set_store(mlflow_store.MlflowStore("http://127.0.0.1:1"))
+        mlflow_store.set_store(mlflow_store.MlflowStore(closed_port_url))
         resp = client.get("/api/mlflow/status")
         assert resp.status_code == 200
         assert resp.get_json()["reachable"] is False
@@ -1173,7 +1173,7 @@ def _center_pixel(data):
     return tuple(int(v) for v in np.asarray(Image.open(io.BytesIO(data)).convert("RGB"))[3, 4])
 
 
-def test_annotation_overlay_and_run_prediction_show_different_masks(app_client, tmp_path, monkeypatch):
+def test_annotation_overlay_and_run_prediction_show_different_masks(app_client, tmp_path, mlflow_db, monkeypatch):
     client, _ = app_client
     monkeypatch.chdir(tmp_path)  # the annotation endpoints read relative image paths from the working directory
     dataset = tmp_path / "data_user" / "ds"
@@ -1183,7 +1183,7 @@ def test_annotation_overlay_and_run_prediction_show_different_masks(app_client, 
     (dataset / "masks" / "a.png").write_bytes(_solid_png((0, 0, 255)))  # ground truth: blue
     (tmp_path / "data_user" / "ds.csv").write_text("image_path\ndata_user/ds/images/a.png\n")
 
-    store = mlflow_store.MlflowStore(f"sqlite:///{tmp_path / 'mlflow.db'}", artifact_root=(tmp_path / "art").as_uri())
+    store = mlflow_store.MlflowStore(f"sqlite:///{mlflow_db}", artifact_root=(tmp_path / "art").as_uri())
     mlflow_store.set_store(store)
     try:
         run_id = seed_run(

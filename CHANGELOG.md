@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `LICENSE.md` is the unmodified Apache License 2.0 text. It had reworded definitions and clauses (the "Work" and
+  "Contribution" definitions, no "Contributor" definition, and sections 8 and 9), so the repository was not under the
+  standard license and GitHub listed it as "Other" instead of Apache-2.0.
 - The COCO128 demo can be trained on: its build now writes a colour mask per image next to the polygon labels
   (the 15 largest classes keep their own colour, the rest share one), where before the trainer refused it with
   "dataset has no segmentation masks to train on". A COCO128 built earlier has no masks; delete it and prepare it

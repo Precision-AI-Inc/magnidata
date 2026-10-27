@@ -104,5 +104,12 @@ Docker), and the feature extractor spawns worker processes, so a script that dri
   endpoint is reachable (no 403) and the API serves no dashboard.
 - Full suite: 693 passed, 50 skipped (the torch and AgriTune tests, skipped as before), coverage 71.77% against the
   60% gate. `main` before this task: 589 passed, 69.51%. Ruff, ruff format and pyright are clean.
-- Not done: the first build on Hugging Face itself (including `RUN --mount=type=bind,from=` on its builder), creating
-  the data repository and the Space, and silencing the MLflow polling in demo mode.
+- On Hugging Face: the public data repo `precisionaiinc/AgriStress-500-Demo` (1358 files, `cc-by-nc-4.0`) and the
+  private Space `precisionaiinc/magnidata` were created, the Space building this branch. The first build, which
+  includes `RUN --mount=type=bind,from=` and the bundle download, finished in about a minute and a half and the Space
+  reached RUNNING on `cpu-basic`. A smoke test over HTTPS shows both datasets (128 and 451 rows, with embeddings), every
+  refusal answering 403 or 400 as in the local image, 26 of 26 sampled overlays on each dataset and no failed read.
+  Before anything was published the diff, the Space files and the bundle were scanned for secrets, personal details and
+  local paths, and the bundle for EXIF and GPS data: none were found.
+- Not done: switching the Space's Dockerfile from `feature/hf-space` to `main` once this merges, and silencing the
+  MLflow polling in demo mode (the dashboard re-checks MLflow every 15 s and the server logs each failure).

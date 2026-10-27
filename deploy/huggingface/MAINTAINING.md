@@ -36,25 +36,77 @@ finish if any row lacks an image, mask or embedding. Keep `bundles/` out of git.
 
 ## Create the data repository and the Space
 
+Needs the `hf` CLI 2.x: `uv tool upgrade huggingface-hub`, or `pip install -U huggingface_hub`. The 1.x series has no
+browser login and no `hf spaces` command.
+
+### Log in with access to the organization
+
 ```bash
 hf auth login
-hf repo create precisionaiinc/AgriStress-500-Demo --repo-type dataset
-hf upload precisionaiinc/AgriStress-500-Demo bundles/agristress500 agristress500 --repo-type dataset
-hf upload precisionaiinc/AgriStress-500-Demo deploy/huggingface/space-data-card.md README.md --repo-type dataset
+```
 
-hf repo create precisionaiinc/magnidata --repo-type space --space-sdk docker --private
+It prints `https://hf.co/oauth/device` and a one-time code. Open the page, enter the code, and on the approval page
+**grant access to the `precisionaiinc` organization with write permission**, not only your own account. A login that
+covers just your account can read the organization but cannot create repositories in it, and `hf repos create` fails with
+"Cannot access content at https://huggingface.co/api/repos/create. Make sure your token has the correct permissions."
+`hf auth whoami` lists the organization either way, so it does not prove this; the permissions it grants are in
+`HfApi().whoami()["auth"]["accessToken"]["fineGrained"]["scoped"]`, where `precisionaiinc` must appear as an entity.
+
+### Create the repositories and upload
+
+```bash
+hf repos create precisionaiinc/AgriStress-500-Demo --repo-type dataset
+hf upload precisionaiinc/AgriStress-500-Demo deploy/huggingface/space-data-card.md README.md --repo-type dataset
+hf upload precisionaiinc/AgriStress-500-Demo bundles/agristress500 agristress500 --repo-type dataset
+
+hf repos create precisionaiinc/magnidata --repo-type space --space-sdk docker --private
+```
+
+`hf repos create` makes **public** repositories unless you pass `--private`, and `--repo-type` is required on every
+`hf upload`: it defaults to a model repository. (In `hf` 1.x the command was `hf repo create`.) A folder upload that is
+interrupted resumes when the same command is run again. The data repo is public on purpose, since AgriStress-500 itself is, and
+that means the build needs no token and anyone can rebuild the Space. The Space is created private so it can be tested;
+switch it to public in its Settings when it is ready to release.
+
+To keep the data repo private instead, add `--private` to its `hf repos create`, create a fine-grained token with read
+access to `precisionaiinc/AgriStress-500-Demo` only, and add it in the Space's Settings as a **secret** named
+`HF_TOKEN`. Docker Spaces mount secrets into the build at `/run/secrets/<NAME>`, which is how the Dockerfile reads it.
+
+### Upload the Space's files
+
+The Space builds MagniData from GitHub at the Dockerfile's `MAGNIDATA_REF` (default `main`). To test a branch before it
+merges, upload a copy of the Dockerfile that points at the branch; the file in the repository stays as it is:
+
+```bash
+mkdir /tmp/space
+sed 's|^ARG MAGNIDATA_REF=main$|ARG MAGNIDATA_REF=<branch>|' deploy/huggingface/Dockerfile > /tmp/space/Dockerfile
+cp deploy/huggingface/README.md /tmp/space/README.md
+hf upload precisionaiinc/magnidata /tmp/space . --repo-type space --commit-message "Build from <branch>"
+```
+
+Once the branch has merged, upload the repository's own Dockerfile, which builds `main`, or one with the release tag:
+
+```bash
 hf upload precisionaiinc/magnidata deploy/huggingface/Dockerfile Dockerfile --repo-type space
 hf upload precisionaiinc/magnidata deploy/huggingface/README.md README.md --repo-type space
 ```
 
-`hf repo create` makes **public** repositories unless you pass `--private`, and `--repo-type` is required on every
-`hf upload`: it defaults to a model repository. The data repo is public on purpose, since AgriStress-500 itself is, and
-that means the build needs no token and anyone can rebuild the Space. The Space is created private so it can be tested;
-switch it to public in its Settings when it is ready to release.
+Do this before the branch is deleted: a Space still pointing at a deleted branch fails its next rebuild.
 
-To keep the data repo private instead, add `--private` to its `hf repo create`, create a fine-grained token with read
-access to `precisionaiinc/AgriStress-500-Demo` only, and add it in the Space's Settings as a **secret** named
-`HF_TOKEN`. Docker Spaces mount secrets into the build at `/run/secrets/<NAME>`, which is how the Dockerfile reads it.
+### Watch the build
+
+```bash
+hf spaces info precisionaiinc/magnidata                  # includes the runtime stage: BUILDING, RUNNING, BUILD_ERROR
+hf spaces logs precisionaiinc/magnidata --build -f       # the image build; without -f it prints what exists and exits
+hf spaces logs precisionaiinc/magnidata -n 100           # the running container's log
+hf spaces restart precisionaiinc/magnidata               # restart the container without rebuilding
+```
+
+A private Space can be reached at its own address, `https://precisionaiinc-magnidata.hf.space`, by sending
+`Authorization: Bearer <token>` with a token that can see it; in a browser, open
+`https://huggingface.co/spaces/precisionaiinc/magnidata` while signed in. The first build from a cold cache took about
+a minute and a half. On CPU Basic the Space sleeps after 48 hours without a visit (`gcTimeout` 172800 in
+`HfApi().get_space_runtime("precisionaiinc/magnidata").raw`) and starts again on the next one.
 
 ## Update the Space
 

@@ -8,6 +8,7 @@ app_port: 7860
 pinned: false
 license: apache-2.0
 short_description: Open-source data visualization for image datasets
+thumbnail: https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/assets/social/og-1200x630-explorer.png
 datasets:
   - precisionaiinc/AgriStress-500-Downsized
   - precisionaiinc/AgriStress-500

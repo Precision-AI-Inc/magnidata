@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The technical report the release notes link to, `docs/paper/magnidata-technical-report.pdf`, is now in the
+  repository, and the Space card sets a `thumbnail:` (a 1200x630 card of the Visual Explorer) so links to the Space no
+  longer show Hugging Face's generic card.
 - `LICENSE.md` is the unmodified Apache License 2.0 text. It had reworded definitions and clauses (the "Work" and
   "Contribution" definitions, no "Contributor" definition, and sections 8 and 9), so the repository was not under the
   standard license and GitHub listed it as "Other" instead of Apache-2.0.

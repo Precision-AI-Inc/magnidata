@@ -13,7 +13,7 @@ building a better dataset with its lineage recorded.
   <img src="assets/preview.png" alt="MagniData Dashboard Preview" width="720"/>
 </p>
 
-A four-page technical report with figures accompanies this release:
+A five-page technical report with figures accompanies this release:
 [`docs/paper/magnidata-technical-report.pdf`](docs/paper/magnidata-technical-report.pdf).
 
 ## The problem

@@ -72,11 +72,7 @@ install the wheel attached to each GitHub release (`gh release view --repo Preci
 
 ## 3. Use the MCP server when it is connected
 
-A local MCP server, `magnidata-mcp`, is planned. It will wrap the read endpoints below as tools and run against the
-local stack by default, or against the demo when configured to. If tools from a `magnidata` MCP server are available
-in this session, prefer them over hand-written HTTP calls. If the user asks to set it up, check that the package
-exists (`pip index versions magnidata-mcp` or https://pypi.org/project/magnidata-mcp/) before suggesting
-`claude mcp add magnidata -- uvx magnidata-mcp`. Until it exists, use the HTTP API directly.
+If a `magnidata-mcp` MCP server is connected in this session, prefer its tools; otherwise use the HTTP API below.
 
 ## 4. Explore a dataset over HTTP
 
@@ -123,8 +119,9 @@ PY
 curl -s "$BASE/api/image?path=data_user/coco128_images/images/000000000009.jpg&max_size=512" -o sample.jpg
 ```
 
-`references/http-api.md` lists every endpoint with its parameters, responses and errors, including the write routes
-of a local stack (create a child dataset from a selection, merge, partition, notes, training runs).
+`references/http-api.md` lists every endpoint (except an unused debug route and the dashboard's MLflow probe) with
+its parameters, responses and errors, including the write routes of a local stack (create a child dataset from a
+selection, merge, partition, notes) and the training and experiment routes.
 
 ## 5. Point the user at the dashboard
 

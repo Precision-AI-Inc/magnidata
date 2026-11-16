@@ -5,7 +5,8 @@
 
 `.claude-plugin/marketplace.json` lists the plugin in `plugins/magnidata/`, whose `skills/` hold the Agent Skills
 that `.agents/skills/` links to for Codex. These tests check the manifests against the documented formats and keep
-the skills' API and column references in step with the code they describe.
+the skills' column reference in step with the feature schema. `api/test_agent_skill_api_reference.py` does the
+same for the HTTP API reference.
 
 Run:  python -m pytest precisionai/magnidata/test_agent_plugin.py -q
 """
@@ -24,8 +25,6 @@ MARKETPLACE = REPO / ".claude-plugin" / "marketplace.json"
 PLUGIN = REPO / "plugins" / "magnidata"
 SKILLS = PLUGIN / "skills"
 MIRROR = REPO / ".agents" / "skills"
-APP = REPO / "precisionai" / "magnidata" / "api" / "app.py"
-HTTP_API = SKILLS / "magnidata" / "references" / "http-api.md"
 COLUMNS = SKILLS / "magnidata" / "references" / "columns.md"
 
 # Agent Skills specification (https://agentskills.io/specification): lowercase letters, digits and single hyphens.
@@ -33,8 +32,6 @@ SKILL_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # The frontmatter keys every Agent Skills client accepts; claude.ai uploads reject anything else.
 PORTABLE_KEYS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 RESERVED_PLUGIN_PREFIXES = ("claude-", "anthropic-", "anthropics-", "cc-plugin-")
-# Routes the skill deliberately leaves out: an unused debug endpoint and the dashboard's MLflow probe.
-UNDOCUMENTED_ROUTES = {"GET /api/mask/debug", "GET /api/mlflow/status"}
 
 
 def _skill_dirs():
@@ -46,14 +43,6 @@ def _frontmatter(skill_md):
     match = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
     assert match, f"{skill_md} has no YAML frontmatter"
     return yaml.safe_load(match.group(1)), text[match.end() :]
-
-
-def _routes(source):
-    """Return 'METHOD /path' for every Flask route decorator in `source`, path parameters reduced to <>."""
-    found = set()
-    for method, path in re.findall(r'@app\.(get|post|put|delete)\("(/api/[^"]*)"', source):
-        found.add(f"{method.upper()} {re.sub(r'<[^>]*>', '<>', path)}")
-    return found
 
 
 @pytest.fixture
@@ -113,13 +102,6 @@ def test_every_skill_is_linked_for_codex(skill_dir):
 
 def test_the_codex_folder_holds_only_links_to_plugin_skills():
     assert {p.name for p in MIRROR.iterdir()} == {p.name for p in _skill_dirs()}
-
-
-def test_http_reference_covers_every_api_route():
-    documented = HTTP_API.read_text()
-    documented = re.sub(r"<[^>]*>", "<>", documented)
-    missing = sorted(r for r in _routes(APP.read_text()) - UNDOCUMENTED_ROUTES if f"`{r}" not in documented)
-    assert not missing, f"add these routes to {HTTP_API.relative_to(REPO)}: {missing}"
 
 
 def test_column_reference_covers_every_feature_column():

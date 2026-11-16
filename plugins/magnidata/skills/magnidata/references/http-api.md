@@ -73,9 +73,34 @@ Each of these answers `403` on the demo.
 
 ## Training and experiments (local stack with MLflow)
 
-These routes read and launch training runs stored in the stack's MLflow. Start with
-`GET /api/training/presets` (presets, bounds, and whether the trainer and MLflow are reachable),
-`GET /api/runs` and `GET /api/runs/<run_id>`. `POST /api/training/runs` queues a run; it is a long, compute-heavy job,
-so confirm with the user before launching one. Per-sample losses become dataset axes through
-`GET /api/runs/<run_id>/columns`. Tags, metric keys and artifacts are specified in the repository's
+These routes read and launch training runs stored in the stack's MLflow. They answer `503` while MLflow is
+unreachable and `404` for an unknown run. Start with `GET /api/training/presets`, `GET /api/runs` and
+`GET /api/runs/<run_id>`. Tags, metric keys and artifacts are specified in the repository's
 `precisionai/magnidata/docs/training-contract.md`.
+
+| Route | Parameters or body | Returns |
+|---|---|---|
+| `GET /api/experiments` | optional `query`, `max_results`, `page_token` | `{experiments, next_page_token}`. |
+| `GET /api/runs` | optional `experiment_ids` (comma-separated), `dataset`, `status`, `per_sample` (`any`, `scored`, `split`), `filter`, `order_by`, `max_results`, `page_token` | `{runs, next_page_token}`. |
+| `GET /api/datasets/experiment-counts` | none | `{"<source>": {total, active}}` run counts per linked dataset; `{}` while MLflow is unreachable. |
+| `GET /api/runs/<run_id>` | none | One run: params, tags, `metric_keys`, `scored_epochs`, `artifact_uri` and top-level `artifacts`. |
+| `GET /api/runs/<run_id>/metrics` | optional `keys` (comma-separated) | `{run_id, metrics, truncated}`, the metric histories (all keys, capped, when omitted). |
+| `POST /api/runs/metrics` | JSON `{run_ids: [...], keys: [...]}` | `{"runs": {"<run_id>": {...}}}`, histories of several runs for comparison. Read-only. |
+| `GET /api/runs/<run_id>/artifacts` | optional `path` | `{path, artifacts}`, one directory level. |
+| `GET /api/runs/<run_id>/artifact` | `path` | The file: images inline, anything else as a download. `413` above 50 MB. |
+| `GET /api/runs/<run_id>/columns` | optional `epoch` (`latest` or a number) | CSV of per-sample loss axes per image, to join to the dataset as extra axes. `409` when the run logged none. |
+| `GET /api/runs/<run_id>/match` | `dataset` (a `source`) | `{matched, run_only, dataset_only, run_only_examples, dataset_only_examples}`: image names shared with the dataset. |
+| `GET /api/runs/<run_id>/samples/<image_name>` | none | One image's per-term loss across scored epochs, plus `prediction_epochs`. |
+| `GET /api/runs/<run_id>/prediction` | `image`, optional `epoch`, `alpha`, `max_size` | JPEG of the dataset image with the run's predicted mask over it. |
+| `GET /api/runs/<run_id>/inference` | `image` | `{status, image, epoch}` of on-demand inference for that image at the latest scored epoch. |
+| `GET /api/runs/compare-samples` | `a`, `b` (run ids), optional `epoch` | CSV comparing the two runs image by image (hardness and loss change from `a` to `b`). |
+| `GET /api/training/presets` | none | The presets and their bounds, plus whether the trainer (`backend`) and `mlflow` are reachable. |
+
+These start work or change runs; each answers `403` on the demo.
+
+| Route | Body | Effect |
+|---|---|---|
+| `POST /api/training/runs` | JSON `{preset, dataset_source, params?, name?, parent_run_id?}` | Queues a `SCHEDULED` run and returns `201` with it. `params` must stay within the preset's bounds. `409` while the trainer is busy. A long, compute-heavy job: confirm with the user first. |
+| `POST /api/runs/<run_id>/cancel` | none | Kills a scheduled run, or asks a running one to stop. `409` when it cannot be cancelled. |
+| `POST /api/runs/<run_id>/link` | JSON `{dataset_source}` | Attaches an external run to a dataset by tagging it. |
+| `POST /api/runs/<run_id>/inference` | JSON `{image}` | Queues inference for one image with the run's latest scored checkpoint; poll the `GET` form. |

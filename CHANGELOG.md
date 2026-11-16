@@ -32,8 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference) and `magnidata-build-dataset` (turn a folder of images into a dataset, add DINOv2 embeddings, or bring
   your own files). `.claude-plugin/marketplace.json` lists the plugin, so `/plugin marketplace add
   Precision-AI-Inc/magnidata` then `/plugin install magnidata@magnidata` installs it. `.agents/skills/` links the
-  same skills for Codex and `npx skills add`. A test keeps the manifests valid and the endpoint and column
-  references in step with the API and the feature schema.
+  same skills for Codex and `npx skills add`. Tests keep the manifests valid, the endpoint reference in step with
+  the routes the Flask app serves, and the column reference in step with the feature schema.
 
 ### Changed
 

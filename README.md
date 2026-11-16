@@ -164,6 +164,8 @@ python -m precisionai.magnidata.tools.features --input data/mydata.csv --output 
 python -m precisionai.magnidata.tools.embeddings --input data/mydata.csv --output data/mydata.json
 ```
 
+An installed package also provides them as the `magnidata-features` and `magnidata-embeddings` commands.
+
 See [`precisionai/magnidata/tools/README.md`](precisionai/magnidata/tools/README.md) for the
 full column schema and flags, and
 [`precisionai/magnidata/docs/data-contract.md`](precisionai/magnidata/docs/data-contract.md)

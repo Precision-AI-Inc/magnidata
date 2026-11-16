@@ -1,35 +1,58 @@
 # ── Project identity ──────────────────────────────────────────────────────────
 
 [build-system]
-requires = ["setuptools>=61", "wheel", "setuptools-scm>=8"]
+# 77+ for the SPDX `license` expression and `license-files` below (PEP 639).
+requires = ["setuptools>=77", "wheel", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "magnidata"
 dynamic = ["version"]
-description = "Precision AI Open Source Data Visualization Tool for image datasets, with deterministic feature extraction, embeddings/PCA/cluster exploration, and a Flask API plus React dashboard."
-readme = "README.md"
-license = { file = "LICENSE.md" }
+description = "Open-source explorer for image datasets: per-image quality and complexity features, embeddings, and a 3D PCA/t-SNE/cluster dashboard for images and segmentation masks."
+# README.pypi.md, not README.md: it describes what the installed package does (the dashboard needs a
+# source checkout) and uses absolute links, since PyPI cannot resolve the repo-relative ones in README.md.
+# Dockerfile.trainer copies it into the image, since building the package needs it.
+readme = "README.pypi.md"
+license = "Apache-2.0"
+license-files = ["LICENSE.md"]
 authors = [{ name = "Precision AI", email = "reinier@precision.ai" }]
 maintainers = [{ name = "Precision AI", email = "reinier@precision.ai" }]
 requires-python = ">=3.10"
 keywords = [
     "computer-vision",
     "data-visualization",
+    "dataset-curation",
+    "dataset-explorer",
+    "data-quality",
+    "embeddings",
+    "feature-extraction",
+    "image-dataset",
+    "image-quality",
+    "image-segmentation",
     "machine-learning",
+    "mlflow",
+    "pca",
+    "segmentation-masks",
+    "tsne",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Framework :: Flask",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Scientific/Engineering :: Visualization",
 ]
 # Runtime deps for the Flask API + feature-extraction toolkit. Embeddings/NIMA
 # computation (torch/timm/pyiqa) is a separate, optional install — see [ml] below.
@@ -78,7 +101,14 @@ dev = [
     "genbadge[coverage]>=1.1",
 ]
 
-# No [project.scripts] entry for the API: precisionai/magnidata/api/*.py use flat,
+[project.scripts]
+# Each needs the extra named in README.pypi.md (embeddings: [ml]; train: [training]).
+magnidata-attach = "precisionai.magnidata.training.attach:main"
+magnidata-embeddings = "precisionai.magnidata.tools.embeddings:main"
+magnidata-features = "precisionai.magnidata.tools.features:main"
+magnidata-train = "precisionai.magnidata.training.train:main"
+
+# No console script for the API: precisionai/magnidata/api/*.py use flat,
 # sibling-style imports (import db, import local_files) by design, since Dockerfile.api
 # copies them flat into the image root and runs `python app.py` directly — see that
 # file's own docstring. That means app.py can't be invoked as an installed console
@@ -88,9 +118,12 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/Precision-AI-Inc/magnidata"
+Documentation = "https://github.com/Precision-AI-Inc/magnidata/tree/main/precisionai/magnidata/docs"
+"Live demo" = "https://huggingface.co/spaces/precisionaiinc/magnidata"
 Repository = "https://github.com/Precision-AI-Inc/magnidata"
 Issues = "https://github.com/Precision-AI-Inc/magnidata/issues"
 Changelog = "https://github.com/Precision-AI-Inc/magnidata/blob/main/CHANGELOG.md"
+"Technical report" = "https://github.com/Precision-AI-Inc/magnidata/blob/main/docs/paper/magnidata-technical-report.pdf"
 
 [tool.setuptools.packages.find]
 where = ["."]

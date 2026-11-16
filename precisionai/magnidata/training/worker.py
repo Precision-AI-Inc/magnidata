@@ -30,7 +30,7 @@ from precisionai.magnidata.training import contract
 try:
     import mlflow
 except ImportError:
-    raise ImportError("mlflow is required for the trainer worker: pip install -e '.[training]'") from None
+    raise ImportError("mlflow is required for the trainer worker: pip install 'magnidata[training]'") from None
 
 DEFAULT_TRACKING_URI = "http://localhost:5052"
 EXPERIMENT_PREFIX = os.environ.get("MAGNIDATA_MLFLOW_EXPERIMENT_PREFIX", "magnidata")

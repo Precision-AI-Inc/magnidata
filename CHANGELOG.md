@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `magnidata` is ready to publish to PyPI. The package declares console scripts `magnidata-features`,
+  `magnidata-embeddings`, `magnidata-train` and `magnidata-attach` (the `python -m` forms still work); its PyPI page
+  text is `README.pypi.md`, which says what the installed package does and does not run and uses absolute links; and
+  its metadata gains keywords, classifiers, an SPDX license expression and links to the documentation, the live demo
+  and the technical report.
+- The release workflow has a PyPI job that uploads the release's sdist and wheel with Trusted Publishing (no stored
+  token) after the GitHub Release is published. It is skipped until the repository variable `PYPI_PUBLISH` is `true`;
+  CONTRIBUTING.md, *Publishing to PyPI*, lists the one-time setup. A new `package` CI job builds the package, checks
+  its metadata with `twine check --strict` and runs the console scripts from a fresh install of the wheel.
+
+### Changed
+
+- The training modules' missing-dependency errors say `pip install 'magnidata[training]'`, the extra that provides
+  torch, torchvision and MLflow, instead of an editable-install command.
+
 ## [0.1.1] - 2026-10-27
 
 ### Added

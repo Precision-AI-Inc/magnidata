@@ -15,7 +15,7 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir torch==2.14.0 torchvision==0.29.0 --index-url ${TORCH_INDEX_URL}
 
-COPY pyproject.toml README.md LICENSE.md ./
+COPY pyproject.toml README.pypi.md LICENSE.md ./
 COPY precisionai ./precisionai
 RUN --mount=type=bind,from=agritune,target=/agritune \
     if [ -f /agritune/pyproject.toml ]; then \

@@ -31,7 +31,7 @@ try:
     import torch
     from torch.utils.data import Dataset
 except ImportError:
-    raise ImportError("torch is required for training data: pip install -e '.[ml]'") from None
+    raise ImportError("torch is required for training data: pip install 'magnidata[training]'") from None
 
 IGNORE_INDEX = 255
 BACKGROUND_MAX_CHANNEL = 10

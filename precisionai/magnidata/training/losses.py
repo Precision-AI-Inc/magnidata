@@ -20,7 +20,7 @@ try:
     import torch
     from torch.nn import functional
 except ImportError:
-    raise ImportError("torch is required for training losses: pip install -e '.[ml]'") from None
+    raise ImportError("torch is required for training losses: pip install 'magnidata[training]'") from None
 
 IGNORE_INDEX = 255
 

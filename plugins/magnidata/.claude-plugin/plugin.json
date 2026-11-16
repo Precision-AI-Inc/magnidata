@@ -1,0 +1,20 @@
+{
+  "name": "magnidata",
+  "displayName": "MagniData",
+  "description": "Skills that teach an agent to install, run and use MagniData: explore image datasets, segmentation masks, per-image quality metrics and embeddings through its HTTP API, and turn a folder of images into a dashboard-ready dataset.",
+  "author": {
+    "name": "Precision AI",
+    "url": "https://github.com/Precision-AI-Inc"
+  },
+  "homepage": "https://github.com/Precision-AI-Inc/magnidata",
+  "repository": "https://github.com/Precision-AI-Inc/magnidata",
+  "license": "Apache-2.0",
+  "keywords": [
+    "magnidata",
+    "computer-vision",
+    "image-datasets",
+    "embeddings",
+    "segmentation",
+    "data-visualization"
+  ]
+}

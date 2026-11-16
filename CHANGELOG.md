@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Graph tags and a `<noscript>` paragraph, so link previews and fetch tools see what the page is.
 - The Space card (`deploy/huggingface/README.md`) has a `short_description` that names what the Space shows, more
   tags, a plain first sentence, and a pointer to the read-only API.
+- Agent skills and a Claude Code plugin marketplace, so AI agents can find out how to install, run and use
+  MagniData. `plugins/magnidata/` is a Claude Code plugin with two Agent Skills: `magnidata` (run the stack or use
+  the public demo, explore datasets, images and embeddings over the HTTP API, with an endpoint reference and a column
+  reference) and `magnidata-build-dataset` (turn a folder of images into a dataset, add DINOv2 embeddings, or bring
+  your own files). `.claude-plugin/marketplace.json` lists the plugin, so `/plugin marketplace add
+  Precision-AI-Inc/magnidata` then `/plugin install magnidata@magnidata` installs it. `.agents/skills/` links the
+  same skills for Codex and `npx skills add`. A test keeps the manifests valid and the endpoint and column
+  references in step with the API and the feature schema.
 
 ### Changed
 

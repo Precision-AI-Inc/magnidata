@@ -195,6 +195,26 @@ curl -s "$API/image?path=data_user/coco128_images/images/000000000009.jpg&max_si
 
 ---
 
+## Agent skills and Claude Code plugin
+
+Two [Agent Skills](https://agentskills.io) teach an AI agent to install, run and use MagniData:
+`magnidata` (run the stack or use the public demo, and explore datasets, images and embeddings over the HTTP API)
+and `magnidata-build-dataset` (turn a folder of images into a dataset). In Claude Code, add this repository as a
+plugin marketplace and install the plugin:
+
+```text
+/plugin marketplace add Precision-AI-Inc/magnidata
+/plugin install magnidata@magnidata
+```
+
+From a shell, use `claude plugin marketplace add Precision-AI-Inc/magnidata`, then
+`claude plugin install magnidata@magnidata`. Other agents that read Agent Skills can install them with
+`npx skills add Precision-AI-Inc/magnidata`. Codex also finds them in [`.agents/skills/`](.agents/skills) when it
+works inside a checkout. The skills live in [`plugins/magnidata/skills/`](plugins/magnidata/skills), and the
+marketplace is [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json).
+
+---
+
 ## Installation (Python package only)
 
 ```bash
@@ -306,6 +326,7 @@ precisionai/magnidata/
   docs/         data-contract.md, training-contract.md and recipes/ — file formats and guides
   confi.yaml    Dataset registry (which CSVs the portal lists)
 Dockerfile.api, Dockerfile.dashboard, Dockerfile.trainer, docker-compose.yml   at the repo root
+plugins/magnidata/   Claude Code plugin holding the agent skills; .claude-plugin/ and .agents/skills/ point at it
 docs/           Sphinx (HTML + LaTeX/PDF) for the Python package
 ```
 

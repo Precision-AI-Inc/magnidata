@@ -1,0 +1,23 @@
+{
+  "name": "magnidata",
+  "description": "Claude Code plugins for MagniData, Precision AI's open-source explorer for image datasets.",
+  "owner": {
+    "name": "Precision AI",
+    "url": "https://github.com/Precision-AI-Inc"
+  },
+  "plugins": [
+    {
+      "name": "magnidata",
+      "source": "./plugins/magnidata",
+      "description": "Skills that teach an agent to install, run and use MagniData: explore image datasets, segmentation masks, per-image quality metrics and embeddings through its HTTP API, and turn a folder of images into a dashboard-ready dataset.",
+      "category": "data",
+      "tags": [
+        "computer-vision",
+        "image-datasets",
+        "embeddings",
+        "segmentation",
+        "data-visualization"
+      ]
+    }
+  ]
+}

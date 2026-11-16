@@ -199,18 +199,8 @@ def _openapi_document() -> str:
 
 @app.get("/api/openapi.json")
 def get_openapi_document() -> ResponseReturnValue:
-    """Return the OpenAPI 3.1 document describing the API's read endpoints.
-
-    Read on request rather than at import: an image built by a Dockerfile that copies only the
-    API's .py files (an older Hugging Face Space copy) then lacks this one endpoint instead of
-    failing to start.
-    """
-    try:
-        document = _openapi_document()
-    except FileNotFoundError:
-        app.logger.warning("OpenAPI document not found at %s", OPENAPI_PATH)
-        return jsonify({"error": "openapi.yaml is not deployed next to app.py"}), 404
-    return app.response_class(document, mimetype="application/json")
+    """Return the OpenAPI 3.1 document describing the API's read endpoints."""
+    return app.response_class(_openapi_document(), mimetype="application/json")
 
 
 def _demo_path_allowed(path: str) -> bool:

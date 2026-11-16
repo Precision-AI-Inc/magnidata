@@ -106,11 +106,6 @@ paths:
           content:
             application/json:
               schema: {type: object}
-        "404":
-          description: The server was deployed without its `openapi.yaml`.
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Error"}
   /api/mlflow/status:
     get:
       tags: [experiments]

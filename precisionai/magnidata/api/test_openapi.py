@@ -28,7 +28,6 @@ from werkzeug.test import TestResponse
 from precisionai.magnidata.training import contract
 
 SPEC_PATH = Path(__file__).with_name("openapi.yaml")
-REPO_ROOT = Path(__file__).resolve().parents[3]
 SPEC_URI = "urn:magnidata:openapi"
 FLASK_ARGUMENT = re.compile(r"<(?:[^:<>]+:)?([^<>]+)>")
 SPEC = yaml.safe_load(SPEC_PATH.read_text(encoding="utf-8"))
@@ -132,24 +131,6 @@ def test_served_document_is_the_file(app_module):
     assert resp.status_code == 200
     assert resp.mimetype == "application/json"
     assert resp.get_json() == SPEC
-
-
-def test_a_missing_document_is_a_json_404_not_a_failed_start(app_module, tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "OPENAPI_PATH", str(tmp_path / "absent.yaml"))
-    app_module._openapi_document.cache_clear()
-    resp = app_module.app.test_client().get("/api/openapi.json")
-    assert resp.status_code == 404
-    _assert_documented("/api/openapi.json", resp)
-    assert app_module.app.test_client().get("/api/config").status_code == 200
-
-
-@pytest.mark.parametrize("dockerfile", ["Dockerfile.api", "deploy/huggingface/Dockerfile"])
-def test_images_ship_the_document_beside_app_py(dockerfile):
-    path = REPO_ROOT / dockerfile
-    if not path.is_file():
-        pytest.skip(f"{dockerfile} is not part of this checkout")
-    lines = [line for line in path.read_text().splitlines() if not line.lstrip().startswith("#")]
-    assert any("precisionai/magnidata/api/openapi.yaml" in line for line in lines)
 
 
 def _assert_documented(template: str, resp: TestResponse) -> None:

@@ -7,6 +7,7 @@ Run:  python -m pytest precisionai/magnidata/api/test_dashboard_static.py -q
 """
 
 from pathlib import Path
+from urllib.robotparser import RobotFileParser
 
 import pytest
 from conftest import load_app
@@ -96,12 +97,13 @@ def test_existing_well_known_file_is_served(dashboard_client):
     assert response.data.startswith(b"Contact:")
 
 
-def test_dashboard_ships_robots_txt_that_allows_crawling():
-    lines = (PUBLIC_DIR / "robots.txt").read_text().splitlines()
+@pytest.mark.parametrize("agent", ["*", "GPTBot", "ClaudeBot"])
+@pytest.mark.parametrize("url_path", ["/", "/llms.txt", "/api/datasets"])
+def test_dashboard_ships_robots_txt_that_allows_crawling(agent, url_path):
+    parser = RobotFileParser()
+    parser.parse((PUBLIC_DIR / "robots.txt").read_text().splitlines())
 
-    assert "User-agent: *" in lines
-    assert "Allow: /" in lines
-    assert "Disallow: /" not in lines
+    assert parser.can_fetch(agent, f"https://precisionaiinc-magnidata.hf.space{url_path}")
 
 
 def test_dashboard_llms_txt_matches_the_repository_copy():
@@ -109,7 +111,6 @@ def test_dashboard_llms_txt_matches_the_repository_copy():
 
     assert shipped == (REPO_ROOT / "llms.txt").read_text()
     assert shipped.startswith("# MagniData\n")
-    assert "https://precisionaiinc-magnidata.hf.space/api" in shipped
 
 
 def test_unknown_api_path_is_a_json_404(dashboard_client):

@@ -17,7 +17,7 @@ PCA/t-SNE/cluster view over a dataset's embedding space.
 **Try it without installing anything:** the [live demo on Hugging Face](https://huggingface.co/spaces/precisionaiinc/magnidata)
 has COCO128 and AgriStress-500 already loaded. Its HTTP API answers read-only requests at
 `https://precisionaiinc-magnidata.hf.space/api`: see [Use it from a script or an agent](#use-it-from-a-script-or-an-agent).
-Releases, with a wheel and sdist attached, are on [GitHub Releases](https://github.com/Precision-AI-Inc/magnidata/releases).
+The current version is **0.1.1**; releases, with a wheel and sdist attached, are on [GitHub Releases](https://github.com/Precision-AI-Inc/magnidata/releases).
 
 - **`precisionai/magnidata/tools/`** — a domain-agnostic feature extractor: turns a folder of
   images (optionally with COCO-format segmentation annotations) into a single CSV of
@@ -145,13 +145,18 @@ so the first request after a quiet spell can take a minute while it wakes. On yo
 | `GET /api/datasets` | Every dataset: `name`, `source` (the id the other endpoints take), `row_count`, `has_embeddings` |
 | `GET /api/datasets/summary?source=` | Row and column counts, per-column min, max, mean and histogram, sample image paths |
 | `GET /api/dataset/csv?source=` | The per-image feature table as CSV (one row per image, `image_path` first) |
-| `GET /api/dataset/embeddings?source=` | `{"embeddings": {"<image name>": [floats, ...]}}` |
-| `GET /api/embedding/projection?source=&method=` | `{"positions": [[x, y, z], ...]}` in row order; `method` is `pca`, `tsne` or `lle` |
-| `GET /api/embedding/clusters?source=&k=` | `{"labels": [...]}` in row order: k-means over the full embeddings, `k` from 1 to 50 (default 20) |
+| `GET /api/dataset/embeddings?source=&variant=` | `{"embeddings": {"<image name>": [floats, ...]}}`; `variant` (optional) picks a comparison model's file |
+| `GET /api/dataset/embeddings/variants?source=` | `[{"name", "variant"}, ...]`: the comparison embedding files next to the dataset (`<stem>_<variant>.json`), each usable as `variant=` |
+| `GET /api/embedding/projection?source=&method=&variant=` | `{"positions": [[x, y, z], ...]}` in row order; `method` is `pca`, `tsne` or `lle`; `variant` (optional) projects a comparison model's embeddings |
+| `GET /api/embedding/clusters?source=&k=&variant=` | `{"labels": [...]}` in row order: k-means over the full embeddings, `k` from 1 to 50 (default 20); `variant` as above |
+| `GET /api/embedding/compare?source=&variant=` | `{"nbr", "w", "origIdx"}`: for each item of the comparison model `variant` (required), its nearest neighbours as row indices into the base layout, with weights |
 | `GET /api/image?path=&max_size=` | The image as JPEG, longest side capped at `max_size` (default 1600) |
+| `GET /api/mask?path=&max_size=` | A mask image as PNG with black pixels made transparent |
+| `GET /api/overlay?img=&mask=&max_size=` | The mask at `mask` composited over the image at `img`, as JPEG |
 | `GET /api/annotation/overlay?path=&alpha=` | The image with its segmentation annotation drawn on top, as JPEG |
 
-`path` is an `image_path` value from the CSV. The examples below ran against the demo; outputs are trimmed.
+`path` and `img` take an `image_path` value from the CSV; `mask` and the `path` of `/api/mask` take a mask file's path
+(a `mask_path` value, or the PNG under `masks/` next to `images/`). The examples below ran against the demo; outputs are trimmed.
 
 ```bash
 API=https://precisionaiinc-magnidata.hf.space/api

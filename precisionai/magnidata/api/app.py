@@ -1061,7 +1061,7 @@ def get_dataset_embeddings() -> ResponseReturnValue:  # noqa: PLR0911
 def list_embedding_variants() -> ResponseReturnValue:
     """List comparison embedding files for a dataset — siblings named <stem>_<model>.json.
 
-    Excludes the base <stem>.json. Returns [{name, variant}].
+    Excludes the base <stem>.json and the projections sidecar. Returns [{name, variant}].
     """
     source = request.args.get("source", "").strip()
     if not source:
@@ -1071,8 +1071,11 @@ def list_embedding_variants() -> ResponseReturnValue:
     stem = os.path.splitext(_resolve_emb_source(source) or source)[0]  # child → parent's variants
     base = os.path.basename(stem)  # datalake_4k
     pattern = os.path.normpath(os.path.join(DATA_ROOT, f"{stem}_*.json"))
+    sidecar = os.path.normpath(os.path.join(DATA_ROOT, projections.sidecar_path(f"{stem}.csv")))
     variants = []
     for f in sorted(glob.glob(pattern)):
+        if f == sidecar:
+            continue
         fname = os.path.basename(f)  # datalake_4k_seedall22.json
         variant = fname[len(base) + 1 : -len(".json")]  # seedall22
         if variant:

@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `openapi.json`, is a 404 instead of the dashboard's `index.html` with a 200. This applies both when the API serves the
   dashboard (`MAGNIDATA_STATIC_DIR`, as on the Space) and in the compose stack's nginx.
 - The README's quickstart clones over HTTPS, so it works without a GitHub SSH key.
+- `/api/dataset/embeddings/variants` no longer lists a dataset's projections sidecar (`<stem>_projections.json`) as a
+  comparison model.
 
 ## [0.1.1] - 2026-10-27
 

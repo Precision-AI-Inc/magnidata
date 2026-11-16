@@ -952,6 +952,20 @@ def test_dataset_embeddings_is_not_cacheable(app_client, tmp_path):
     assert resp.headers["Cache-Control"] == "no-store"
 
 
+def test_embedding_variants_lists_comparison_models_but_not_the_projections_sidecar(app_client, tmp_path):
+    client, _ = app_client
+    data = tmp_path / "data_user"
+    (data / "plain.csv").write_text("image_path\nimages/a.jpg\n")
+    (data / "plain.json").write_text('{"embeddings": {"a.jpg": [1.0]}}')
+    (data / "plain_clip.json").write_text('{"embeddings": {"a.jpg": [2.0]}}')
+    (data / "plain_projections.json").write_text('{"rows": 1, "pca": [[0.0, 0.0, 0.0]]}')
+
+    resp = client.get("/api/dataset/embeddings/variants?source=data_user/plain.csv")
+
+    assert resp.status_code == 200
+    assert resp.get_json() == [{"name": "clip", "variant": "clip"}]
+
+
 def test_mlflow_status_reachable_and_unreachable(app_client, mlflow_db, closed_port_url):
     client, _ = app_client
     try:

@@ -14,10 +14,12 @@ from precisionai.magnidata.mcp_server.client import DEFAULT_API_URL
 from precisionai.magnidata.mcp_server.server import API_URL_ENV
 
 try:
-    import tomllib
+    import tomllib as _tomllib_module
 
+    _tomllib: Any = _tomllib_module
     _TOMLLIB_AVAILABLE = True
 except ImportError:
+    _tomllib = None
     _TOMLLIB_AVAILABLE = False
 
 PACKAGING = Path(__file__).resolve().parents[3] / "mcp-server"
@@ -32,7 +34,7 @@ def server_json() -> dict[str, Any]:
 def pyproject() -> dict[str, Any]:
     if not _TOMLLIB_AVAILABLE:
         pytest.skip("tomllib needs Python 3.11+")
-    return tomllib.loads((PACKAGING / "pyproject.toml").read_text())
+    return _tomllib.loads((PACKAGING / "pyproject.toml").read_text())
 
 
 def test_registry_name_is_claimed_in_the_readme(server_json: dict[str, Any]):

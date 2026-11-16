@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Claude Code, Claude Desktop and other clients. `.github/workflows/release-mcp.yml` publishes the package to PyPI
   and the server to the registry when run by hand on a release tag; it has not been run. The `magnidata`
   distribution itself does not include the MCP server.
+- An OpenAPI 3.1 document for every GET endpoint of the API, `api/openapi.yaml`, served at `GET /api/openapi.json`
+  and linked from the README. `test_openapi.py` fails when a GET route is added or removed without the document, and
+  checks real responses, and the document's examples, against its schemas. Both Dockerfiles copy the file next to
+  `app.py`; an image built without it answers 404 on that one endpoint and starts as before.
 
 ### Changed
 

@@ -259,6 +259,22 @@ python app.py          # default: host 0.0.0.0, port 5050 (override with API_POR
 
 `./start.sh` does the same, plus creating/activating a local `.venv` first.
 
+### API reference (OpenAPI)
+
+Every read (GET) endpoint is described by an OpenAPI 3.1 document, served by the API itself at
+`/api/openapi.json` (`http://localhost:5051/api/openapi.json` with Docker Compose) and kept in the repository at
+[`precisionai/magnidata/api/openapi.yaml`](precisionai/magnidata/api/openapi.yaml). Load it into Swagger UI, Postman,
+a client generator or an agent's tool definitions to call the API without reading its source. A test fails when a GET
+route is added without being documented there.
+
+The [live demo](https://huggingface.co/spaces/precisionaiinc/magnidata) answers the same read endpoints without
+authentication, with COCO128 and AgriStress-500 loaded:
+
+```bash
+curl https://precisionaiinc-magnidata.hf.space/api/datasets
+curl "https://precisionaiinc-magnidata.hf.space/api/embedding/clusters?source=data_user/coco128.csv&k=5"
+```
+
 ## Feature extraction & embeddings CLI
 
 ```bash

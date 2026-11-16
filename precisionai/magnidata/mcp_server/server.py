@@ -65,9 +65,6 @@ from the dataset's image column, or its mask or overlay."""
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True, open_world_hint=False)
 
 Source = Annotated[str, Field(description="Dataset `source` from list_datasets, such as data_user/coco128.csv.")]
-Variant = Annotated[
-    str | None, Field(description="Comparison embedding model from describe_dataset; omit for the dataset's own.")
-]
 Offset = Annotated[int, Field(ge=0, description="Index of the first row to return.")]
 
 
@@ -114,16 +111,13 @@ class MagniDataTools:
         with _as_tool_error():
             summary = await self.client.dataset_summary(source)
             table = tables.parse_csv(await self.client.dataset_csv(source))
-            has_embeddings = bool(summary.get("has_embeddings"))
-            variants = await self.client.embedding_variants(source) if has_embeddings else []
         coverage = summary.get("mask_coverage")
         return DatasetDescription(
             source=source,
             row_count=len(table.rows),
             column_count=len(table.columns),
             image_column=summary.get("image_column") or tables.image_column(table.columns),
-            has_embeddings=has_embeddings,
-            embedding_variants=variants,
+            has_embeddings=bool(summary.get("has_embeddings")),
             mask_coverage=MaskCoverage(**coverage) if coverage else None,
             sample_images=list(summary.get("sample_images") or []),
             columns=tables.describe_columns(table),
@@ -164,7 +158,6 @@ class MagniDataTools:
             ProjectionMethod,
             Field(description="pca is fast; tsne and lle separate local neighbourhoods but can take a while."),
         ] = "pca",
-        variant: Variant = None,
         include_columns: Annotated[
             list[str] | None,
             Field(description="Table columns to attach to each point, such as the image column or a label."),
@@ -174,7 +167,7 @@ class MagniDataTools:
     ) -> Projection:
         """Return 3D coordinates of a dataset's image embeddings, one point per table row."""
         with _as_tool_error():
-            positions = await self.client.embedding_projection(source, method, variant)
+            positions = await self.client.embedding_projection(source, method)
             table = await self._table_for(source, include_columns)
         points = [
             ProjectionPoint(
@@ -186,15 +179,12 @@ class MagniDataTools:
             )
             for index, position in enumerate(positions[offset : offset + limit], start=offset)
         ]
-        return Projection(
-            source=source, method=method, variant=variant, total_points=len(positions), offset=offset, points=points
-        )
+        return Projection(source=source, method=method, total_points=len(positions), offset=offset, points=points)
 
     async def embedding_clusters(
         self,
         source: Source,
         k: Annotated[int, Field(ge=1, le=50, description="Number of clusters.")] = 8,
-        variant: Variant = None,
         examples_per_cluster: Annotated[
             int, Field(ge=0, le=10, description="Example rows and images listed per cluster.")
         ] = 3,
@@ -203,7 +193,7 @@ class MagniDataTools:
     ) -> Clustering:
         """Cluster a dataset's embeddings with spherical k-means and summarise each cluster."""
         with _as_tool_error():
-            labels = await self.client.embedding_clusters(source, k, variant)
+            labels = await self.client.embedding_clusters(source, k)
             table = tables.parse_csv(await self.client.dataset_csv(source)) if examples_per_cluster else None
         image_column = tables.image_column(table.columns) if table else None
         clusters = []
@@ -216,7 +206,6 @@ class MagniDataTools:
         return Clustering(
             source=source,
             k=k,
-            variant=variant,
             total_points=len(labels),
             clusters=clusters,
             offset=offset,
@@ -280,8 +269,8 @@ def create_server(client: MagniDataClient) -> MCPServer:
             tools.describe_dataset,
             "Describe dataset",
             "Describe a dataset's feature table: every column with its "
-            "type and statistics (numeric range and mean, or common text values), the image column, mask coverage, "
-            "embedding variants and sample image paths.",
+            "type and statistics (numeric range and mean, or common text values), the image column, mask coverage "
+            "and sample image paths.",
         ),
         (
             tools.query_rows,

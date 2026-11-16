@@ -47,9 +47,6 @@ class FakeAPI:
             ),
             "/api/datasets/summary": self._summary,
             "/api/dataset/csv": self._csv,
-            "/api/dataset/embeddings/variants": lambda _: _json(
-                [{"name": "projections", "variant": "projections"}, {"name": "clip", "variant": "clip"}]
-            ),
             "/api/embedding/projection": lambda _: _json({"positions": POSITIONS}),
             "/api/embedding/clusters": lambda _: _json({"labels": LABELS}),
             "/api/image": lambda _: httpx2.Response(200, content=JPEG, headers={"content-type": "image/jpeg"}),

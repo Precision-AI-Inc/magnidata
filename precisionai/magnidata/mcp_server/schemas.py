@@ -66,9 +66,6 @@ class DatasetDescription(BaseModel):
     column_count: int
     image_column: str | None = Field(description="Column holding each row's image path, for get_image.")
     has_embeddings: bool
-    embedding_variants: list[str] = Field(
-        default_factory=list, description="Other embedding models, usable as `variant` in the embedding tools."
-    )
     mask_coverage: MaskCoverage | None = None
     sample_images: list[str] = Field(default_factory=list, description="Image paths to try with get_image.")
     columns: list[ColumnSummary]
@@ -116,7 +113,6 @@ class Projection(BaseModel):
 
     source: str
     method: ProjectionMethod
-    variant: str | None
     total_points: int
     offset: int
     points: list[ProjectionPoint]
@@ -136,7 +132,6 @@ class Clustering(BaseModel):
 
     source: str
     k: int
-    variant: str | None
     total_points: int
     clusters: list[ClusterSummary] = Field(description="Largest cluster first.")
     offset: int

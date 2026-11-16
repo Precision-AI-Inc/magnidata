@@ -46,15 +46,11 @@ async def test_read_endpoints_send_the_expected_requests(client: MagniDataClient
     assert (await client.dataset_summary(SOURCE))["image_column"] == "image_path"
     assert fake_api.last_params() == {"source": SOURCE}
     assert await client.dataset_csv(SOURCE) == TINY_CSV
-    assert await client.embedding_projection(SOURCE, "tsne", "clip") == POSITIONS
-    assert fake_api.last_params() == {"source": SOURCE, "method": "tsne", "variant": "clip"}
+    assert await client.embedding_projection(SOURCE, "tsne") == POSITIONS
+    assert fake_api.last_params() == {"source": SOURCE, "method": "tsne"}
     assert await client.embedding_clusters(SOURCE, 5) == LABELS
     assert fake_api.last_params() == {"source": SOURCE, "k": "5"}
     assert fake_api.requests[0].headers["user-agent"].startswith("magnidata-mcp/")
-
-
-async def test_embedding_variants_leave_out_the_projections_sidecar(client: MagniDataClient):
-    assert await client.embedding_variants(SOURCE) == ["clip"]
 
 
 @pytest.mark.parametrize(

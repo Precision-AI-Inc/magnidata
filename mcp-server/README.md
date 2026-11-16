@@ -16,7 +16,7 @@ changes data, builds a dataset or trains a model, and it holds no data of its ow
 | Tool | What it returns | MagniData endpoint |
 |---|---|---|
 | `list_datasets` | Each dataset's name, `source` id, row count and whether it has embeddings | `GET /api/datasets` |
-| `describe_dataset` | Every column with type and statistics, the image column, mask coverage, embedding variants, sample image paths | `GET /api/datasets/summary`, `GET /api/dataset/csv` |
+| `describe_dataset` | Every column with type and statistics, the image column, mask coverage, sample image paths | `GET /api/datasets/summary`, `GET /api/dataset/csv` |
 | `query_rows` | A page of the per-image feature table, filtered (`==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `empty`, `not_empty`) and sorted | `GET /api/dataset/csv` |
 | `embedding_projection` | 3D PCA, t-SNE or LLE coordinates, one point per row, optionally with table columns attached | `GET /api/embedding/projection` |
 | `embedding_clusters` | Spherical k-means clusters: sizes, example images and per-row labels | `GET /api/embedding/clusters` |

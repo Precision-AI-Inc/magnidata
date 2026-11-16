@@ -85,7 +85,6 @@ async def test_describe_dataset(client: MagniDataClient):
     assert result["row_count"] == 4
     assert result["column_count"] == 5
     assert result["image_column"] == "image_path"
-    assert result["embedding_variants"] == ["clip"]
     assert result["mask_coverage"] == {"checked": 4, "with_masks": 3}
     assert result["sample_images"] == ["data_user/tiny/a.jpg"]
     columns = {column["name"]: column for column in result["columns"]}
@@ -94,7 +93,7 @@ async def test_describe_dataset(client: MagniDataClient):
     assert columns["note"]["top_values"][0] == {"value": "sharp", "count": 2}
 
 
-async def test_describe_dataset_skips_variants_without_embeddings(client: MagniDataClient, fake_api: FakeAPI):
+async def test_describe_dataset_without_embeddings(client: MagniDataClient, fake_api: FakeAPI):
     summary = fake_api.routes["/api/datasets/summary"]
 
     def without_embeddings(request: httpx2.Request) -> httpx2.Response:
@@ -104,10 +103,9 @@ async def test_describe_dataset_skips_variants_without_embeddings(client: MagniD
 
     fake_api.routes["/api/datasets/summary"] = without_embeddings
     result = await call_ok(client, "describe_dataset", {"source": SOURCE})
-    assert result["embedding_variants"] == []
+    assert result["has_embeddings"] is False
     assert result["mask_coverage"] is None
     assert result["image_column"] == "image_path"
-    assert all(r.url.path != "/api/dataset/embeddings/variants" for r in fake_api.requests)
 
 
 async def test_query_rows_filters_sorts_and_pages(client: MagniDataClient):
@@ -177,10 +175,9 @@ async def test_embedding_projection_pages_points_and_attaches_columns(client: Ma
 async def test_embedding_projection_without_columns_does_not_fetch_the_table(
     client: MagniDataClient, fake_api: FakeAPI
 ):
-    result = await call_ok(client, "embedding_projection", {"source": SOURCE, "offset": 3, "variant": "clip"})
+    result = await call_ok(client, "embedding_projection", {"source": SOURCE, "offset": 3})
     assert [p["row_index"] for p in result["points"]] == [3]
     assert result["points"][0]["values"] is None
-    assert result["variant"] == "clip"
     assert [r.url.path for r in fake_api.requests] == ["/api/embedding/projection"]
 
 

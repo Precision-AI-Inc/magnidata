@@ -26,8 +26,6 @@ _IMAGE_ROUTES: dict[str, str] = {
     "mask": "/api/annotation/mask",
     "overlay": "/api/annotation/overlay",
 }
-# The API lists its precomputed-projections sidecar (<stem>_projections.json) as if it were another model's embeddings.
-_NOT_A_VARIANT = "projections"
 
 
 class MagniDataAPIError(Exception):
@@ -100,19 +98,14 @@ class MagniDataClient:
         response = await self._get("/api/dataset/csv", {"source": source})
         return response.text
 
-    async def embedding_variants(self, source: str) -> list[str]:
-        """Return the names of a dataset's comparison embedding models."""
-        variants = await self._get_json("/api/dataset/embeddings/variants", {"source": source})
-        return [v["variant"] for v in variants if v.get("variant") and v["variant"] != _NOT_A_VARIANT]
-
-    async def embedding_projection(self, source: str, method: str, variant: str | None = None) -> list[list[float]]:
+    async def embedding_projection(self, source: str, method: str) -> list[list[float]]:
         """Return one ``[x, y, z]`` per table row from ``GET /api/embedding/projection``."""
-        params = {"source": source, "method": method} | ({"variant": variant} if variant else {})
+        params = {"source": source, "method": method}
         return (await self._get_json("/api/embedding/projection", params))["positions"]
 
-    async def embedding_clusters(self, source: str, k: int, variant: str | None = None) -> list[int]:
+    async def embedding_clusters(self, source: str, k: int) -> list[int]:
         """Return one cluster label per table row from ``GET /api/embedding/clusters``."""
-        params = {"source": source, "k": str(k)} | ({"variant": variant} if variant else {})
+        params = {"source": source, "k": str(k)}
         return (await self._get_json("/api/embedding/clusters", params))["labels"]
 
     async def image(self, path: str, kind: ImageKind, max_size: int, alpha: float) -> tuple[bytes, str]:

@@ -1,0 +1,36 @@
+cff-version: 1.2.0
+message: "If you use MagniData in your work, please cite it as below."
+type: software
+title: "MagniData"
+abstract: >-
+  Open-source explorer for image datasets. A deterministic feature extractor turns a folder of images, optionally
+  with COCO segmentation annotations, into a table of per-image quality, complexity and coverage metrics; a Flask API
+  and a React dashboard browse images and segmentation masks, filter by those metrics, and show embeddings in 3D
+  (PCA, t-SNE, clusters). Per-image training losses join the same views as dataset axes.
+authors:
+  - name: "Precision AI"
+license: Apache-2.0
+repository-code: "https://github.com/Precision-AI-Inc/magnidata"
+url: "https://huggingface.co/spaces/precisionaiinc/magnidata"
+keywords:
+  - computer vision
+  - image datasets
+  - dataset curation
+  - data visualization
+  - embeddings
+  - image segmentation
+preferred-citation:
+  type: report
+  title: "MagniData: Opening the Black Box After Every Epoch. Evidence-driven training and dataset curation for computer vision"
+  authors:
+    - given-names: "Asser"
+      family-names: "AboElkhair"
+      affiliation: "Precision AI"
+    - given-names: "Reinier"
+      family-names: "Oves"
+      affiliation: "Precision AI"
+  institution:
+    name: "Precision AI"
+  year: 2026
+  month: 10
+  url: "https://github.com/Precision-AI-Inc/magnidata/blob/main/docs/paper/magnidata-technical-report.pdf"

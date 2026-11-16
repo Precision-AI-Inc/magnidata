@@ -6,8 +6,13 @@
 Run:  python -m pytest precisionai/magnidata/api/test_dashboard_static.py -q
 """
 
+from pathlib import Path
+
 import pytest
 from conftest import load_app
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PUBLIC_DIR = REPO_ROOT / "precisionai" / "magnidata" / "dashboard" / "public"
 
 
 @pytest.fixture
@@ -17,6 +22,9 @@ def dashboard_client(tmp_path, monkeypatch):
     (dist / "index.html").write_text("<!doctype html><title>MagniData</title>")
     (dist / "assets" / "app-abc123.js").write_text("console.log('hi')")
     (dist / "logo.png").write_bytes(b"\x89PNG")
+    (dist / "robots.txt").write_text("User-agent: *\nAllow: /\n")
+    (dist / ".well-known").mkdir()
+    (dist / ".well-known" / "security.txt").write_text("Contact: mailto:security@example.com\n")
     app_module = load_app(tmp_path / "data", monkeypatch, MAGNIDATA_STATIC_DIR=str(dist))
     with app_module.app.test_client() as client:
         yield client
@@ -56,6 +64,52 @@ def test_other_static_file_is_served_as_is(dashboard_client):
 
     assert response.status_code == 200
     assert response.data == b"\x89PNG"
+
+
+def test_shipped_machine_readable_file_is_served_as_is(dashboard_client):
+    response = dashboard_client.get("/robots.txt")
+
+    assert response.status_code == 200
+    assert response.data == b"User-agent: *\nAllow: /\n"
+
+
+@pytest.mark.parametrize("path", ["/llms.txt", "/sitemap.xml", "/openapi.json", "/openapi.yaml", "/SITEMAP.XML"])
+def test_missing_machine_readable_file_is_a_404_not_index_html(dashboard_client, path):
+    response = dashboard_client.get(path)
+
+    assert response.status_code == 404
+    assert b"MagniData" not in response.data
+
+
+@pytest.mark.parametrize("path", ["/.well-known/mcp.json", "/.well-known/openai-apps-challenge", "/.well-known/"])
+def test_unknown_well_known_path_is_a_404_not_index_html(dashboard_client, path):
+    response = dashboard_client.get(path)
+
+    assert response.status_code == 404
+    assert b"MagniData" not in response.data
+
+
+def test_existing_well_known_file_is_served(dashboard_client):
+    response = dashboard_client.get("/.well-known/security.txt")
+
+    assert response.status_code == 200
+    assert response.data.startswith(b"Contact:")
+
+
+def test_dashboard_ships_robots_txt_that_allows_crawling():
+    lines = (PUBLIC_DIR / "robots.txt").read_text().splitlines()
+
+    assert "User-agent: *" in lines
+    assert "Allow: /" in lines
+    assert "Disallow: /" not in lines
+
+
+def test_dashboard_llms_txt_matches_the_repository_copy():
+    shipped = (PUBLIC_DIR / "llms.txt").read_text()
+
+    assert shipped == (REPO_ROOT / "llms.txt").read_text()
+    assert shipped.startswith("# MagniData\n")
+    assert "https://precisionaiinc-magnidata.hf.space/api" in shipped
 
 
 def test_unknown_api_path_is_a_json_404(dashboard_client):

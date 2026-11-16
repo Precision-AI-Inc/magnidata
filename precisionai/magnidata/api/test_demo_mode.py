@@ -70,6 +70,25 @@ def test_demo_mode_stays_off_for_anything_else(tmp_path, monkeypatch, value):
     assert app_module.DEMO_MODE is False
 
 
+def test_health_reports_the_datalake_path_on_a_normal_deployment(default_client):
+    client, app_module = default_client
+
+    local = client.get("/api/health").get_json()["local"]
+
+    assert local["root"] == app_module.local_files.DATALAKE_ROOT
+    assert "datalake_accessible" in local
+
+
+def test_health_leaves_the_datalake_path_out_in_demo_mode(demo_client):
+    client, _ = demo_client
+
+    body = client.get("/api/health").get_json()
+
+    assert body["status"] == "ok"
+    assert "root" not in body["local"]
+    assert "datalake_accessible" in body["local"]
+
+
 def test_demo_mode_refuses_a_dataset_build_before_it_starts(demo_client, monkeypatch):
     client, app_module = demo_client
 

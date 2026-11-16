@@ -1,0 +1,27 @@
+# MagniData
+
+> MagniData is Precision AI's open-source (Apache-2.0) explorer for image datasets. It extracts per-image quality,
+> complexity and coverage metrics into a CSV, and serves them with a Flask API and a React dashboard for browsing
+> images and segmentation masks, filtering by metric, and viewing embeddings in 3D (PCA, t-SNE, clusters). It can
+> also train segmentation models and turn per-image losses into dataset axes.
+
+- Live read-only demo: https://huggingface.co/spaces/precisionaiinc/magnidata
+- Demo HTTP API, no authentication: https://precisionaiinc-magnidata.hf.space/api (try `/api/datasets`)
+- Source: https://github.com/Precision-AI-Inc/magnidata
+- Not on PyPI yet. Install the wheel attached to the latest GitHub Release
+  (https://github.com/Precision-AI-Inc/magnidata/releases), or run the full stack with `docker compose up`.
+
+## Docs
+
+- [README](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/README.md): what MagniData is, the quickstart, and the section "Use it from a script or an agent", with the HTTP API's read endpoints and curl examples
+- [Data contract](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/precisionai/magnidata/docs/data-contract.md): the CSV and embeddings JSON formats the dashboard and API read
+- [Feature extractor and embeddings CLI](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/precisionai/magnidata/tools/README.md): every metric column and flag
+- [Recipe: from images to dashboard](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/precisionai/magnidata/docs/recipes/from-images-to-dashboard.md): turn a folder of images into a dataset the dashboard can open
+- [Recipe: training feedback loop](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/precisionai/magnidata/docs/recipes/training-feedback-loop.md): train, find the hard images, curate, train again
+
+## Optional
+
+- [Training contract](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/precisionai/magnidata/docs/training-contract.md): how training runs are logged to MLflow
+- [App layout and data mounts](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/precisionai/magnidata/README.md)
+- [Release notes and technical report](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/ReleaseNotes.md)
+- [Changelog](https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/CHANGELOG.md)

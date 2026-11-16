@@ -1,0 +1,4 @@
+# MagniData public demo. Everything here may be crawled.
+# Agent-oriented summary: /llms.txt
+User-agent: *
+Allow: /

@@ -7,7 +7,7 @@ sdk: docker
 app_port: 7860
 pinned: false
 license: apache-2.0
-short_description: Open-source data visualization for image datasets
+short_description: Explore image datasets, masks and embeddings in 3D
 thumbnail: https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/assets/social/og-1200x630-explorer.png
 datasets:
   - precisionaiinc/AgriStress-500-Downsized
@@ -17,6 +17,12 @@ tags:
   - data-visualization
   - embeddings
   - segmentation
+  - image-segmentation
+  - dataset-curation
+  - dataset-explorer
+  - visualization
+  - pca
+  - tsne
   - agriculture
 ---
 
@@ -29,9 +35,12 @@ tags:
 [![GitHub](https://img.shields.io/badge/GitHub-Precision--AI--Inc%2Fmagnidata-181717?logo=github)](https://github.com/Precision-AI-Inc/magnidata)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/Precision-AI-Inc/magnidata/blob/main/LICENSE.md)
 
-Precision AI's open-source data visualization tool for exploring image datasets: a deterministic feature-extraction
-pipeline, a Flask API, and a React/Three.js dashboard for browsing images, segmentation masks and embeddings,
-including a live 3D PCA / t-SNE / cluster view over a dataset's embedding space.
+This Space shows two image datasets in MagniData: you can browse the images and their segmentation masks, filter
+them by per-image quality and complexity metrics, and see their embeddings in 3D.
+
+MagniData is Precision AI's open-source explorer for image datasets: a deterministic feature-extraction pipeline, a
+Flask API, and a React/Three.js dashboard for browsing images, segmentation masks and embeddings, including a live 3D
+PCA / t-SNE / cluster view over a dataset's embedding space.
 
 This Space runs the dashboard with two datasets already loaded, so you can open it and explore:
 
@@ -48,5 +57,10 @@ This is a demo on small CPU hardware, so it is read-only. Anything that adds, ch
 adding, merging, saving or deleting datasets, creating partitions), and training and the Experiments tab, is disabled
 here: those controls show "Disabled for the Demo". To use them, run the full stack with `docker compose up` from the
 [GitHub repository](https://github.com/Precision-AI-Inc/magnidata), where nothing is turned off.
+
+Scripts and agents can query the same data without a browser: the API at
+`https://precisionaiinc-magnidata.hf.space/api` answers read-only requests without authentication (start with
+`/api/datasets`). See [Use it from a script or an agent](https://github.com/Precision-AI-Inc/magnidata#use-it-from-a-script-or-an-agent)
+for the endpoints and examples.
 
 The Space repository holds only this card and a `Dockerfile` that builds MagniData from GitHub.

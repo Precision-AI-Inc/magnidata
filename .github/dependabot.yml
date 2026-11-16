@@ -12,3 +12,11 @@ updates:
     groups:
       python-dependencies:
         patterns: ["*"]
+
+  - package-ecosystem: "pip"
+    directory: "/mcp-server"
+    schedule:
+      interval: "weekly"
+    groups:
+      mcp-server-dependencies:
+        patterns: ["*"]

@@ -85,13 +85,21 @@ training = [
     "torchvision==0.29.2",
     "mlflow-skinny==3.18.0",
 ]
+# The MCP server (precisionai/magnidata/mcp_server) ships as its own distribution, magnidata-mcp, built from
+# mcp-server/; its runtime dependencies are listed here only so the repository's tests can import it.
 test = [
     "pytest>=7.0",
     "pytest-cov>=5.0",
+    "mcp>=2.3,<3",
+    "httpx2>=2.14",
+    "uvicorn>=0.31",
 ]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=5.0",
+    "mcp>=2.3,<3",
+    "httpx2>=2.14",
+    "uvicorn>=0.31",
     "mlflow==3.18.0",
     "pre-commit>=3.7",
     # Pinned to the rev in .pre-commit-config.yaml — a different ruff version
@@ -128,6 +136,9 @@ Changelog = "https://github.com/Precision-AI-Inc/magnidata/blob/main/CHANGELOG.m
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["precisionai*"]
+# Packaged separately as magnidata-mcp (see mcp-server/pyproject.toml), so that installing one of the two
+# distributions never overwrites or removes the other's files.
+exclude = ["precisionai.magnidata.mcp_server*"]
 
 [tool.setuptools.package-data]
 # Non-.py runtime assets, needed for a real (non-editable) install: the COCO128 demo

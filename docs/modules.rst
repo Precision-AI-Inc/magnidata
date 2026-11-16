@@ -149,3 +149,29 @@ see above).
    :members:
    :undoc-members:
    :show-inheritance:
+
+precisionai.magnidata.mcp_server
+--------------------------------
+
+The MCP server, distributed separately as ``magnidata-mcp`` (see ``mcp-server/README.md``). It
+needs the ``mcp`` and ``httpx2`` packages, which ``pip install -e ".[dev]"`` installs.
+
+.. automodule:: precisionai.magnidata.mcp_server.server
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.mcp_server.client
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.mcp_server.tables
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.mcp_server.schemas
+   :members:
+   :undoc-members:
+   :show-inheritance:

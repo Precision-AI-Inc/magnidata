@@ -142,6 +142,7 @@ so the first request after a quiet spell can take a minute while it wakes. On yo
 |---|---|
 | `GET /api/health` | `{"status": "ok", ...}` |
 | `GET /api/config` | `{"demo_mode": true}` on the demo |
+| `GET /api/openapi.json` | The OpenAPI 3.1 document for every GET endpoint, these and more (see [API reference (OpenAPI)](#api-reference-openapi)) |
 | `GET /api/datasets` | Every dataset: `name`, `source` (the id the other endpoints take), `row_count`, `has_embeddings` |
 | `GET /api/datasets/summary?source=` | Row and column counts, per-column min, max, mean and histogram, sample image paths |
 | `GET /api/dataset/csv?source=` | The per-image feature table as CSV (one row per image, `image_path` first) |
@@ -265,15 +266,9 @@ Every read (GET) endpoint is described by an OpenAPI 3.1 document, served by the
 `/api/openapi.json` (`http://localhost:5051/api/openapi.json` with Docker Compose) and kept in the repository at
 [`precisionai/magnidata/api/openapi.yaml`](precisionai/magnidata/api/openapi.yaml). Load it into Swagger UI, Postman,
 a client generator or an agent's tool definitions to call the API without reading its source. A test fails when a GET
-route is added without being documented there.
-
-The [live demo](https://huggingface.co/spaces/precisionaiinc/magnidata) answers the same read endpoints without
-authentication, with COCO128 and AgriStress-500 loaded:
-
-```bash
-curl https://precisionaiinc-magnidata.hf.space/api/datasets
-curl "https://precisionaiinc-magnidata.hf.space/api/embedding/clusters?source=data_user/coco128.csv&k=5"
-```
+route is added without being documented there. The public demo serves the same document at
+`https://precisionaiinc-magnidata.hf.space/api/openapi.json`; see
+[Use it from a script or an agent](#use-it-from-a-script-or-an-agent) for worked examples against the demo.
 
 ## Feature extraction & embeddings CLI
 

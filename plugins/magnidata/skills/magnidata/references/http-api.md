@@ -15,6 +15,7 @@ URL-encode both.
 |---|---|
 | `GET /api/health` | `{"status": "ok", "local": {...}}` |
 | `GET /api/config` | `{"demo_mode": bool}`. When true, the routes marked **write** below answer `403`. |
+| `GET /api/openapi.json` | The OpenAPI 3.1 document for the read (`GET`) endpoints, as JSON. |
 
 ## Datasets (read)
 

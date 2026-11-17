@@ -127,8 +127,14 @@ def _data_path(relative_path: str) -> str:
 # ── Health ─────────────────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health() -> ResponseReturnValue:
-    """Return service status and local-filesystem/datalake accessibility."""
-    return jsonify({"status": "ok", "local": local_files.local_status()})
+    """Return service status and local-filesystem/datalake accessibility.
+
+    A demo deployment is open to anyone, so it leaves out the datalake's configured path.
+    """
+    local = local_files.local_status()
+    if DEMO_MODE:
+        local.pop("root", None)
+    return jsonify({"status": "ok", "local": local})
 
 
 # ── Demo deployment ────────────────────────────────────────────────────────────
@@ -1055,7 +1061,7 @@ def get_dataset_embeddings() -> ResponseReturnValue:  # noqa: PLR0911
 def list_embedding_variants() -> ResponseReturnValue:
     """List comparison embedding files for a dataset — siblings named <stem>_<model>.json.
 
-    Excludes the base <stem>.json. Returns [{name, variant}].
+    Excludes the base <stem>.json and the projections sidecar. Returns [{name, variant}].
     """
     source = request.args.get("source", "").strip()
     if not source:
@@ -1065,8 +1071,11 @@ def list_embedding_variants() -> ResponseReturnValue:
     stem = os.path.splitext(_resolve_emb_source(source) or source)[0]  # child → parent's variants
     base = os.path.basename(stem)  # datalake_4k
     pattern = os.path.normpath(os.path.join(DATA_ROOT, f"{stem}_*.json"))
+    sidecar = os.path.normpath(os.path.join(DATA_ROOT, projections.sidecar_path(f"{stem}.csv")))
     variants = []
     for f in sorted(glob.glob(pattern)):
+        if f == sidecar:
+            continue
         fname = os.path.basename(f)  # datalake_4k_seedall22.json
         variant = fname[len(base) + 1 : -len(".json")]  # seedall22
         if variant:
@@ -1479,6 +1488,9 @@ def _compare_response(source: str, variant: str, cache_key: tuple) -> ResponseRe
 # Space runs a single container, so there is no nginx in front). Unset, no routes are added.
 _static_dir_env = os.environ.get("MAGNIDATA_STATIC_DIR", "").strip()
 STATIC_DIR = os.path.abspath(_static_dir_env) if _static_dir_env else ""
+# Crawlers and agents probe for these by name (robots.txt, llms.txt, sitemap.xml, openapi.json, ...). A missing one
+# must be a 404: the dashboard's index.html under a 200 reads to them as the file's content.
+_MACHINE_READABLE_SUFFIXES = (".txt", ".xml", ".json", ".yaml", ".yml", ".md")
 
 if STATIC_DIR:
 
@@ -1490,7 +1502,8 @@ if STATIC_DIR:
         Mirrors dashboard/nginx.conf: hashed files under assets/ are cached forever and a
         missing one is a 404 (index.html would reach the browser as a module script with a
         text/html type, which it refuses), and index.html is always revalidated. An unknown
-        /api path is a JSON 404 rather than the dashboard.
+        /api path is a JSON 404 rather than the dashboard, and so is a missing file under
+        /.well-known/ or a missing machine-readable file such as robots.txt or openapi.json.
         """
         if path == "api" or path.startswith("api/"):
             return jsonify({"error": "not found"}), 404
@@ -1499,7 +1512,11 @@ if STATIC_DIR:
             resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
             return resp
         candidate = safe_join(STATIC_DIR, path)
-        name = path if path and candidate and os.path.isfile(candidate) else "index.html"
+        exists = bool(path and candidate and os.path.isfile(candidate))
+        well_known = path.split("/", 1)[0] == ".well-known"
+        if not exists and (well_known or path.lower().endswith(_MACHINE_READABLE_SUFFIXES)):
+            return jsonify({"error": "not found"}), 404
+        name = path if exists else "index.html"
         resp = send_from_directory(STATIC_DIR, name)
         if name == "index.html":
             resp.headers["Cache-Control"] = "no-cache"

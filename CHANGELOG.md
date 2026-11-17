@@ -18,11 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token) after the GitHub Release is published. It is skipped until the repository variable `PYPI_PUBLISH` is `true`;
   CONTRIBUTING.md, *Publishing to PyPI*, lists the one-time setup. A new `package` CI job builds the package, checks
   its metadata with `twine check --strict` and runs the console scripts from a fresh install of the wheel.
+- The README has a section, *Use it from a script or an agent*, with the install line for the release wheel (MagniData
+  is not on PyPI yet), the HTTP API's base URLs, a table of its read endpoints and six `curl` examples run against the
+  public demo.
+- `llms.txt` (at the repository root, and served by the dashboard), `robots.txt` (served by the dashboard) and
+  `CITATION.cff`, which points at the technical report. The dashboard's `index.html` has a meta description, Open
+  Graph tags and a `<noscript>` paragraph, so link previews and fetch tools see what the page is.
+- The Space card (`deploy/huggingface/README.md`) has a `short_description` that names what the Space shows, more
+  tags, a plain first sentence, and a pointer to the read-only API.
 
 ### Changed
 
 - The training modules' missing-dependency errors say `pip install 'magnidata[training]'`, the extra that provides
   torch, torchvision and MLflow, instead of an editable-install command.
+
+### Fixed
+
+- `/api/health` leaves the datalake's configured path out of its response in demo mode.
+- A missing file under `/.well-known/`, or a missing machine-readable file such as `robots.txt`, `sitemap.xml` or
+  `openapi.json`, is a 404 instead of the dashboard's `index.html` with a 200. This applies both when the API serves the
+  dashboard (`MAGNIDATA_STATIC_DIR`, as on the Space) and in the compose stack's nginx.
+- The README's quickstart clones over HTTPS, so it works without a GitHub SSH key.
+- `/api/dataset/embeddings/variants` no longer lists a dataset's projections sidecar (`<stem>_projections.json`) as a
+  comparison model.
 
 ## [0.1.1] - 2026-10-27
 

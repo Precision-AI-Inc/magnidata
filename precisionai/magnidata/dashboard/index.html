@@ -6,6 +6,13 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/png" href="/logo.png" />
     <title>Precision AI - MagniData</title>
+    <!-- Read by link previews, crawlers and fetch tools, which see this page before any script runs. -->
+    <meta name="description" content="MagniData: open-source explorer for image datasets. Browse images and segmentation masks, filter by per-image quality and complexity metrics, and view embeddings in 3D (PCA, t-SNE, clusters)." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="MagniData: explore image datasets, masks and embeddings" />
+    <meta property="og:description" content="MagniData: open-source explorer for image datasets. Browse images and segmentation masks, filter by per-image quality and complexity metrics, and view embeddings in 3D (PCA, t-SNE, clusters)." />
+    <meta property="og:image" content="https://raw.githubusercontent.com/Precision-AI-Inc/magnidata/main/assets/social/og-1200x630-explorer.png" />
+    <link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
 
     <!-- Apply a persisted theme before paint (shared 'pai-theme' key across every
          Precision AI surface — see https://embeddings.precision.ai/ui/tokens.css);
@@ -31,6 +38,14 @@
     <link rel="stylesheet" href="https://embeddings.precision.ai/ui/tokens.css" />
   </head>
   <body>
+    <noscript>
+      <p>
+        MagniData is an open-source explorer for image datasets, and this dashboard needs JavaScript. Scripts and
+        agents can read the same data from the HTTP API under <a href="/api/datasets">/api</a>: see
+        <a href="https://github.com/Precision-AI-Inc/magnidata#use-it-from-a-script-or-an-agent">the README</a>
+        and <a href="/llms.txt">llms.txt</a>.
+      </p>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

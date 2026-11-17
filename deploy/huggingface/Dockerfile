@@ -71,6 +71,8 @@ COPY --from=source --chown=user:user /src/precisionai/magnidata/training ./preci
 # Every API module rather than Dockerfile.api's explicit list, so a module added there cannot
 # be missed here.
 COPY --from=source --chown=user:user /src/precisionai/magnidata/api/*.py ./
+# GET /api/openapi.json serves this file.
+COPY --from=source --chown=user:user /src/precisionai/magnidata/api/openapi.yaml ./
 COPY --from=source --chown=user:user /src/precisionai/magnidata/confi.yaml ./confi.yaml
 COPY --from=dashboard --chown=user:user /app/dist ./dashboard
 RUN rm -f test_*.py conftest.py \

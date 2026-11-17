@@ -23,7 +23,8 @@ COPY precisionai/magnidata/api/app.py precisionai/magnidata/api/db.py precisiona
      precisionai/magnidata/api/embeddings_io.py precisionai/magnidata/api/projections.py \
      precisionai/magnidata/api/mlflow_store.py precisionai/magnidata/api/experiments.py \
      precisionai/magnidata/api/artifact_cache.py precisionai/magnidata/api/run_axes.py precisionai/magnidata/api/image_overlay.py \
-     precisionai/magnidata/api/trainer_backend.py precisionai/magnidata/api/training_presets.py ./
+     precisionai/magnidata/api/trainer_backend.py precisionai/magnidata/api/training_presets.py \
+     precisionai/magnidata/api/openapi.yaml ./
 
 EXPOSE 5050
 

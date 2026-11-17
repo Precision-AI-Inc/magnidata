@@ -9,8 +9,10 @@ Also exposes dataset listing and CSV serving from local disk.
 
 import colorsys
 import contextlib
+import functools
 import glob
 import io
+import json
 import os
 import re
 import shutil
@@ -182,6 +184,23 @@ DEMO_MAX_KEPT_ANALYSES = 50
 def get_config() -> ResponseReturnValue:
     """Return the deployment settings the dashboard adapts to."""
     return jsonify({"demo_mode": DEMO_MODE})
+
+
+# Hand-written OpenAPI 3.1 contract for every GET endpoint; test_openapi.py keeps it in step with the routes.
+OPENAPI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "openapi.yaml")
+
+
+@functools.cache
+def _openapi_document() -> str:
+    """Return openapi.yaml as JSON text, read on first use."""
+    with open(OPENAPI_PATH, encoding="utf-8") as fh:
+        return json.dumps(yaml.safe_load(fh))
+
+
+@app.get("/api/openapi.json")
+def get_openapi_document() -> ResponseReturnValue:
+    """Return the OpenAPI 3.1 document describing the API's read endpoints."""
+    return app.response_class(_openapi_document(), mimetype="application/json")
 
 
 def _demo_path_allowed(path: str) -> bool:

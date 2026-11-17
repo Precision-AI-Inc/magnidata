@@ -1,0 +1,1579 @@
+# Copyright 2026 Precision AI
+# SPDX-License-Identifier: Apache-2.0
+#
+# Hand-written contract for MagniData's read (GET) endpoints. The API serves it as JSON at
+# /api/openapi.json. test_openapi.py fails when a GET route is added to or removed from the
+# Flask app without a matching change here, and checks real responses against these schemas.
+openapi: 3.1.0
+info:
+  title: MagniData API
+  version: 1.0.0
+  summary: Read endpoints of the MagniData image-dataset explorer.
+  description: |
+    MagniData turns image datasets into a table of per-image features plus embeddings, and
+    serves them to a dashboard. This document covers every GET endpoint of its Flask API:
+    listing datasets, downloading a dataset's feature CSV and embeddings, server-side 3D
+    projections and k-means clusters, image/mask/overlay rendering, and browsing MLflow
+    training runs.
+
+    `info.version` is the version of this contract, not of the MagniData package.
+
+    **Public demo.** `https://precisionaiinc-magnidata.hf.space` runs this API in demo mode
+    with COCO128 (`data_user/coco128.csv`) and AgriStress-500 (`data_user/agristress500.csv`)
+    loaded. It needs no authentication and allows any CORS origin. In demo mode:
+
+    - write, build and training endpoints answer 403, and so does `GET /api/mask/debug`;
+    - image paths must be relative paths inside the data folder (no URLs, no absolute paths);
+    - there is no MLflow server, so the experiment and run endpoints answer 503.
+
+    **Typical agent flow.** `GET /api/datasets` → pick a `source` → `GET /api/datasets/summary`,
+    `GET /api/dataset/csv`, `GET /api/embedding/projection` and `GET /api/embedding/clusters`
+    with that `source` → render images from the CSV's image column with `GET /api/image`.
+
+    Errors are JSON objects with an `error` message, except where a response says otherwise.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  contact:
+    name: MagniData on GitHub
+    url: https://github.com/Precision-AI-Inc/magnidata
+externalDocs:
+  description: README and project documentation
+  url: https://github.com/Precision-AI-Inc/magnidata#readme
+servers:
+  - url: /
+    description: The server this document was fetched from.
+  - url: https://precisionaiinc-magnidata.hf.space
+    description: Public read-only demo (Hugging Face Space, demo mode).
+  - url: http://localhost:5051
+    description: Local Docker Compose stack (`docker compose up`).
+  - url: http://localhost:5050
+    description: API run directly with `python app.py`.
+tags:
+  - name: system
+    description: Health, deployment settings and this document.
+  - name: datasets
+    description: Registered datasets, their feature CSVs and summaries.
+  - name: embeddings
+    description: Embedding files, 3D projections, clusters and model comparison.
+  - name: images
+    description: Images, masks and overlays rendered from files on the server.
+  - name: annotations
+    description: Notes and committed cluster partitions.
+  - name: builds
+    description: Read side of the in-app dataset-build pipeline.
+  - name: experiments
+    description: MLflow experiments, runs, metrics and artifacts. 503 when MLflow is unreachable.
+  - name: training
+    description: Training presets and per-sample results of training runs.
+
+paths:
+  # ── System ───────────────────────────────────────────────────────────────────
+  /api/health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      summary: Report service status and whether the local datalake is mounted.
+      responses:
+        "200":
+          description: The API is up.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Health"}
+              example:
+                status: ok
+                local: {datalake_accessible: false}
+  /api/config:
+    get:
+      tags: [system]
+      operationId: getConfig
+      summary: Return the deployment settings the dashboard adapts to.
+      responses:
+        "200":
+          description: Deployment settings.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Config"}
+              example: {demo_mode: true}
+  /api/openapi.json:
+    get:
+      tags: [system]
+      operationId: getOpenApiDocument
+      summary: Return this OpenAPI document.
+      responses:
+        "200":
+          description: The OpenAPI 3.1 document for the read endpoints.
+          content:
+            application/json:
+              schema: {type: object}
+  /api/mlflow/status:
+    get:
+      tags: [experiments]
+      operationId: getMlflowStatus
+      summary: Report whether the MLflow tracking server is reachable.
+      description: Always 200; `reachable` is false when the server is down or not configured.
+      responses:
+        "200":
+          description: MLflow reachability.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MlflowStatus"}
+              example:
+                reachable: false
+                tracking_uri: null
+                ui_url: null
+                version: null
+                error: This deployment has no MLflow server
+
+  # ── Datasets ─────────────────────────────────────────────────────────────────
+  /api/datasets:
+    get:
+      tags: [datasets]
+      operationId: listDatasets
+      summary: List every dataset, from the config file and those created in the app.
+      description: >-
+        Each entry's `source` is the data-relative CSV path every other dataset endpoint
+        takes as its `source` parameter.
+      responses:
+        "200":
+          description: All datasets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Dataset"}
+              example:
+                - id: 2
+                  name: COCO128
+                  description: Ultralytics COCO128 sample, built in-app (embeddings precomputed offline and shipped with the tool)
+                  source: data_user/coco128.csv
+                  parent_source: null
+                  parent_sources: []
+                  row_count: 128
+                  deletable: true
+                  has_embeddings: true
+                  file_size_bytes: 40401
+                - id: 1
+                  name: AgriStress-500
+                  description: >-
+                    451 field images with segmentation masks. Images are downsized for this demo; the
+                    features and embeddings come from the full-resolution originals.
+                  source: data_user/agristress500.csv
+                  parent_source: null
+                  parent_sources: []
+                  row_count: 451
+                  deletable: true
+                  has_embeddings: true
+                  file_size_bytes: 130620
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/datasets/summary:
+    get:
+      tags: [datasets]
+      operationId: getDatasetSummary
+      summary: Summarize one dataset — column statistics, sample images, mask coverage.
+      parameters:
+        - $ref: "#/components/parameters/Source"
+      responses:
+        "200":
+          description: The dataset summary.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DatasetSummary"}
+              example:
+                row_count: 128
+                column_count: 41
+                numeric_column_count: 31
+                numeric_columns:
+                  - {name: width, min: 333.0, max: 640.0, mean: 578.859375, histogram: [1, 4, 1, 10, 3, 11, 9, 2, 0, 1, 4, 82]}
+                image_column: image_path
+                sample_images:
+                  - data_user/coco128_images/images/000000000009.jpg
+                mask_coverage: {checked: 60, with_masks: 60}
+                truncated: false
+                partitions_committed: 0
+                has_embeddings: true
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409":
+          description: The dataset CSV is a Git LFS pointer, not the real file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /api/dataset/csv:
+    get:
+      tags: [datasets]
+      operationId: getDatasetCsv
+      summary: Download a dataset's feature CSV.
+      description: >-
+        One row per image. The image column (usually `image_path`) holds the path to pass to
+        `GET /api/image`; the other columns are per-image features. Never cached.
+      parameters:
+        - $ref: "#/components/parameters/Source"
+      responses:
+        "200":
+          description: The CSV file.
+          content:
+            text/csv:
+              schema: {type: string}
+              example: |
+                image_path,width,height,cluster,cluster_l2,annotation_ratio,...
+                data_user/coco128_images/images/000000000009.jpg,640,480,bowl,object,0.615977,...
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/LfsPointer"}
+  /api/dataset/embeddings:
+    get:
+      tags: [embeddings]
+      operationId: getDatasetEmbeddings
+      summary: Download a dataset's raw embeddings JSON.
+      description: >-
+        Can be large (about 0.5 MB for COCO128, gigabytes for big datasets); prefer
+        `GET /api/embedding/projection` and `GET /api/embedding/clusters` for 3D positions and
+        cluster labels. A dataset created in the app serves its parent's embeddings.
+      parameters:
+        - $ref: "#/components/parameters/Source"
+        - $ref: "#/components/parameters/Variant"
+      responses:
+        "200":
+          description: The embeddings file, as stored.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EmbeddingsFile"}
+              example:
+                embeddings:
+                  000000000009.jpg: [1.799372, -0.090724, 1.548737]
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/LfsPointer"}
+  /api/dataset/embeddings/variants:
+    get:
+      tags: [embeddings]
+      operationId: listEmbeddingVariants
+      summary: List the comparison embedding files stored beside a dataset's own.
+      description: >-
+        Every `<stem>_<variant>.json` next to the dataset's `<stem>.json`. Pass a `variant` to
+        the embedding endpoints to use that file instead.
+      parameters:
+        - $ref: "#/components/parameters/Source"
+      responses:
+        "200":
+          description: The variants, sorted by file name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/EmbeddingVariant"}
+              example:
+                - {name: dinov2_small, variant: dinov2_small}
+        "400": {$ref: "#/components/responses/BadRequest"}
+
+  # ── Embedding compute ────────────────────────────────────────────────────────
+  /api/embedding/projection:
+    get:
+      tags: [embeddings]
+      operationId: getEmbeddingProjection
+      summary: Project a dataset's embeddings to 3D.
+      description: >-
+        Returns one `[x, y, z]` per CSV row, in CSV row order. Rows without an embedding are
+        projected from a zero vector. Results are cached in the server process.
+      parameters:
+        - $ref: "#/components/parameters/Source"
+        - name: method
+          in: query
+          description: Projection method.
+          schema: {type: string, enum: [pca, tsne, lle], default: pca}
+        - $ref: "#/components/parameters/Variant"
+      responses:
+        "200":
+          description: 3D positions.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Projection"}
+              example:
+                positions:
+                  - [-0.37185603380203247, -2.966247797012329, -1.1970314979553223]
+                  - [10.345864295959473, 27.49855613708496, -12.248773574829102]
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/embedding/clusters:
+    get:
+      tags: [embeddings]
+      operationId: getEmbeddingClusters
+      summary: Cluster a dataset's embeddings with spherical (cosine) k-means.
+      description: >-
+        Clusters the full-dimensional embeddings. Returns one label per CSV row, in CSV row
+        order. Labels run from 0 to `k - 1`.
+      parameters:
+        - $ref: "#/components/parameters/Source"
+        - $ref: "#/components/parameters/Variant"
+        - name: k
+          in: query
+          description: Number of clusters, clamped to 1–50 and to the row count. A non-integer means 20.
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+      responses:
+        "200":
+          description: Cluster labels.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Clusters"}
+              example: {labels: [3, 1, 2, 1, 4, 1, 3, 1, 4, 0]}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/embedding/analysis/{job_id}:
+    get:
+      tags: [embeddings]
+      operationId: getEmbeddingAnalysis
+      summary: Poll a background embedding-analysis job.
+      description: >-
+        Jobs are started with `POST /api/embedding/analysis` (body `{source, variant, k,
+        reduction}`), which answers `{job_id}`. When `status` is `done` the job carries
+        `labels` and the requested projection.
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: The job's progress, or its result.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AnalysisJob"}
+              example:
+                job_id: 5f0c3d6c2b6f4b1c9a1d7e2f3a4b5c6d
+                status: done
+                progress: 100
+                stage: complete
+                source: data_user/coco128.csv
+                k: 5
+                reduction: pca
+                labels: [3, 1, 2]
+                projections:
+                  pca: [[-0.37, -2.97, -1.2], [10.35, 27.5, -12.25], [-4.45, 0.4, -0.38]]
+        "404": {$ref: "#/components/responses/NotFound"}
+  /api/embedding/compare:
+    get:
+      tags: [embeddings]
+      operationId: compareEmbeddings
+      summary: Place a comparison model's items in the dataset's own 3D layout.
+      description: >-
+        For each image in the `variant` embeddings, finds its nearest neighbours in that
+        comparison space and maps them to rows of the dataset by image name, so a client can
+        interpolate a position from the neighbours' positions in `GET /api/embedding/projection`.
+        `nbr[i]` are row indices, `w[i]` their weights (summing to 1), `origIdx[i]` the item's
+        own row (-1 when the dataset has no row of that name).
+      parameters:
+        - $ref: "#/components/parameters/Source"
+        - name: variant
+          in: query
+          required: true
+          description: Comparison embeddings to place, as listed by `GET /api/dataset/embeddings/variants`.
+          schema: {type: string, pattern: "^[A-Za-z0-9_-]+$"}
+      responses:
+        "200":
+          description: Neighbour rows and weights per comparison item.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Comparison"}
+              example:
+                nbr: [[4, 9, 2], [0, 7, 3]]
+                w: [[0.5, 0.3, 0.2], [0.4, 0.35, 0.25]]
+                origIdx: [0, 1]
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  # ── Images ───────────────────────────────────────────────────────────────────
+  /api/image:
+    get:
+      tags: [images]
+      operationId: getImage
+      summary: Render an image as a size-capped JPEG.
+      parameters:
+        - $ref: "#/components/parameters/ImagePath"
+        - $ref: "#/components/parameters/MaxSize"
+      responses:
+        "200":
+          description: The image.
+          content:
+            image/jpeg:
+              schema: {type: string, contentMediaType: image/jpeg}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "500": {$ref: "#/components/responses/ImageError"}
+  /api/mask:
+    get:
+      tags: [images]
+      operationId: getMask
+      summary: Render a pre-coloured mask file as a PNG with a transparent background.
+      description: Black pixels become transparent; coloured pixels keep their colour.
+      parameters:
+        - name: path
+          in: query
+          required: true
+          description: Path of the mask file (same rules as the `path` of `GET /api/image`).
+          schema: {type: string}
+          example: data_user/agristress500_images/masks/pai-03deDVOb.png
+        - $ref: "#/components/parameters/MaxSize"
+      responses:
+        "200":
+          description: The mask.
+          content:
+            image/png:
+              schema: {type: string, contentMediaType: image/png}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "500": {$ref: "#/components/responses/ImageError"}
+  /api/overlay:
+    get:
+      tags: [images]
+      operationId: getOverlay
+      summary: Composite a pre-coloured mask over its image, as a JPEG.
+      parameters:
+        - name: img
+          in: query
+          required: true
+          description: Path of the image (same rules as the `path` of `GET /api/image`).
+          schema: {type: string}
+          example: data_user/agristress500_images/images/pai-03deDVOb.jpg
+        - name: mask
+          in: query
+          required: true
+          description: Path of the mask file.
+          schema: {type: string}
+          example: data_user/agristress500_images/masks/pai-03deDVOb.png
+        - $ref: "#/components/parameters/MaxSize"
+      responses:
+        "200":
+          description: The image with the mask on top.
+          content:
+            image/jpeg:
+              schema: {type: string, contentMediaType: image/jpeg}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "500": {$ref: "#/components/responses/ImageError"}
+  /api/mask/debug:
+    get:
+      tags: [images]
+      operationId: debugMask
+      summary: Inspect a mask file's raw properties (diagnostics; refused in demo mode).
+      parameters:
+        - name: path
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Raw mask properties.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MaskDebug"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/DemoDisabled"}
+        "500": {$ref: "#/components/responses/ServerError"}
+  /api/annotation/mask:
+    get:
+      tags: [images]
+      operationId: getAnnotationMask
+      summary: Render an image's segmentation mask alone, as a transparent PNG.
+      description: >-
+        The mask comes from COCO polygon labels at `<dataset>/labels/<stem>.json` (one colour
+        per category) or, failing that, a pre-coloured raster at `<dataset>/masks/<stem>.<ext>`,
+        both beside `<dataset>/images/<stem>.<ext>`.
+      parameters:
+        - $ref: "#/components/parameters/RelativeImagePath"
+        - $ref: "#/components/parameters/MaxSize"
+      responses:
+        "200":
+          description: The mask.
+          content:
+            image/png:
+              schema: {type: string, contentMediaType: image/png}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404":
+          description: The image has no labels and no mask file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+              example: {error: no annotations for this image}
+        "500": {$ref: "#/components/responses/ImageError"}
+  /api/annotation/overlay:
+    get:
+      tags: [images]
+      operationId: getAnnotationOverlay
+      summary: Render an image with its segmentation mask composited on top, as a JPEG.
+      description: Same mask sources as `GET /api/annotation/mask`.
+      parameters:
+        - $ref: "#/components/parameters/RelativeImagePath"
+        - $ref: "#/components/parameters/MaxSize"
+        - name: alpha
+          in: query
+          description: Mask opacity, clamped to 0–1. A non-number means 0.5.
+          schema: {type: number, minimum: 0, maximum: 1, default: 0.5}
+      responses:
+        "200":
+          description: The image with its mask on top.
+          content:
+            image/jpeg:
+              schema: {type: string, contentMediaType: image/jpeg}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404":
+          description: The image has no labels and no mask file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "500": {$ref: "#/components/responses/ImageError"}
+
+  # ── Notes and partitions ─────────────────────────────────────────────────────
+  /api/notes:
+    get:
+      tags: [annotations]
+      operationId: listNotes
+      summary: List notes, newest first, optionally for one image.
+      parameters:
+        - name: stem
+          in: query
+          description: Only notes for this image stem (file name without extension).
+          schema: {type: string}
+      responses:
+        "200":
+          description: The notes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Note"}
+              example:
+                - id: 1
+                  stem: "000000000009"
+                  image_path: data_user/coco128_images/images/000000000009.jpg
+                  note: Bowl is cropped at the edge.
+                  created_at: "2026-11-16 21:00:00"
+                  updated_at: "2026-11-16 21:00:00"
+  /api/partitions:
+    get:
+      tags: [annotations]
+      operationId: listPartitions
+      summary: List the committed cluster partition of a dataset, per image file name.
+      parameters:
+        - $ref: "#/components/parameters/Source"
+      responses:
+        "200":
+          description: The partition entries; empty when nothing was committed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [partitions]
+                properties:
+                  partitions:
+                    type: array
+                    items: {$ref: "#/components/schemas/Partition"}
+              example:
+                partitions:
+                  - {image_name: 000000000009.jpg, cluster_id: 3}
+        "400": {$ref: "#/components/responses/BadRequest"}
+
+  # ── Dataset builds ───────────────────────────────────────────────────────────
+  /api/datasets/demos:
+    get:
+      tags: [builds]
+      operationId: listDemoDatasets
+      summary: List the one-click demo datasets the build pipeline can create.
+      responses:
+        "200":
+          description: The demo registry.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/DemoDataset"}
+              example:
+                - key: coco128
+                  name: COCO128
+                  description: Ultralytics COCO128 sample, built in-app (embeddings precomputed offline and shipped with the tool)
+                  enabled: true
+  /api/datasets/build/limits:
+    get:
+      tags: [builds]
+      operationId: getBuildLimits
+      summary: Return the upload limits of the dataset-build endpoint.
+      responses:
+        "200":
+          description: The limits.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BuildLimits"}
+              example:
+                max_images: 500
+                max_upload_bytes: 17179869184
+                max_embeddings_bytes: 104857600
+                max_request_bytes: 17351835648
+  /api/datasets/build/local-folders:
+    get:
+      tags: [builds]
+      operationId: listLocalBuildFolders
+      summary: List the server-side `image_sets/` folders a dataset can be built from.
+      responses:
+        "200":
+          description: Folders holding a non-empty `images/` directory.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/LocalFolder"}
+              example:
+                - {folder: field_trial, image_count: 240, label_count: 240, built: false}
+  /api/datasets/build/{job_id}:
+    get:
+      tags: [builds]
+      operationId: getBuildJob
+      summary: Poll a background dataset-build job.
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: The job's state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BuildJob"}
+              example:
+                status: extracting_features
+                percent: 60
+                message: Extracting features…
+                name: my-dataset
+                dataset: null
+                error: null
+        "404": {$ref: "#/components/responses/NotFound"}
+
+  # ── Experiments (MLflow) ─────────────────────────────────────────────────────
+  /api/experiments:
+    get:
+      tags: [experiments]
+      operationId: listExperiments
+      summary: List active MLflow experiments, optionally filtered by name.
+      parameters:
+        - name: query
+          in: query
+          description: Name substring. Must not contain `'` or `%`.
+          schema: {type: string, maxLength: 100}
+        - name: max_results
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 100}
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: One page of experiments.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ExperimentPage"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs:
+    get:
+      tags: [experiments]
+      operationId: listRuns
+      summary: Search runs across experiments.
+      parameters:
+        - name: experiment_ids
+          in: query
+          description: Comma-separated experiment ids (at most 20). Default is every experiment.
+          schema: {type: string}
+        - name: dataset
+          in: query
+          description: Only runs linked to this dataset `source`.
+          schema: {type: string, maxLength: 500}
+        - name: status
+          in: query
+          schema: {$ref: "#/components/schemas/RunStatus"}
+        - name: per_sample
+          in: query
+          description: >-
+            `split`: runs that logged a train/validation split; `scored`: runs with per-sample
+            losses; `any`: no restriction.
+          schema: {type: string, enum: [any, split, scored], default: any}
+        - name: filter
+          in: query
+          description: >-
+            Extra MLflow filter, limited to `AND`-joined clauses such as
+            `metrics.val_loss < 0.5 AND params.lr = '0.001'`.
+          schema: {type: string, maxLength: 500}
+        - name: order_by
+          in: query
+          description: Up to three comma-separated keys such as `metrics.val_loss ASC`.
+          schema: {type: string}
+        - name: max_results
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+        - $ref: "#/components/parameters/PageToken"
+      responses:
+        "200":
+          description: One page of runs.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RunPage"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/datasets/experiment-counts:
+    get:
+      tags: [experiments]
+      operationId: getDatasetExperimentCounts
+      summary: Count runs per linked dataset.
+      description: >-
+        Keys are dataset `source` paths; `active` counts runs that are RUNNING or SCHEDULED.
+        Empty, not 503, while MLflow is unreachable.
+      responses:
+        "200":
+          description: Run counts per dataset.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {$ref: "#/components/schemas/RunCount"}
+              example:
+                data_user/agristress500.csv: {total: 4, active: 1}
+  /api/runs/compare-samples:
+    get:
+      tags: [training]
+      operationId: compareRunSamples
+      summary: Compare two runs image by image, as CSV.
+      description: >-
+        Columns: `image_name`, then how hardness and total loss changed from run `a` to run
+        `b` (for example `hardness_a`, `hardness_b`, …). Both runs need per-sample results.
+      parameters:
+        - name: a
+          in: query
+          required: true
+          schema: {$ref: "#/components/schemas/RunId"}
+        - name: b
+          in: query
+          required: true
+          schema: {$ref: "#/components/schemas/RunId"}
+        - $ref: "#/components/parameters/Epoch"
+      responses:
+        "200":
+          description: One row per image the runs share.
+          content:
+            text/csv:
+              schema: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/NoPerSample"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}:
+    get:
+      tags: [experiments]
+      operationId: getRun
+      summary: Return one run in full.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "200":
+          description: The run, with its tags, scored epochs and top-level artifacts.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RunDetail"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}/metrics:
+    get:
+      tags: [experiments]
+      operationId: getRunMetrics
+      summary: Return metric histories of one run.
+      description: Each history is downsampled to at most 2000 points, keeping the extremes.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: keys
+          in: query
+          description: >-
+            Comma-separated metric keys, at most 20. Default is the run's first 20 keys
+            alphabetically, with `truncated` true if it has more.
+          schema: {type: string}
+      responses:
+        "200":
+          description: Metric histories by key.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RunMetrics"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}/artifacts:
+    get:
+      tags: [experiments]
+      operationId: listRunArtifacts
+      summary: List one directory level of a run's artifacts.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: path
+          in: query
+          description: Artifact directory, relative to the run's artifact root. Default is the root.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The directory's entries.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ArtifactListing"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}/artifact:
+    get:
+      tags: [experiments]
+      operationId: getRunArtifact
+      summary: Download one artifact file (at most 50 MB).
+      description: Images are served with their own media type; anything else as an attachment.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: path
+          in: query
+          required: true
+          description: Artifact file path, relative to the run's artifact root.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The file.
+          content:
+            image/*:
+              schema: {type: string}
+            application/octet-stream:
+              schema: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "413":
+          description: The artifact is larger than 50 MB.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}/columns:
+    get:
+      tags: [training]
+      operationId: getRunColumns
+      summary: Return a run's per-sample axes at one epoch, as CSV.
+      description: >-
+        Columns: `image_name`, `split`, then per-sample loss columns derived from the run (for
+        each loss term `t`: `loss_t`, `loss_t_mean`, `loss_t_delta`, …, plus `hardness`).
+        Before the first scored epoch the CSV is just `image_name,split`. The
+        `X-Magnidata-Epoch` header names the epoch served.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - $ref: "#/components/parameters/Epoch"
+      responses:
+        "200":
+          description: One row per image.
+          headers:
+            X-Magnidata-Epoch:
+              description: The epoch the values are from (0 before the first scored epoch).
+              schema: {type: integer}
+          content:
+            text/csv:
+              schema: {type: string}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/NoPerSample"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}/match:
+    get:
+      tags: [training]
+      operationId: matchRunToDataset
+      summary: Compare a run's image names with a dataset's before linking them.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: dataset
+          in: query
+          required: true
+          description: Dataset `source` to compare with.
+          schema: {type: string}
+      responses:
+        "200":
+          description: Overlap counts and up to five examples of each mismatch.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RunMatch"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/NoPerSample"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}/samples/{image_name}:
+    get:
+      tags: [training]
+      operationId: getRunSample
+      summary: Return one image's per-term loss across a run's scored epochs.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: image_name
+          in: path
+          required: true
+          description: Image file name, without directories.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The image's loss trajectory and the epochs with a saved prediction.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SampleHistory"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/NoPerSample"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}/inference:
+    get:
+      tags: [training]
+      operationId: getRunInference
+      summary: Report on-demand inference for one image of a run.
+      description: >-
+        `ready` means a prediction exists at the run's latest scored epoch and
+        `GET /api/runs/{run_id}/prediction` will serve it. `POST` on the same path queues one
+        (refused in demo mode).
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: image
+          in: query
+          required: true
+          description: Image file name, without directories.
+          schema: {type: string}
+      responses:
+        "200":
+          description: The inference state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/InferenceStatus"}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/NoPerSample"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/runs/{run_id}/prediction:
+    get:
+      tags: [training]
+      operationId: getRunPrediction
+      summary: Render a dataset image with the run's predicted mask on top, as a JPEG.
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+        - name: image
+          in: query
+          required: true
+          description: Image file name, without directories.
+          schema: {type: string}
+        - $ref: "#/components/parameters/Epoch"
+        - name: alpha
+          in: query
+          description: Mask opacity, clamped to 0–1.
+          schema: {type: number, minimum: 0, maximum: 1, default: 0.5}
+        - name: max_size
+          in: query
+          description: Longest side of the output in pixels, clamped to 64–4000.
+          schema: {type: integer, minimum: 64, maximum: 4000, default: 1600}
+      responses:
+        "200":
+          description: The composited image.
+          headers:
+            X-Magnidata-Epoch:
+              description: The epoch the prediction is from.
+              schema: {type: integer}
+          content:
+            image/jpeg:
+              schema: {type: string, contentMediaType: image/jpeg}
+        "400": {$ref: "#/components/responses/BadRequest"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/NoPerSample"}
+        "503": {$ref: "#/components/responses/MlflowUnavailable"}
+  /api/training/presets:
+    get:
+      tags: [training]
+      operationId: getTrainingPresets
+      summary: Return the training presets, their parameter bounds and trainer availability.
+      responses:
+        "200":
+          description: Presets, bounds, loss terms, advanced settings and backend status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TrainingPresets"}
+
+components:
+  parameters:
+    Source:
+      name: source
+      in: query
+      required: true
+      description: >-
+        Dataset CSV path relative to the data root, as listed by `GET /api/datasets`
+        (its `source` field).
+      schema: {type: string}
+      example: data_user/coco128.csv
+    Variant:
+      name: variant
+      in: query
+      description: >-
+        Use the comparison embeddings `<stem>_<variant>.json` instead of the dataset's own,
+        as listed by `GET /api/dataset/embeddings/variants`.
+      schema: {type: string, pattern: "^[A-Za-z0-9_-]+$"}
+    ImagePath:
+      name: path
+      in: query
+      required: true
+      description: >-
+        Image path as stored in the dataset CSV's image column. In demo mode it must be a
+        relative path inside the data folder; otherwise a local path or an `https://` URL on
+        an allowlisted host also works.
+      schema: {type: string}
+      example: data_user/coco128_images/images/000000000009.jpg
+    RelativeImagePath:
+      name: path
+      in: query
+      required: true
+      description: Image path as stored in the dataset CSV's image column; relative, without `..`.
+      schema: {type: string}
+      example: data_user/coco128_images/images/000000000009.jpg
+    MaxSize:
+      name: max_size
+      in: query
+      description: Longest side of the output in pixels.
+      schema: {type: integer, default: 1600}
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      description: MLflow run id (32 lowercase hex characters).
+      schema: {$ref: "#/components/schemas/RunId"}
+    Epoch:
+      name: epoch
+      in: query
+      description: A scored epoch number, or `latest`.
+      schema: {type: string, pattern: "^(latest|[0-9]+)$", default: latest}
+    PageToken:
+      name: page_token
+      in: query
+      description: The `next_page_token` of the previous page.
+      schema: {type: string, pattern: "^[A-Za-z0-9+/=_-]{1,2000}$"}
+
+  responses:
+    BadRequest:
+      description: A required parameter is missing or invalid.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: source required}
+    NotFound:
+      description: The dataset, file, job or run does not exist.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: dataset not found}
+    LfsPointer:
+      description: The file on disk is a Git LFS pointer; the server needs `git lfs pull`.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/LfsPointerError"}
+    NoPerSample:
+      description: The run has no per-sample results (or no scored checkpoint).
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: run has no per-sample artifacts}
+    DemoDisabled:
+      description: Refused because the server runs in demo mode.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: Disabled for the Demo}
+    MlflowUnavailable:
+      description: The MLflow tracking server is unreachable, or the deployment has none.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/MlflowUnavailableError"}
+          example:
+            error: "MLflow request for experiments failed: this deployment has no MLflow server"
+            mlflow_unavailable: true
+    ImageError:
+      description: The file could not be read or decoded (including a missing file).
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    ServerError:
+      description: Unexpected server error. Not always JSON.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, description: Human-readable message.}
+    LfsPointerError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            lfs_size_bytes: {type: [integer, "null"], description: Size of the real file.}
+    MlflowUnavailableError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          required: [mlflow_unavailable]
+          properties:
+            mlflow_unavailable: {const: true}
+    Health:
+      type: object
+      required: [status, local]
+      properties:
+        status: {const: ok}
+        local:
+          type: object
+          required: [datalake_accessible]
+          properties:
+            datalake_accessible: {type: boolean}
+            root: {type: string, description: Configured datalake directory; a deployment may omit it.}
+    Config:
+      type: object
+      required: [demo_mode]
+      properties:
+        demo_mode: {type: boolean, description: True on a read-only public demo.}
+    MlflowStatus:
+      type: object
+      required: [reachable, tracking_uri, ui_url, version, error]
+      properties:
+        reachable: {type: boolean}
+        tracking_uri: {type: [string, "null"]}
+        ui_url: {type: [string, "null"]}
+        version: {type: [string, "null"]}
+        error: {type: [string, "null"]}
+    Dataset:
+      type: object
+      required: [name, description, source, parent_sources, deletable, has_embeddings]
+      properties:
+        id: {type: integer, description: Present on datasets created in the app.}
+        name: {type: string}
+        description: {type: string}
+        source:
+          type: string
+          description: CSV path relative to the data root; the `source` parameter of the other endpoints.
+        parent_source: {type: [string, "null"], description: First parent, on datasets created in the app.}
+        parent_sources: {type: array, items: {type: string}}
+        row_count: {type: [integer, "null"], description: Number of images; absent for a Git LFS pointer.}
+        deletable: {type: boolean}
+        has_embeddings: {type: boolean}
+        file_size_bytes: {type: integer}
+        is_lfs_pointer: {const: true, description: Present when the CSV is a Git LFS pointer.}
+        lfs_size_bytes: {type: integer}
+    NumericColumn:
+      type: object
+      required: [name, min, max, mean, histogram]
+      properties:
+        name: {type: string}
+        min: {type: number}
+        max: {type: number}
+        mean: {type: number}
+        histogram:
+          type: array
+          description: Counts in 12 equal-width bins from `min` to `max`.
+          items: {type: integer, minimum: 0}
+    DatasetSummary:
+      type: object
+      required:
+        - row_count
+        - column_count
+        - numeric_column_count
+        - numeric_columns
+        - image_column
+        - sample_images
+        - mask_coverage
+        - truncated
+        - partitions_committed
+        - has_embeddings
+      properties:
+        row_count: {type: integer}
+        column_count: {type: integer}
+        numeric_column_count: {type: integer}
+        numeric_columns:
+          type: array
+          description: Up to six numeric columns, varying ones first.
+          items: {$ref: "#/components/schemas/NumericColumn"}
+        image_column: {type: [string, "null"], description: Name of the column holding image paths.}
+        sample_images:
+          type: array
+          description: Up to eight evenly spaced image paths.
+          items: {type: string}
+        mask_coverage:
+          type: object
+          description: How many of up to 60 sampled rows have a segmentation mask.
+          required: [checked, with_masks]
+          properties:
+            checked: {type: integer}
+            with_masks: {type: integer}
+        truncated:
+          type: boolean
+          description: True when only the first 20,000 rows were used for the statistics.
+        partitions_committed: {type: integer}
+        has_embeddings: {type: boolean}
+    EmbeddingsFile:
+      type: object
+      description: >-
+        Image file name → embedding vector, either at the top level or under an
+        `embeddings` key. Other top-level keys are metadata.
+      additionalProperties: true
+      properties:
+        embeddings:
+          type: object
+          additionalProperties:
+            type: array
+            items: {type: number}
+    EmbeddingVariant:
+      type: object
+      required: [name, variant]
+      properties:
+        name: {type: string}
+        variant: {type: string}
+    Position3D:
+      type: array
+      items: {type: number}
+      minItems: 3
+      maxItems: 3
+    Projection:
+      type: object
+      required: [positions]
+      properties:
+        positions:
+          type: array
+          description: One `[x, y, z]` per CSV row, in row order.
+          items: {$ref: "#/components/schemas/Position3D"}
+    Clusters:
+      type: object
+      required: [labels]
+      properties:
+        labels:
+          type: array
+          description: One cluster label per CSV row, in row order.
+          items: {type: integer, minimum: 0}
+    AnalysisJob:
+      type: object
+      required: [job_id, status, progress, stage, source, k, reduction]
+      properties:
+        job_id: {type: string}
+        status: {type: string, enum: [queued, running, done, error]}
+        progress: {type: integer, minimum: 0, maximum: 100}
+        stage: {type: string}
+        source: {type: string}
+        k: {type: integer}
+        reduction: {type: string, enum: [pca, tsne, lle]}
+        labels:
+          type: array
+          description: Present when done.
+          items: {type: integer}
+        projections:
+          type: object
+          description: Present when done; the requested method → positions.
+          additionalProperties:
+            type: array
+            items: {$ref: "#/components/schemas/Position3D"}
+        error: {type: string, description: Present when status is error.}
+    Comparison:
+      type: object
+      required: [nbr, w, origIdx]
+      properties:
+        nbr:
+          type: array
+          items: {type: array, items: {type: integer}}
+        w:
+          type: array
+          items: {type: array, items: {type: number}}
+        origIdx:
+          type: array
+          items: {type: integer}
+    MaskDebug:
+      type: object
+      required: [path, pil_mode, pil_size, raw_shape, raw_dtype, raw_min, raw_max, fg_pixels, total_pixels, coverage_pct, bg_threshold]
+      properties:
+        path: {type: string}
+        pil_mode: {type: string}
+        pil_size: {type: array, items: {type: integer}}
+        raw_shape: {type: array, items: {type: integer}}
+        raw_dtype: {type: string}
+        raw_min: {type: integer}
+        raw_max: {type: integer}
+        fg_pixels: {type: integer}
+        total_pixels: {type: integer}
+        coverage_pct: {type: number}
+        bg_threshold: {type: integer}
+    Note:
+      type: object
+      required: [id, stem, image_path, note, created_at, updated_at]
+      properties:
+        id: {type: integer}
+        stem: {type: string}
+        image_path: {type: string}
+        note: {type: string}
+        created_at: {type: string, description: "UTC, `YYYY-MM-DD HH:MM:SS`."}
+        updated_at: {type: string, description: "UTC, `YYYY-MM-DD HH:MM:SS`."}
+    Partition:
+      type: object
+      required: [image_name, cluster_id]
+      properties:
+        image_name: {type: string}
+        cluster_id: {type: [integer, "null"]}
+    DemoDataset:
+      type: object
+      required: [key, name, description, enabled]
+      properties:
+        key: {type: string}
+        name: {type: string}
+        description: {type: string}
+        enabled: {type: boolean}
+    BuildLimits:
+      type: object
+      required: [max_images, max_upload_bytes, max_embeddings_bytes, max_request_bytes]
+      properties:
+        max_images: {type: integer}
+        max_upload_bytes: {type: integer}
+        max_embeddings_bytes: {type: integer}
+        max_request_bytes: {type: integer}
+    LocalFolder:
+      type: object
+      required: [folder, image_count, label_count, built]
+      properties:
+        folder: {type: string}
+        image_count: {type: integer}
+        label_count: {type: integer}
+        built: {type: boolean}
+    BuildJob:
+      type: object
+      required: [status, percent, message, name, dataset, error]
+      properties:
+        status:
+          type: string
+          enum: [queued, staging, extracting_features, projecting, registering, done, error]
+        percent: {type: [integer, "null"], minimum: 0, maximum: 100}
+        message: {type: string}
+        name: {type: string}
+        dataset:
+          description: The built dataset, once done.
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/BuiltDataset"
+        error: {type: [string, "null"]}
+    BuiltDataset:
+      type: object
+      required: [id, name, description, source, parent_source, row_count, deletable, has_embeddings]
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        description: {type: string}
+        source: {type: string}
+        parent_source: {type: [string, "null"]}
+        row_count: {type: integer}
+        deletable: {type: boolean}
+        has_embeddings: {type: boolean}
+    StringMap:
+      type: object
+      additionalProperties: {type: string}
+    Experiment:
+      type: object
+      required: [experiment_id, name, artifact_location, lifecycle_stage, creation_time, last_update_time, tags]
+      properties:
+        experiment_id: {type: string}
+        name: {type: string}
+        artifact_location: {type: string}
+        lifecycle_stage: {type: string}
+        creation_time: {type: [integer, "null"], description: Milliseconds since the epoch.}
+        last_update_time: {type: [integer, "null"], description: Milliseconds since the epoch.}
+        tags: {$ref: "#/components/schemas/StringMap"}
+    ExperimentPage:
+      type: object
+      required: [experiments, next_page_token]
+      properties:
+        experiments:
+          type: array
+          items: {$ref: "#/components/schemas/Experiment"}
+        next_page_token: {type: [string, "null"]}
+    RunId:
+      type: string
+      pattern: "^[0-9a-f]{32}$"
+    RunStatus:
+      type: string
+      enum: [SCHEDULED, RUNNING, FINISHED, FAILED, KILLED]
+    RunSummary:
+      type: object
+      required:
+        - run_id
+        - name
+        - experiment_id
+        - status
+        - start_time
+        - end_time
+        - duration_ms
+        - user
+        - metrics
+        - params
+        - magnidata
+        - has_per_sample
+        - has_split
+        - mlflow_ui_url
+      properties:
+        run_id: {$ref: "#/components/schemas/RunId"}
+        name: {type: [string, "null"]}
+        experiment_id: {type: string}
+        status: {$ref: "#/components/schemas/RunStatus"}
+        start_time: {type: [integer, "null"], description: Milliseconds since the epoch.}
+        end_time: {type: [integer, "null"], description: Milliseconds since the epoch.}
+        duration_ms: {type: [integer, "null"]}
+        user: {type: [string, "null"]}
+        metrics:
+          type: object
+          description: Latest value of each metric.
+          additionalProperties: {type: number}
+        params: {$ref: "#/components/schemas/StringMap"}
+        magnidata:
+          $ref: "#/components/schemas/StringMap"
+          description: The run's `magnidata.*` tags.
+        has_per_sample: {type: boolean}
+        has_split: {type: boolean}
+        mlflow_ui_url: {type: [string, "null"]}
+    RunPage:
+      type: object
+      required: [runs, next_page_token]
+      properties:
+        runs:
+          type: array
+          items: {$ref: "#/components/schemas/RunSummary"}
+        next_page_token: {type: [string, "null"]}
+    Artifact:
+      type: object
+      required: [path, is_dir, file_size]
+      properties:
+        path: {type: string}
+        is_dir: {type: boolean}
+        file_size: {type: [integer, "null"]}
+    ArtifactListing:
+      type: object
+      required: [path, artifacts]
+      properties:
+        path: {type: string}
+        artifacts:
+          type: array
+          items: {$ref: "#/components/schemas/Artifact"}
+    RunDetail:
+      allOf:
+        - $ref: "#/components/schemas/RunSummary"
+        - type: object
+          required: [tags, metric_keys, scored_epochs, artifact_uri, artifacts]
+          properties:
+            tags: {$ref: "#/components/schemas/StringMap"}
+            metric_keys: {type: array, items: {type: string}}
+            scored_epochs: {type: array, items: {type: integer}}
+            artifact_uri: {type: string}
+            artifacts:
+              type: array
+              items: {$ref: "#/components/schemas/Artifact"}
+    MetricPoint:
+      type: object
+      required: [step, value, timestamp]
+      properties:
+        step: {type: integer}
+        value: {type: number}
+        timestamp: {type: integer, description: Milliseconds since the epoch.}
+    RunMetrics:
+      type: object
+      required: [run_id, metrics, truncated]
+      properties:
+        run_id: {$ref: "#/components/schemas/RunId"}
+        metrics:
+          type: object
+          additionalProperties:
+            type: array
+            items: {$ref: "#/components/schemas/MetricPoint"}
+        truncated: {type: boolean}
+    RunCount:
+      type: object
+      required: [total, active]
+      properties:
+        total: {type: integer}
+        active: {type: integer}
+    RunMatch:
+      type: object
+      required: [matched, run_only, dataset_only, run_only_examples, dataset_only_examples]
+      properties:
+        matched: {type: integer}
+        run_only: {type: integer}
+        dataset_only: {type: integer}
+        run_only_examples: {type: array, maxItems: 5, items: {type: string}}
+        dataset_only_examples: {type: array, maxItems: 5, items: {type: string}}
+    LossSeries:
+      type: array
+      description: One value per entry of `epochs`; null where the image was not scored.
+      items: {type: [number, "null"]}
+    SampleHistory:
+      type: object
+      required: [image_name, split, epochs, terms, prediction_epochs]
+      properties:
+        image_name: {type: string}
+        split: {type: string}
+        epochs: {type: array, items: {type: integer}}
+        terms:
+          type: object
+          description: Loss term (`total` included) → its value at each epoch.
+          additionalProperties: {$ref: "#/components/schemas/LossSeries"}
+        iou: {$ref: "#/components/schemas/LossSeries"}
+        confidence: {$ref: "#/components/schemas/LossSeries"}
+        prediction_epochs:
+          type: array
+          description: Epochs with a saved prediction mask for this image.
+          items: {type: integer}
+    InferenceStatus:
+      type: object
+      required: [status, image, epoch]
+      properties:
+        status: {type: string, enum: [idle, queued, running, ready, error]}
+        image: {type: string}
+        epoch: {type: integer}
+        error: {type: string, description: Present when status is error.}
+    TrainingPreset:
+      type: object
+      required: [key, engine, label, description, defaults]
+      properties:
+        key: {type: string}
+        engine: {type: string, enum: [reference, agritune]}
+        label: {type: string}
+        description: {type: string}
+        defaults:
+          type: object
+          description: Default launch parameters of this preset.
+    TrainingPresets:
+      type: object
+      required: [presets, bounds, loss_terms, advanced, backend, mlflow]
+      properties:
+        presets:
+          type: array
+          items: {$ref: "#/components/schemas/TrainingPreset"}
+        bounds:
+          type: object
+          description: Parameter name → its type and allowed values or range.
+          additionalProperties:
+            type: object
+            required: [type]
+            properties:
+              type: {type: string}
+        loss_terms: {type: array, items: {type: string}}
+        advanced:
+          type: array
+          description: AgriTune advanced settings, in display order.
+          items:
+            type: object
+            required: [key, type]
+            properties:
+              key: {type: string}
+              type: {type: string}
+        backend:
+          type: object
+          required: [available, reason, worker_heartbeat]
+          properties:
+            available: {type: boolean}
+            reason: {type: [string, "null"]}
+            worker_heartbeat:
+              type: [number, "null"]
+              description: Seconds since the trainer worker last reported in.
+        mlflow: {$ref: "#/components/schemas/MlflowStatus"}

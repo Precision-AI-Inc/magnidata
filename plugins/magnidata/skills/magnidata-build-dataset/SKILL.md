@@ -45,12 +45,18 @@ Ask before copying large image folders; prefer hard links or moving files when t
    ```text
    image_sets/<NAME>/
      images/            # .jpg .jpeg .png .bmp .webp .tif .tiff, subfolders allowed
-     labels/            # optional: one COCO polygon JSON per image, same stem as the image
+     labels/            # optional: one COCO polygon JSON per image, same stem; flat images/ only (below)
    ```
 
    Subfolders of `images/` become the `cluster` and `cluster_l2` ground-truth groups
    (`images/siteA/batch1/x.png` gives `cluster=siteA/batch1`, `cluster_l2=siteA`). A flat folder builds as one
    cluster, `uncategorized`. The folder is listed on each request, so a running stack sees it without a restart.
+
+   Labels in `labels/` are only used when `images/` is flat. The feature extractor looks for each label in a
+   `labels/` folder beside the image's parent (`images/x.png` -> `labels/x.json`), so with subfolders it misses them: the build still
+   finishes, but `instance_count` and coverage come out empty and only the API log shows `coco:label_not_found`,
+   even though `local-folders` counts the labels. To keep labels, use a flat `images/` folder (one cluster), or
+   use route C, which matches annotations by stem wherever the images sit.
 
 2. Confirm the API sees it, then start the build:
 

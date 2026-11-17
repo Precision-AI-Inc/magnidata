@@ -82,7 +82,7 @@ class RowFilter(BaseModel):
             "match; `empty` and `not_empty` ignore `value`."
         )
     )
-    value: str | float | None = None
+    value: str | int | float | None = None
 
 
 class RowPage(BaseModel):

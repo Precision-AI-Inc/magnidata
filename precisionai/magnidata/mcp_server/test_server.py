@@ -132,6 +132,13 @@ async def test_query_rows_filters_sorts_and_pages(client: MagniDataClient):
     ]
 
 
+async def test_query_rows_contains_matches_an_integer_as_written(client: MagniDataClient):
+    result = await call_ok(
+        client, "query_rows", {"source": SOURCE, "filters": [{"column": "width", "op": "contains", "value": 64}]}
+    )
+    assert [row["row_index"] for row in result["rows"]] == [0, 2]
+
+
 async def test_query_rows_returns_every_column_by_default(client: MagniDataClient):
     result = await call_ok(client, "query_rows", {"source": SOURCE})
     assert result["columns"] == ["image_path", "width", "blur", "category", "note"]

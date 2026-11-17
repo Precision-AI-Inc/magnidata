@@ -82,7 +82,7 @@ paths:
               schema: {$ref: "#/components/schemas/Health"}
               example:
                 status: ok
-                local: {datalake_accessible: false, root: /mnt/disks/ssd-raid/datalake-clone}
+                local: {datalake_accessible: false}
   /api/config:
     get:
       tags: [system]
@@ -1125,10 +1125,10 @@ components:
         status: {const: ok}
         local:
           type: object
-          required: [datalake_accessible, root]
+          required: [datalake_accessible]
           properties:
             datalake_accessible: {type: boolean}
-            root: {type: string, description: Configured datalake directory.}
+            root: {type: string, description: Configured datalake directory; a deployment may omit it.}
     Config:
       type: object
       required: [demo_mode]

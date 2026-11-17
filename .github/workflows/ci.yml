@@ -17,3 +17,6 @@ jobs:
   pre-commit:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/pre-commit.yml
+
+  package:
+    uses: ./.github/workflows/package.yml

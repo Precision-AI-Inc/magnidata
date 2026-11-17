@@ -46,7 +46,7 @@ try:
     from torch import nn
     from torch.utils.data import DataLoader
 except ImportError:
-    raise ImportError("torch and mlflow are required for training: pip install -e '.[training]'") from None
+    raise ImportError("torch and mlflow are required for training: pip install 'magnidata[training]'") from None
 
 DEFAULT_TRACKING_URI = "http://localhost:5052"
 DEFAULT_TERMS = ("dice", "cce")

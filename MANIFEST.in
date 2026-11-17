@@ -1,5 +1,6 @@
 include LICENSE.md
 include README.md
+include README.pypi.md
 include CHANGELOG.md
 include SECURITY.md
 include requirements.txt

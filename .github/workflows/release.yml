@@ -25,13 +25,22 @@ jobs:
           cache: pip
 
       - name: Install build tooling
-        run: pip install build
+        run: pip install build twine
 
       - name: Build sdist and wheel
         run: python -m build
 
+      - name: Check the metadata PyPI will render
+        run: twine check --strict dist/*
+
       - name: Install built wheel (so importlib.metadata can read its version)
         run: pip install dist/*.whl
+
+      - name: Check the console scripts run from the installed wheel
+        run: |
+          magnidata-features --help
+          magnidata-embeddings --help
+          magnidata-attach --help
 
       - name: Check version matches tag
         run: |
@@ -109,3 +118,27 @@ jobs:
           else
             gh release edit "$tag" --draft=false
           fi
+
+  # Off until a maintainer sets the repository variable PYPI_PUBLISH to "true", after
+  # registering this workflow as the project's trusted publisher on PyPI (see
+  # CONTRIBUTING.md, "Publishing to PyPI"). Without that registration the upload is
+  # refused, which used to fail every release. Runs after the GitHub Release is
+  # published, so PyPI only ever receives files that are on a published release.
+  publish-pypi:
+    needs: [build, github-release]
+    if: vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/magnidata/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      # Trusted Publishing: PyPI exchanges this job's OIDC token for a short-lived upload
+      # token, so no PyPI password or API token is stored in the repository.
+      - uses: pypa/gh-action-pypi-publish@release/v1

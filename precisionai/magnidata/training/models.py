@@ -16,7 +16,7 @@ try:
     import torchvision.models.segmentation as tv_segmentation
     from torchvision.models import MobileNet_V3_Large_Weights
 except ImportError:
-    raise ImportError("torchvision is required for training models: pip install -e '.[training]'") from None
+    raise ImportError("torchvision is required for training models: pip install 'magnidata[training]'") from None
 
 
 def _conv_block(cin: int, cout: int) -> nn.Sequential:

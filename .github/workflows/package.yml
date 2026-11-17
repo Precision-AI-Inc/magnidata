@@ -1,0 +1,38 @@
+name: Package
+
+on:
+  workflow_call:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check the metadata PyPI will render
+        run: twine check --strict dist/*
+
+      # Installs outside the checkout, so the console scripts must resolve against the
+      # installed wheel rather than the source tree.
+      - name: Install the wheel in a fresh venv and run its console scripts
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m venv wheel-venv
+          wheel-venv/bin/pip install "$GITHUB_WORKSPACE"/dist/*.whl
+          wheel-venv/bin/magnidata-features --help
+          wheel-venv/bin/magnidata-embeddings --help
+          wheel-venv/bin/magnidata-attach --help

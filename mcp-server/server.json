@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Precision-AI-Inc/magnidata",
+  "title": "MagniData",
+  "description": "Explore image datasets: per-image features, embedding projections and clusters, images and masks.",
+  "websiteUrl": "https://github.com/Precision-AI-Inc/magnidata/blob/main/mcp-server/README.md",
+  "repository": {
+    "url": "https://github.com/Precision-AI-Inc/magnidata",
+    "source": "github",
+    "id": "1355033038",
+    "subfolder": "mcp-server"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "magnidata-mcp",
+      "version": "0.0.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "MAGNIDATA_API_URL",
+          "description": "MagniData API to read from. Defaults to the local Docker stack; use https://precisionaiinc-magnidata.hf.space for the public demo.",
+          "default": "http://localhost:5051",
+          "format": "string",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

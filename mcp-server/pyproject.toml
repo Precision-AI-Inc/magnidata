@@ -1,0 +1,70 @@
+# The magnidata-mcp distribution: the MCP server alone, without MagniData's API, dashboard or ML dependencies.
+# Its code lives in the main tree at precisionai/magnidata/mcp_server (tested, linted and type-checked with the rest
+# of the repository); hatch_build.py copies that package in at build time. Build from this directory with
+# `python -m build` or `uv build`; the version comes from the repository's vX.Y.Z git tag, as for magnidata itself.
+
+[build-system]
+requires = ["hatchling>=1.27", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "magnidata-mcp"
+dynamic = ["version"]
+description = "MCP server for MagniData: lets Claude and other agents explore image datasets, features, embeddings and masks through read-only tools."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [{ name = "Precision AI", email = "reinier@precision.ai" }]
+maintainers = [{ name = "Precision AI", email = "reinier@precision.ai" }]
+requires-python = ">=3.10"
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "computer-vision",
+    "image-datasets",
+    "embeddings",
+    "data-visualization",
+    "agents",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    "mcp>=2.3,<3",
+    "httpx2>=2.14",
+    "pydantic>=2.12",
+    "starlette>=0.27",
+]
+
+[project.scripts]
+magnidata-mcp = "precisionai.magnidata.mcp_server.server:main"
+
+[project.urls]
+Homepage = "https://github.com/Precision-AI-Inc/magnidata"
+Documentation = "https://github.com/Precision-AI-Inc/magnidata/blob/main/mcp-server/README.md"
+Repository = "https://github.com/Precision-AI-Inc/magnidata"
+Issues = "https://github.com/Precision-AI-Inc/magnidata/issues"
+Changelog = "https://github.com/Precision-AI-Inc/magnidata/blob/main/CHANGELOG.md"
+Demo = "https://huggingface.co/spaces/precisionaiinc/magnidata"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "..", version_scheme = "no-guess-dev", local_scheme = "no-local-version", fallback_version = "0.0.0" }
+
+[tool.hatch.build.targets.sdist]
+only-include = ["pyproject.toml", "README.md", "hatch_build.py", "server.json"]
+
+[tool.hatch.build.targets.wheel]
+# Every file in the wheel comes from hatch_build.py, so skip hatchling's own file selection.
+bypass-selection = true
+
+[tool.hatch.build.hooks.custom]

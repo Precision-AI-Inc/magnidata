@@ -278,6 +278,23 @@ walks through turning a raw folder of images into a dashboard-ready dataset end 
 
 ---
 
+## Use it from an agent (MCP server)
+
+[`mcp-server/`](mcp-server) packages `magnidata-mcp`, a [Model Context Protocol](https://modelcontextprotocol.io)
+server that gives Claude and other agents read-only tools over a running MagniData API: list datasets, describe and
+query the per-image feature table, get embedding projections and clusters, and view images with their masks. It
+reads from the local stack (`http://localhost:5051`) by default. To try it in Claude Code against the public demo:
+
+```bash
+claude mcp add magnidata-demo -- uvx --from "git+https://github.com/Precision-AI-Inc/magnidata#subdirectory=mcp-server" \
+  magnidata-mcp --api-url https://precisionaiinc-magnidata.hf.space
+```
+
+See [`mcp-server/README.md`](mcp-server/README.md) for the tools, Claude Desktop and other clients, and the
+Streamable HTTP transport.
+
+---
+
 ## Testing
 
 ```bash
@@ -323,10 +340,12 @@ precisionai/magnidata/
   dashboard/    React + Vite + Three.js portal, served by nginx in Docker
   training/     Training feedback loop: MLflow contract, per-sample loss recorder, reference
                 trainer and worker (torch only where noted)
+  mcp_server/   MCP server giving agents read-only tools over the API (packaged as magnidata-mcp)
   docs/         data-contract.md, training-contract.md and recipes/ — file formats and guides
   confi.yaml    Dataset registry (which CSVs the portal lists)
 Dockerfile.api, Dockerfile.dashboard, Dockerfile.trainer, docker-compose.yml   at the repo root
 plugins/magnidata/   Claude Code plugin holding the agent skills; .claude-plugin/ and .agents/skills/ point at it
+mcp-server/     Packaging, registry metadata (server.json) and user docs for magnidata-mcp
 docs/           Sphinx (HTML + LaTeX/PDF) for the Python package
 ```
 

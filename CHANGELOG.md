@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Precision-AI-Inc/magnidata` then `/plugin install magnidata@magnidata` installs it. `.agents/skills/` links the
   same skills for Codex and `npx skills add`. Tests keep the manifests valid, the endpoint reference in step with
   the routes the Flask app serves, and the column reference in step with the feature schema.
+- `magnidata-mcp`, a Model Context Protocol server that lets Claude and other agents use MagniData. Its read-only
+  tools wrap the existing REST API: `list_datasets`, `describe_dataset` (column types and statistics, image column,
+  mask coverage), `query_rows` (filter, sort and page the feature table), `embedding_projection` (PCA, t-SNE or
+  LLE coordinates), `embedding_clusters` (sizes, example images and labels) and `get_image` (image, mask or overlay
+  as image content). It runs over stdio by default, or over stateless Streamable HTTP with `Host` and `Origin`
+  checks when started with `--transport streamable-http`. It reads from the local stack unless `--api-url` or
+  `MAGNIDATA_API_URL` names another API, such as the public demo. The code is in
+  `precisionai/magnidata/mcp_server/`; `mcp-server/` packages it as its own distribution (the MCP SDK and an HTTP
+  client are its only dependencies), holds the `server.json` for the official MCP Registry and documents setup for
+  Claude Code, Claude Desktop and other clients. `.github/workflows/release-mcp.yml` publishes the package to PyPI
+  and the server to the registry when run by hand on a release tag; it has not been run. The `magnidata`
+  distribution itself does not include the MCP server.
 
 ### Changed
 

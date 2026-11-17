@@ -12,6 +12,9 @@ recursive-include precisionai *.py
 include precisionai/magnidata/scripts/coco128_embeddings.json
 include precisionai/magnidata/confi.yaml
 prune precisionai/magnidata/dashboard
+# Packaged separately as magnidata-mcp; see mcp-server/pyproject.toml.
+prune precisionai/magnidata/mcp_server
+prune mcp-server
 exclude precisionai/magnidata/api/.dockerignore
 prune docs
 prune deploy

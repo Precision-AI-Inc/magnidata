@@ -519,6 +519,31 @@ def test_remove_dataset_cleans_up_a_built_dataset_whose_parents_were_set_later(a
     assert list(user_data.iterdir()) == []
 
 
+def test_remove_dataset_keeps_embeddings_and_images_a_selection_still_uses(app_client):
+    client, app_module = app_client
+    user_data = Path(app_module.DATA_ROOT) / "data_user"
+    parent = "data_user/tiles-part2.csv"
+    image = user_data / "tiles-part2_images" / "images" / "a.png"
+    image.parent.mkdir(parents=True)
+    image.write_text("x")
+    (user_data / "tiles-part2.json").write_text("{}")
+    _write_feature_csv(
+        user_data / "tiles-part2.csv",
+        [{"image_path": "data_user/tiles-part2_images/images/a.png", "width": "256", "score": "0"}],
+    )
+    rec = app_module.db.create_dataset_record("Tiles part 2", "", parent, None, parent, 1)
+    child = client.post("/api/datasets", json={"name": "Pick", "parent_source": parent, "image_names": ["a.png"]})
+    assert child.status_code == 201
+
+    assert client.delete(f"/api/datasets/{rec['id']}").status_code == 204
+
+    catalog = {d["source"]: d for d in client.get("/api/datasets").get_json()}
+    assert parent not in catalog
+    assert catalog[child.get_json()["source"]]["has_embeddings"] is True
+    assert image.is_file()
+    assert not (user_data / "tiles-part2.csv").exists()
+
+
 def test_saved_selection_does_not_take_a_running_builds_name(app_client):
     client, app_module = app_client
     root = Path(app_module.DATA_ROOT)

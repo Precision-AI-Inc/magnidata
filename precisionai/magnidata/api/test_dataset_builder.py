@@ -907,6 +907,19 @@ def test_reserve_stem_skips_names_with_leftover_files_and_demo_names(tmp_path):
     assert (user_data / "old_2.csv").is_file()
 
 
+def test_reserve_stem_keeps_a_name_and_its_projections_or_input_name_apart(tmp_path):
+    # field_projections.json and a_input.csv are sidecar names of "field" and "a", so a dataset
+    # under either name would lose its files when the other is deleted.
+    (tmp_path / "data_user" / "field.csv").write_text("x")
+    db.create_dataset_record("A input", "", "data_user/a_input.csv", None, None, 0)
+
+    assert dataset_builder.reserve_stem("field_projections") == "field_projections_2"
+    assert dataset_builder.reserve_stem("field_input") == "field_input_2"
+    assert dataset_builder.reserve_stem("a") == "a_2"
+    assert dataset_builder.reserve_stem("coco128_input") == "coco128_input_2"
+    assert dataset_builder.reserve_stem("fieldwork") == "fieldwork"
+
+
 def test_reserve_stem_never_hands_out_the_same_name_twice():
     assert dataset_builder.reserve_stem("twin") == "twin"
     assert dataset_builder.reserve_stem("twin") == "twin_2"
@@ -944,6 +957,35 @@ def test_remove_dataset_files_keeps_a_manifest_name_that_is_another_dataset(tmp_
     dataset_builder.remove_dataset_files("data_user/a.csv")
 
     assert (user_data / "a_input.csv").is_file()
+
+
+def test_remove_dataset_files_keeps_embeddings_and_images_other_datasets_use(tmp_path):
+    user_data = tmp_path / "data_user"
+    for name in ("tiles.csv", "tiles.json", "tiles_projections.json"):
+        (user_data / name).write_text("x")
+    (user_data / "tiles_images" / "images").mkdir(parents=True)
+    (user_data / "tiles_images" / "images" / "a.png").write_text("x")
+    with open(user_data / "pick.csv", "w", newline="") as f:
+        f.write("image_path,cluster\ndata_user/tiles_images/images/a.png,0\n")
+    db.create_dataset_record("Pick", "", "data_user/pick.csv", "data_user/tiles.csv", "data_user/tiles.csv", 1)
+
+    kept = dataset_builder.remove_dataset_files("data_user/tiles.csv")
+
+    assert sorted(kept) == ["data_user/tiles.json", "data_user/tiles_images", "data_user/tiles_projections.json"]
+    assert not (user_data / "tiles.csv").exists()
+    assert (user_data / "tiles_images" / "images" / "a.png").is_file()
+
+
+def test_remove_dataset_files_removes_images_no_other_dataset_points_into(tmp_path):
+    user_data = tmp_path / "data_user"
+    (user_data / "tiles.json").write_text("x")
+    (user_data / "tiles_images").mkdir()
+    with open(user_data / "other.csv", "w", newline="") as f:
+        f.write("image_path,cluster\ndata_user/tiles_images2/images/a.png,0\n")
+    db.create_dataset_record("Other", "", "data_user/other.csv", None, "data_user/other.csv", 1)
+
+    assert dataset_builder.remove_dataset_files("data_user/tiles.csv") == []
+    assert sorted(p.name for p in user_data.iterdir()) == ["other.csv"]
 
 
 @pytest.mark.parametrize("source", ["data/a.csv", "data_user/../a.csv", "data_user/sub/a.csv", "data_user/a.json"])

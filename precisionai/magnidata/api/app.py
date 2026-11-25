@@ -849,7 +849,8 @@ def remove_dataset(ds_id: int) -> ResponseReturnValue:
     Removes the dataset's CSV and everything kept under its file name — embeddings JSON,
     3D projections, staged images folder, provenance sidecars. Those always belong to it:
     the name was reserved free of all of them when the dataset was made. Its lineage is
-    not consulted, since parents can be changed after the dataset was built.
+    not consulted, since parents can be changed after the dataset was built. Embeddings
+    and images that other datasets still use are kept, and logged.
     """
     existing = db.get_created_dataset(ds_id)
     if existing and existing["source"] == dataset_curation.CLOUD_SOURCE:
@@ -859,7 +860,9 @@ def remove_dataset(ds_id: int) -> ResponseReturnValue:
         return jsonify({"error": "dataset not found"}), 404
     src = rec["source"]
     with contextlib.suppress(ValueError):  # a source outside data_user/ has no files of ours to remove
-        dataset_builder.remove_dataset_files(src)
+        kept = dataset_builder.remove_dataset_files(src)
+        if kept:
+            app.logger.info("Deleted dataset %s; kept %s, still used by other datasets", src, ", ".join(kept))
     # Drop any cached compute results for this source
     for key in [k for k in _COMPUTE_CACHE if isinstance(k, tuple) and len(k) > 1 and k[1] == src]:
         _COMPUTE_CACHE.pop(key, None)

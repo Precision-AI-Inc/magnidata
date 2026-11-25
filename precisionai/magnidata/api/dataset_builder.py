@@ -163,10 +163,15 @@ DEMOS: list[dict] = [
 DEMO_STEMS = frozenset({COCO128_STEM, AGRISTRESS_STEM})
 # Everything a dataset with stem S may have next to its CSV under data_user/. A stem is only
 # handed out while none of these exist, so whatever is found under a dataset's stem is its own.
-STEM_FILE_SUFFIXES = (".csv", ".csv.provenance.json", ".json", ".json.provenance.json", "_projections.json")
+EMBEDDING_FILE_SUFFIXES = (".json", ".json.provenance.json", "_projections.json")
+STEM_FILE_SUFFIXES = (".csv", ".csv.provenance.json", *EMBEDDING_FILE_SUFFIXES)
 STEM_IMAGES_SUFFIX = "_images"
 # Feature manifest that local builds used to leave beside the dataset CSV; removed on delete.
 LEGACY_MANIFEST_SUFFIX = "_input.csv"
+# Stems whose own files carry these names would sit inside another stem's files (S_projections.json,
+# S_input.csv), so S and S<suffix> are never both handed out.
+OVERLAPPING_STEM_SUFFIXES = ("_projections", "_input")
+IMAGE_PATH_COLUMNS = ("image_path", "thumbnail_image")
 
 FINISHED_STATUSES = frozenset(db.FINISHED_BUILD_STATUSES)
 INTERRUPTED_MESSAGE = "Interrupted: the API restarted while this build was running. Start it again."
@@ -303,13 +308,20 @@ def _stem_base(stem: str) -> str:
     return os.path.join(DATA_ROOT, USER_DATA_REL, stem)
 
 
-def _stem_in_use(stem: str, registered: set[str]) -> bool:
+def _stem_occupied(stem: str, registered: set[str]) -> bool:
     base = _stem_base(stem)
     return (
-        f"{USER_DATA_REL}/{stem}.csv" in registered
+        stem in DEMO_STEMS
+        or f"{USER_DATA_REL}/{stem}.csv" in registered
         or any(os.path.lexists(base + suffix) for suffix in STEM_FILE_SUFFIXES)
         or os.path.lexists(base + STEM_IMAGES_SUFFIX)
     )
+
+
+def _stem_in_use(stem: str, registered: set[str]) -> bool:
+    related = [stem + suffix for suffix in OVERLAPPING_STEM_SUFFIXES]
+    related += [stem.removesuffix(suffix) for suffix in OVERLAPPING_STEM_SUFFIXES if stem.endswith(suffix)]
+    return any(_stem_occupied(s, registered) for s in (stem, *related))
 
 
 def reserve_stem(base_slug: str) -> str:
@@ -319,7 +331,8 @@ def reserve_stem(base_slug: str) -> str:
     threads and survives an API restart (an interrupted build's claim is released by
     `recover_interrupted_builds`). A stem is free only when no dataset is registered under
     it and none of the files and folders a dataset keeps beside its CSV exist; the demo
-    stems are never handed out. The caller owns the CSV from here on and must either write
+    stems are never handed out. ``S`` and ``S_projections`` / ``S_input`` count as one name,
+    since the second's files would carry the first's sidecar names. The caller owns the CSV from here on and must either write
     it or remove it.
 
     Parameters
@@ -336,7 +349,7 @@ def reserve_stem(base_slug: str) -> str:
         registered = {r["source"] for r in db.list_created_datasets()}
         stem, n = base_slug, 2
         while True:
-            if stem not in DEMO_STEMS and not _stem_in_use(stem, registered):
+            if not _stem_in_use(stem, registered):
                 with contextlib.suppress(FileExistsError), open(_stem_base(stem) + ".csv", "x"):
                     return stem
             stem = f"{base_slug}_{n}"
@@ -349,28 +362,58 @@ def _reserve_demo_stem(stem: str) -> None:
         pass
 
 
-def remove_dataset_files(source: str) -> None:
-    """Delete everything a dataset keeps under data_user/: its CSV and every file and folder named after its stem.
+def _references_images(csv_path: str, images_prefix: str) -> bool:
+    try:
+        with open(csv_path, newline="") as f:
+            return any(
+                images_prefix in (row.get(column) or "") for row in csv.DictReader(f) for column in IMAGE_PATH_COLUMNS
+            )
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return False
+
+
+def remove_dataset_files(source: str) -> list[str]:
+    """Delete what a dataset keeps under data_user/: its CSV and the files and folders named after its stem.
 
     Stems are only handed out while nothing exists under them (see `reserve_stem`), so
     these files belong to this dataset however it was made and whatever its lineage says
-    now. A leftover ``<stem>_input.csv`` manifest is removed too, unless it is another
-    registered dataset's CSV.
+    now. Its embeddings (``<stem>.json``, its provenance and projections) are kept while
+    another registered dataset still takes its embeddings from this one, and its images
+    folder is kept while another registered dataset's rows still point into it. A leftover
+    ``<stem>_input.csv`` manifest is removed too, unless it is another registered dataset's CSV.
 
     Parameters
     ----------
     source : str
         The dataset's CSV path relative to DATA_ROOT; must be directly under data_user/.
+        The dataset must already be unregistered.
+
+    Returns
+    -------
+    list of str
+        Paths relative to DATA_ROOT that were kept because other datasets still use them.
     """
     folder, filename = os.path.split(source)
     stem = filename.removesuffix(".csv")
     if folder != USER_DATA_REL or stem == filename or stem in ("", ".", ".."):
         raise ValueError(f"not a dataset CSV directly under {USER_DATA_REL}/: {source!r}")
-    _cleanup_partial(stem)
+    others = db.list_created_datasets()
+    images_rel = f"{USER_DATA_REL}/{stem}{STEM_IMAGES_SUFFIX}"
+    kept_suffixes = list(EMBEDDING_FILE_SUFFIXES) if any(r["emb_source"] == source for r in others) else []
+    if any(_references_images(os.path.join(DATA_ROOT, r["source"]), images_rel + "/") for r in others):
+        kept_suffixes.append(STEM_IMAGES_SUFFIX)
     manifest = f"{USER_DATA_REL}/{stem}{LEGACY_MANIFEST_SUFFIX}"
-    if db.get_created_dataset_by_source(manifest) is None:
+    if all(r["source"] != manifest for r in others):
         with contextlib.suppress(OSError):
             os.remove(os.path.join(DATA_ROOT, manifest))
+    base = _stem_base(stem)
+    for suffix in STEM_FILE_SUFFIXES:
+        if suffix not in kept_suffixes:
+            with contextlib.suppress(OSError):
+                os.remove(base + suffix)
+    if STEM_IMAGES_SUFFIX not in kept_suffixes:
+        shutil.rmtree(base + STEM_IMAGES_SUFFIX, ignore_errors=True)
+    return [f"{USER_DATA_REL}/{stem}{suffix}" for suffix in kept_suffixes if os.path.lexists(base + suffix)]
 
 
 def _count_csv_rows(path: str) -> int:

@@ -190,7 +190,8 @@ def run_summary(run: dict[str, Any]) -> dict[str, Any]:
         "start_time": start,
         "end_time": end,
         "duration_ms": end - start if start and end else None,
-        "user": run["user"],
+        # MLflow records "unknown" for a run created without a user, as the API created them before it set one.
+        "user": run["user"] if run["user"] not in (None, "", "unknown") else None,
         "metrics": run["metrics"],
         "params": run["params"],
         "magnidata": {k: v for k, v in tags.items() if k.startswith("magnidata.")},
@@ -520,6 +521,10 @@ def launch_training() -> ResponseReturnValue:
         raise _bad(str(err)) from None
     _check_dataset(spec.dataset_source)
     store = mlflow_store.get_store()
+    engines = trainer_backend.get_backend(store).available().get("engines")
+    if engines is not None and spec.engine not in engines:
+        installed = ", ".join(engines) or "none"
+        raise _bad(f"preset: the trainer does not have the {spec.engine} engine installed (installed: {installed})")
     if spec.parent_run_id:
         try:
             store.get_run(spec.parent_run_id)

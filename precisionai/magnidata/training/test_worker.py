@@ -3,7 +3,9 @@
 
 """Tests for the trainer worker, against a real sqlite MLflow store."""
 
+import json
 import os
+import subprocess
 import sys
 import time
 
@@ -234,3 +236,97 @@ def test_agritune_run_is_stopped_as_soon_as_cancel_is_requested(env, tmp_path, m
 
     assert status == "KILLED"
     assert time.monotonic() - started < 30
+
+
+def test_recover_stale_requeues_a_claimed_run_that_never_started(env):
+    _, client, exp = env
+    me = worker.worker_id()
+    host = me.split(":")[0]
+    dead = _run(client, exp, {contract.TAG_WORKER: f"{host}:99999999:dead"})
+    mine = _run(client, exp, {contract.TAG_WORKER: me})
+    foreign = _run(client, exp, {contract.TAG_WORKER: "otherhost:99999999:dead"})
+
+    assert worker.recover_stale(client, me) == [dead]
+    assert contract.TAG_WORKER not in client.get_run(dead).data.tags
+    assert client.get_run(dead).info.status == "SCHEDULED"
+    assert worker.claim(client, dead, me) is True
+    assert client.get_run(mine).data.tags[contract.TAG_WORKER] == me
+    assert client.get_run(foreign).data.tags[contract.TAG_WORKER] == "otherhost:99999999:dead"
+
+
+def test_recover_stale_includes_own_runs_when_idle(env):
+    _, client, exp = env
+    me = worker.worker_id()
+    scheduled = _run(client, exp, {contract.TAG_WORKER: me})
+    running = _run(client, exp, {contract.TAG_WORKER: me}, "RUNNING")
+
+    assert sorted(worker.recover_stale(client, me, include_self=True)) == sorted([scheduled, running])
+    assert contract.TAG_WORKER not in client.get_run(scheduled).data.tags
+    run = client.get_run(running)
+    assert run.info.status == "FAILED"
+    assert run.data.tags["magnidata.error"] == "worker lost track of the run"
+
+
+def test_loop_trains_a_run_its_own_earlier_error_left_claimed(env, tmp_path, monkeypatch):
+    _, client, exp = env
+    run_id = _run(client, exp, {contract.TAG_WORKER: worker.worker_id()})
+    monkeypatch.setattr(worker, "trainer_argv", lambda *_args: [sys.executable, "-c", "import sys; sys.exit(1)"])
+    worker.loop(client, tmp_path, max_iterations=1)
+    assert client.get_run(run_id).info.status == "FAILED"
+
+
+def test_watch_keeps_watching_through_mlflow_errors(env, tmp_path, monkeypatch, capsys):
+    _, client, exp = env
+    monkeypatch.setattr(worker, "CANCEL_CHECK_S", 0.1)
+    run_id = _run(client, exp, {contract.TAG_ENGINE: "agritune"})
+    upload = worker._upload_log
+    uploads = []
+
+    def cancel_check_down(*_args):
+        raise RuntimeError("mlflow is down")
+
+    def flaky_upload(*args):
+        uploads.append(1)
+        if len(uploads) <= 2:
+            raise RuntimeError("upload refused")
+        upload(*args)
+
+    monkeypatch.setattr(worker, "_cancel_requested", cancel_check_down)
+    monkeypatch.setattr(worker, "_upload_log", flaky_upload)
+    argv = [sys.executable, "-c", "import time; time.sleep(1.5); print('trained')"]
+
+    started = time.monotonic()
+    status = worker.run_one(client, run_id, tmp_path, argv=argv, log_upload_s=0.1)
+
+    assert time.monotonic() - started >= 1.5
+    # The child exited 0 without ending the run itself, so its exit, not the MLflow errors, decided the status.
+    assert status == "FAILED"
+    assert "code 0: trained" in client.get_run(run_id).data.tags["magnidata.error"]
+    err = capsys.readouterr().err
+    assert "cancel check failed, still watching the trainer" in err
+    assert "log upload failed, still watching the trainer" in err
+
+
+def test_supervise_stops_the_child_when_watching_fails(monkeypatch):
+    monkeypatch.setattr(worker, "TERM_GRACE_S", 5)
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+    def broken_watch():
+        raise RuntimeError("heartbeat disk full")
+
+    with pytest.raises(RuntimeError, match="heartbeat disk full"):
+        worker._supervise(child, broken_watch)
+    assert child.poll() is not None
+
+
+def test_available_engines_probes_agritune_in_a_child():
+    assert worker.available_engines(agritune_module="json") == ["reference", "agritune"]
+    assert worker.available_engines(agritune_module="no_such_module_for_magnidata") == ["reference"]
+
+
+def test_write_heartbeat_records_engines_and_touch_keeps_them(tmp_path):
+    worker.write_heartbeat(tmp_path, ["reference"])
+    path = tmp_path / "data_user" / worker.HEARTBEAT_FILENAME
+    worker.touch_heartbeat(tmp_path)
+    body = json.loads(path.read_text())
+    assert body == {"worker": worker.worker_id(), "engines": ["reference"]}

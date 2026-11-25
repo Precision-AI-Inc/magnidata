@@ -65,6 +65,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README's quickstart clones over HTTPS, so it works without a GitHub SSH key.
 - `/api/dataset/embeddings/variants` no longer lists a dataset's projections sidecar (`<stem>_projections.json`) as a
   comparison model.
+- The trainer worker no longer abandons a training process when an MLflow call fails while it watches one. A failed
+  cancel check or log upload is logged and tried again, and if watching fails for any other reason the training
+  process is stopped first, so the worker can never start a second run beside one it lost track of.
+- A run that a worker claimed but never started, for example because the worker was killed in between, no longer stays
+  `SCHEDULED` forever and blocks every new launch. The worker requeues such runs when it starts and between runs, and
+  between runs it also fails a `RUNNING` run still tagged with its own id ("worker lost track of the run").
+- AgriTune presets are disabled in the Train dialog, marked "(not installed)", when the trainer has no AgriTune. The
+  worker checks at startup which engines it can run and writes them into its heartbeat file; `GET
+  /api/training/presets` reports them as `backend.engines`, and launching a preset of a missing engine answers 400
+  instead of queueing a run that fails seconds later.
+- With Epochs set to 0 the Train dialog no longer says "Score every N epochs must be between 1 and 0"; only Epochs
+  shows an error.
+- The workspace's Trainer card reads "Busy" while a run launched from MagniData is queued or training, instead of
+  "Ready".
+- Runs launched from MagniData record a user instead of MLflow's "unknown": `MAGNIDATA_RUN_USER` if set (Docker
+  Compose passes the host's `$USER`), else the account the API runs as. Older runs with the user "unknown" are listed
+  without one.
 
 ## [0.1.1] - 2026-10-27
 

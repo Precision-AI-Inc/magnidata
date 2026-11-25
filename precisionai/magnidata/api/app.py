@@ -67,6 +67,7 @@ import mlflow_store
 import projections
 
 from precisionai.magnidata.tools import coco_labels as coco_labels_mod
+from precisionai.magnidata.tools import dataset_layout
 from precisionai.magnidata.training import dataset_check
 
 db.init_db()
@@ -469,10 +470,10 @@ def debug_mask() -> ResponseReturnValue:
 
 # ── Annotation mask / overlay (from whichever source the image has) ────────────
 # Two mask sources, tried in order:
-#   1. COCO polygon labels — labels/<stem>.json sibling to images/<stem>.ext (same
-#      convention tools/features.py::_derive_paths reads for instance features).
+#   1. COCO polygon labels — labels/[<sub>/]<stem>.json for images/[<sub>/]<stem>.ext,
+#      found by tools/dataset_layout.py, the same lookup tools/features.py uses.
 #      Rasterized on the fly, one distinct color per category.
-#   2. A pre-colored raster mask — masks/<stem>.<ext> sibling to images/<stem>.ext
+#   2. A pre-colored raster mask — masks/[<sub>/]<stem>.<ext>, found the same way
 #      (what /api/mask + /api/overlay above expect too, but nothing ever populated
 #      a mask_path column for them; datasets built with real masks, e.g.
 #      AgriStress-500, use this path instead of a CSV column at all).
@@ -487,12 +488,14 @@ def _category_color(category_id: int) -> tuple[int, int, int]:
     return int(r * 255), int(g * 255), int(b * 255)
 
 
-def _annotation_label_path(image_path: str) -> str:
-    """<DATASET>/labels/<STEM>.json for <DATASET>/images/<STEM>.ext."""
-    images_dir = os.path.dirname(image_path)
-    dataset_dir = os.path.dirname(images_dir)
+def _annotation_label_path(image_path: str) -> str | None:
+    """Return the absolute path of the image's COCO label file, or None if it has none."""
     stem = os.path.splitext(os.path.basename(image_path))[0]
-    return os.path.join(dataset_dir, "labels", stem + ".json")
+    for candidate in dataset_layout.sibling_candidates(image_path, "labels", stem + ".json"):
+        label_abs = os.path.normpath(os.path.join(DATA_ROOT, candidate))
+        if os.path.isfile(label_abs):
+            return label_abs
+    return None
 
 
 def _rasterize_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> Image.Image | None:
@@ -500,8 +503,8 @@ def _rasterize_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> I
 
     None if the image has no label file.
     """
-    label_abs = os.path.normpath(os.path.join(DATA_ROOT, _annotation_label_path(image_path)))
-    if not os.path.isfile(label_abs):
+    label_abs = _annotation_label_path(image_path)
+    if label_abs is None:
         return None
     labels = coco_labels_mod.parse(label_abs)
     class_map = coco_labels_mod.rasterize_class_map(labels, target_wh=target_wh)
@@ -518,25 +521,25 @@ def _rasterize_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> I
 
 
 def _sibling_raster_mask_bytes(image_path: str) -> bytes | None:
-    """Bytes of a pre-colored raster mask sibling to the image — <DATASET>/masks/<STEM>.ext next to <DATASET>/images/<STEM>.ext.
+    """Bytes of a pre-colored raster mask for the image — <DATASET>/masks/[<SUB>/]<STEM>.ext for <DATASET>/images/[<SUB>/]<STEM>.ext.
 
     This is the convention datasets like AgriStress-500 ship: one PNG per image,
     already colored per class, black = background — exactly _mask_as_rgba's format.
     Tries local paths and, for a remote image_path, the same allowlisted hosts
     /api/image already supports. None if no candidate is readable.
     """
-    images_dir = image_path.rsplit("/", 1)[0] if "/" in image_path else ""
-    dataset_dir = images_dir.rsplit("/", 1)[0] if "/" in images_dir else ""
     stem = os.path.splitext(os.path.basename(image_path))[0]
     for ext in (".png", ".jpg", ".jpeg"):
-        candidate = f"{dataset_dir}/masks/{stem}{ext}"
-        resolved = (
-            candidate if local_files.is_remote_url(image_path) else os.path.normpath(os.path.join(DATA_ROOT, candidate))
-        )
-        try:
-            return local_files.read_file(resolved)
-        except (OSError, PermissionError):
-            continue
+        for candidate in dataset_layout.sibling_candidates(image_path, "masks", stem + ext):
+            resolved = (
+                candidate
+                if local_files.is_remote_url(image_path)
+                else os.path.normpath(os.path.join(DATA_ROOT, candidate))
+            )
+            try:
+                return local_files.read_file(resolved)
+            except (OSError, PermissionError):
+                continue
     return None
 
 

@@ -3,7 +3,8 @@
 
 """Deterministic RGB-derived features: coverage, illumination, focus, white balance.
 
-All reductions run in float64 on the FULL-RESOLUTION image (no resize/thumbnail).
+All reductions run in float64 on the image as read (full resolution unless the run fell
+back to a thumbnail; provenance records which).
 Every division is guarded against empty masks. Values are rounded only at the output
 boundary (see features.py), never mid-computation.
 """

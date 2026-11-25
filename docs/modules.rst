@@ -32,6 +32,11 @@ The feature-extraction and embeddings toolkit — pure, importable modules.
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: precisionai.magnidata.tools.mask_labels
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: precisionai.magnidata.tools.pixel_features
    :members:
    :undoc-members:
@@ -53,6 +58,11 @@ The feature-extraction and embeddings toolkit — pure, importable modules.
    :show-inheritance:
 
 .. automodule:: precisionai.magnidata.tools.metadata_join
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: precisionai.magnidata.tools.dataset_layout
    :members:
    :undoc-members:
    :show-inheritance:

@@ -70,11 +70,41 @@ def _git() -> dict:
 
 
 DEFAULT_DETERMINISM_NOTES = [
-    "Features computed on full-resolution images (no resize/thumbnail).",
     "float64 reductions; values rounded only at the output boundary.",
     "Polygon rasterization in COCO file order (deterministic).",
+    "Colour masks (used when an image has no COCO label) decoded with near-black as background "
+    "and one class per exact colour, resized nearest-neighbour to the image read.",
     "NIMA float values may drift across torch versions — pin torch for exact reproduction.",
 ]
+
+_SOURCE_NAMES = {"fullres": "full-resolution", "thumb720": "720 px thumbnail", "thumb64": "64 px thumbnail"}
+
+
+def image_source_note(image_sources: dict[str, int]) -> str:
+    """Return a determinism note stating which image resolution the features were computed on.
+
+    Parameters
+    ----------
+    image_sources : dict of str to int
+        Row count per ``image_source`` value (``fullres``, ``thumb720``, ``thumb64``,
+        ``missing``), as recorded in the output CSV.
+
+    Returns
+    -------
+    str
+        A note saying the run used full-resolution images only, or listing the thumbnail and
+        missing counts, since thumbnail-derived pixel features are not comparable to
+        full-resolution ones.
+    """
+    read = {k: v for k, v in image_sources.items() if v and k != "missing"}
+    missing = image_sources.get("missing", 0)
+    if set(read) <= {"fullres"} and not missing:
+        return "Features computed on full-resolution images (no resize/thumbnail)."
+    counts = ", ".join(f"{n} {_SOURCE_NAMES.get(k, k)}" for k, n in sorted(read.items()))
+    note = f"Features computed on mixed or downscaled images: {counts or 'none read'}"
+    if missing:
+        note += f"; {missing} not found"
+    return note + (". Thumbnail-derived pixel features are not comparable to full-resolution values.")
 
 
 def build(
@@ -88,10 +118,12 @@ def build(
 ) -> dict:
     """Assemble the provenance record for one tool run.
 
-    ``determinism_notes`` defaults to the feature extractor's notes; tools whose
-    reproducibility caveats differ (e.g. embeddings.py, whose model preprocessing
-    resizes its input and involves no COCO/NIMA stage) must pass their own so the
-    sidecar describes how that output was actually produced.
+    ``determinism_notes`` defaults to the feature extractor's notes, which say nothing
+    about image resolution: the feature extractor prepends ``image_source_note`` for the
+    sources it actually read. Tools whose reproducibility caveats differ (e.g.
+    embeddings.py, whose model preprocessing resizes its input and involves no COCO/NIMA
+    stage) must pass their own so the sidecar describes how that output was actually
+    produced.
     """
     versions = {m: _module_version(m) for m in version_modules}
     versions["python"] = sys.version.split()[0]

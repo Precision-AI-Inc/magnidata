@@ -612,6 +612,40 @@ def test_annotation_mask_prefers_coco_labels_over_raster_mask(app_client, monkey
     assert arr[20, 35, 3] == 0  # not the raster mask's right half
 
 
+def test_annotation_mask_finds_mirrored_label_for_nested_image(app_client, monkeypatch):
+    client, app_module = app_client
+    monkeypatch.chdir(app_module.DATA_ROOT)
+    _write_labeled_image(Path(app_module.DATA_ROOT))
+    ds = Path(app_module.DATA_ROOT) / "data" / "ds1"
+    (ds / "images" / "siteA").mkdir()
+    (ds / "labels" / "siteA").mkdir()
+    (ds / "images" / "a.png").rename(ds / "images" / "siteA" / "a.png")
+    (ds / "labels" / "a.json").rename(ds / "labels" / "siteA" / "a.json")
+
+    r = client.get("/api/annotation/mask?path=data/ds1/images/siteA/a.png")
+
+    assert r.status_code == 200
+    arr = np.array(Image.open(io.BytesIO(r.data)))
+    assert arr[20, 5, 3] == 255
+    assert arr[20, 35, 3] == 0
+
+
+def test_annotation_mask_finds_raster_mask_for_nested_image(app_client, monkeypatch):
+    client, app_module = app_client
+    monkeypatch.chdir(app_module.DATA_ROOT)
+    _write_image_with_raster_mask(Path(app_module.DATA_ROOT))
+    ds = Path(app_module.DATA_ROOT) / "data" / "ds2"
+    (ds / "images" / "siteA").mkdir()
+    (ds / "images" / "a.png").rename(ds / "images" / "siteA" / "a.png")
+
+    r = client.get("/api/annotation/mask?path=data/ds2/images/siteA/a.png")
+
+    assert r.status_code == 200
+    arr = np.array(Image.open(io.BytesIO(r.data)))
+    assert tuple(arr[20, 5, :3]) == (90, 60, 200)
+    assert arr[20, 35, 3] == 0
+
+
 # ── GET /api/datasets/build/local-folders ─────────────────────────────────────────
 
 

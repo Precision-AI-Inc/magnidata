@@ -1,0 +1,22 @@
+# Exact versions for the dependencies that more than one install path pins: the extras in pyproject.toml,
+# requirements.txt, precisionai/magnidata/api/requirements.txt, the Dockerfiles, CI, docker-compose.yml's MLflow server
+# image and .pre-commit-config.yaml's ruff rev. Change a version here; precisionai/magnidata/test_dependency_pins.py
+# fails until every copy that cannot read this file agrees.
+#
+# Use it as a pip constraints file:  pip install -e ".[dev]" -c constraints.txt
+
+# PyTorch. The trainer image installs these from the PyTorch wheel index (CPU, or CUDA via docker-compose.gpu.yml),
+# so both must be published there for every index the image is built against. torchvision 0.29.2 is on PyPI only;
+# 0.29.1 is the build the PyTorch indexes pair with torch 2.14.1.
+torch==2.14.1
+torchvision==0.29.1
+timm==1.0.31
+pyiqa==0.1.16
+
+# MLflow. The client (API, trainer, tests) and the server image in docker-compose.yml run the same release.
+mlflow==3.18.0
+mlflow-skinny==3.18.0
+
+# Lint and type-check tooling: CI and the pre-commit hooks must run the versions developers run locally.
+ruff==0.17.4
+pyright==1.1.414

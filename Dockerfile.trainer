@@ -1,8 +1,10 @@
 # Trainer worker: claims SCHEDULED MagniData runs from MLflow and trains them.
 # CPU torch by default. For a CUDA build, pass a wheel index; RTX 50xx (Blackwell, sm_120)
-# needs cu128 or newer, and torch 2.14.0 is published on cu130 (not cu128), so
+# needs cu128 or newer, and the pinned torch is published on cu130 (not cu128), so
 # docker-compose.gpu.yml uses:
 #   docker compose build --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 trainer
+# Every install below reads constraints.txt, so the later installs see the torch build installed first as
+# satisfying their pins and keep it, instead of replacing it with the default PyPI (CUDA) wheel.
 # AgriTune is optional. This stage is empty by default; docker-compose.agritune.yml replaces it with the sibling
 # agritune checkout through a named build context, and the install below is skipped when it is empty.
 FROM scratch AS agritune
@@ -13,17 +15,18 @@ ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir torch==2.14.0 torchvision==0.29.0 --index-url ${TORCH_INDEX_URL}
+COPY constraints.txt ./
+RUN pip install --no-cache-dir torch torchvision -c constraints.txt --index-url ${TORCH_INDEX_URL}
 
 COPY pyproject.toml README.pypi.md LICENSE.md ./
 COPY precisionai ./precisionai
 RUN --mount=type=bind,from=agritune,target=/agritune \
     if [ -f /agritune/pyproject.toml ]; then \
         cp -r /agritune /tmp/agritune \
-        && SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --no-cache-dir /tmp/agritune \
+        && SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --no-cache-dir -c constraints.txt /tmp/agritune \
         && cp -r /tmp/agritune/precisionai/agritune ./precisionai/agritune \
         && rm -rf /tmp/agritune; \
     fi
-RUN SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --no-cache-dir ".[training]"
+RUN SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --no-cache-dir -c constraints.txt ".[training]"
 
 CMD ["python", "-m", "precisionai.magnidata.training.worker", "--data-root", "/app"]

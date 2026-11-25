@@ -55,10 +55,11 @@ services:
     #   - ./precisionai/magnidata/api/.env
 
   # Local experiment tracking: the system of record for training runs. No auth — it is
-  # meant for the developer's machine only. Host-side tools (e.g. a pai-seed run on the
+  # meant for the developer's machine only. The image tag matches the mlflow pin in constraints.txt,
+  # so the server runs the release the API and trainer clients do. Host-side tools (e.g. a pai-seed run on the
   # host) log to it with MLFLOW_TRACKING_URI=http://localhost:5052.
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v3.11.1
+    image: ghcr.io/mlflow/mlflow:v3.18.0
     command: >
       mlflow server --host 0.0.0.0 --port 5000
       --backend-store-uri sqlite:////mlflow/mlflow.db

@@ -18,7 +18,7 @@ From each `image_path` (`<DATASET>/images/<STEM>.png`) the tool finds its siblin
 ## Usage
 
 ```bash
-pip install -r precisionai/magnidata/requirements.txt   # torch CPU build: see file note
+pip install -r requirements.txt                         # from the repo root; torch CPU build: see file note
 python -m precisionai.magnidata.tools.features \
     --input images.csv --output features.csv          # full run (with NIMA)
 python -m precisionai.magnidata.tools.features \

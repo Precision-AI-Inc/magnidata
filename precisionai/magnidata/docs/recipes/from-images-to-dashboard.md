@@ -86,17 +86,17 @@ source .venv-magnidata/bin/activate
 python -m pip install --upgrade pip
 ```
 
-For a CPU-only machine, install the pinned CPU PyTorch wheels first:
+For a CPU-only machine, install the pinned CPU PyTorch wheels first (`constraints.txt` holds the versions):
 
 ```bash
-pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cpu
-pip install -r precisionai/magnidata/requirements.txt
+pip install torch torchvision -c constraints.txt --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
 ```
 
 On a GPU machine, the default package index is fine:
 
 ```bash
-pip install -r precisionai/magnidata/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## 2. Choose the source folder and dataset name

@@ -855,7 +855,7 @@ def run_pipeline(
         except Exception as exc:
             raise RuntimeError(
                 "--with-nima was requested, but pyiqa is not importable. "
-                "Install precisionai/magnidata/requirements.txt first."
+                "Install the repository root's requirements.txt first."
             ) from exc
 
     log(f"Generating features -> {feature_csv.relative_to(root)}")
@@ -873,7 +873,7 @@ def run_pipeline(
     for module_name in ("torch", "timm"):
         _ensure_importable(
             module_name,
-            "Install precisionai/magnidata/requirements.txt or rerun with --no-embeddings.",
+            "Install the repository root's requirements.txt or rerun with --no-embeddings.",
         )
 
     log(f"Generating {args.embedding_model} embeddings -> {embeddings_json.relative_to(root)}")

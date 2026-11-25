@@ -13,11 +13,13 @@ cd magnidata
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
 
-pip install -e ".[dev]"
+pip install -e ".[dev]" -c constraints.txt
 pre-commit install
 ```
 
-`pip install -e ".[dev]"` installs the API + feature-extraction toolkit plus test tooling and pre-commit. `pre-commit install` registers the hooks so they run automatically on every commit.
+`pip install -e ".[dev]"` installs the API + feature-extraction toolkit plus test tooling and pre-commit. `pre-commit install` registers the hooks so they run automatically on every commit. `-c constraints.txt` installs the ruff, pyright and MLflow versions CI uses; `pip install -r requirements-dev.txt` adds the pinned ML stack from `requirements.txt` on top.
+
+`constraints.txt` holds the exact versions that several files must agree on: torch, torchvision, timm and pyiqa (the extras, `requirements.txt` and the trainer image), MLflow (the extras, `precisionai/magnidata/api/requirements.txt` and the server image in `docker-compose.yml`), and ruff (the `dev` extra and the pre-commit hook). To change one, edit `constraints.txt` and the copies `precisionai/magnidata/test_dependency_pins.py` names when it fails.
 
 The dashboard is a separate Node/Vite app under `precisionai/magnidata/dashboard/` — see its own setup in the [README](README.md#dashboard). Running the full stack (API + dashboard) is done via `docker compose up --build` from the repo root.
 

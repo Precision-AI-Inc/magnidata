@@ -228,8 +228,8 @@ pip install -e .
 # + offline embeddings generation and learned image-quality scoring (torch/timm/pyiqa)
 pip install -e ".[ml]"
 
-# Full development install (tests, pre-commit, type checking)
-pip install -e ".[dev]"
+# Full development install (tests, pre-commit, type checking) at the versions CI uses
+pip install -e ".[dev]" -c constraints.txt
 pre-commit install
 ```
 

@@ -53,6 +53,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `constraints.txt` at the repository root holds the exact versions that several install paths share: torch,
+  torchvision, timm, pyiqa, MLflow, ruff and pyright. The trainer image, `requirements.txt`, `requirements-dev.txt` and
+  CI install under it, and `test_dependency_pins.py` fails when a copy it cannot feed (the `pyproject.toml` extras,
+  the API's requirements file, the MLflow server image tag, the pre-commit ruff rev) names a different version.
+- The local MLflow server image is `v3.18.0`, the release the API, trainer and tests already use as a client; the API
+  image's `mlflow-skinny` moves from 3.11.1 to 3.18.0 to match. An existing `magnidata-mlflow` volume opens unchanged.
+- torchvision is pinned to 0.29.1, the build the PyTorch CPU and CUDA wheel indexes publish for torch 2.14.1 (0.29.2
+  is on PyPI only).
+- `precisionai/magnidata/requirements.txt`, an out-of-date copy of the root `requirements.txt`, is removed; the docs,
+  agent skill and error messages that pointed at it name the root file.
+- `requirements-dev.txt` installs the package with its `[dev]` extra, so it brings Flask and the other API
+  dependencies the tests import.
+- The dashboard's lock file takes the non-breaking `npm audit fix` updates (browserslist, nanoid, postcss,
+  postcss-selector-parser, source-map-js, baseline-browser-mapping). The remaining advisories are in the dev server and
+  test runner (esbuild through vite 5, tinypool through vitest 2) and need major upgrades to vite and vitest.
 - The training modules' missing-dependency errors say `pip install 'magnidata[training]'`, the extra that provides
   torch, torchvision and MLflow, instead of an editable-install command.
 
@@ -65,6 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The MCP server keeps a text column's cells as text: a numeric-looking cell such as the id `007` comes back as
   `"007"`, not `7`. A column is numeric only when every non-empty cell is a number that is not zero-padded, and
   `describe_dataset` reports such id columns as text.
+- The trainer image keeps the torch build its Dockerfile installs. It installed torch 2.14.0 from the CPU (or the GPU
+  override's CUDA) index, then the `training` extra's torch 2.14.1 pin replaced it with the default PyPI wheel and its
+  CUDA 13 libraries, so the "CPU" image was 10.5 GB. Both installs now read their versions from `constraints.txt`; the
+  CPU image is about 1.9 GB with `torch 2.14.1+cpu`.
+- The ruff pre-commit hook runs v0.17.4, the version `pyproject.toml` pins, instead of v0.17.1.
 - `/api/health` leaves the datalake's configured path out of its response in demo mode.
 - A missing file under `/.well-known/`, or a missing machine-readable file such as `robots.txt`, `sitemap.xml` or
   `openapi.json`, is a 404 instead of the dashboard's `index.html` with a 200. This applies both when the API serves the

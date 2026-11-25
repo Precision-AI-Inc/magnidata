@@ -41,7 +41,7 @@ and keep using plain `docker compose up --build`:
 COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml
 ```
 
-The override builds the trainer with CUDA torch (torch 2.14.0 is published on the **cu130**
+The override builds the trainer with CUDA torch (the pinned torch is published on the **cu130**
 wheel index; cu128 stops at 2.11 — RTX 50xx / Blackwell needs cu128 or newer, and the host
 driver must support CUDA 13) and reserves the GPU. It also sets `MAGNIDATA_TRAIN_DEVICE=cuda`, so a
 trainer that cannot see the GPU fails the run (`CUDA requested but not available`) instead

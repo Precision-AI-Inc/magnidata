@@ -96,10 +96,9 @@ the same stem; the API finds them by filename:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-# CPU-only machine: first install the CPU build of the torch and torchvision versions pinned in
-# precisionai/magnidata/requirements.txt (its header comment has the exact command):
-#   pip install torch==<pin> torchvision==<pin> --index-url https://download.pytorch.org/whl/cpu
-pip install -r precisionai/magnidata/requirements.txt
+# From the repository root. CPU-only machine: first install the CPU build of the pinned torch and torchvision:
+#   pip install torch torchvision -c constraints.txt --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
 
 python -m precisionai.magnidata.tools.embeddings \
   --input  precisionai/magnidata/data_user/<stem>.csv \

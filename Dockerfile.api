@@ -9,7 +9,7 @@ RUN pip install --no-cache-dir -r api-requirements.txt
 # api/dataset_builder.py), so the package path is preserved rather than copied flat.
 # Their only runtime deps (PIL, numpy) are already in api-requirements.txt above — the
 # dataset-build pipeline never computes embeddings (bring your own), so the heavier
-# precisionai/magnidata/requirements.txt (torch/timm/pyiqa, needed only by the offline
+# root requirements.txt (torch/timm/pyiqa, needed only by the offline
 # tools/embeddings.py and tools/nima.py CLI paths) is intentionally not installed here.
 COPY precisionai/__init__.py ./precisionai/__init__.py
 COPY precisionai/magnidata/__init__.py ./precisionai/magnidata/__init__.py

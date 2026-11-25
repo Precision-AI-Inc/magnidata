@@ -23,7 +23,7 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[dev]" -c constraints.txt
 
       - name: Run tests
         run: python -m pytest -q --tb=short --no-header --cov-report=xml:coverage.xml
@@ -47,8 +47,8 @@ jobs:
 
       - name: Install CPU torch and dependencies
         run: |
-          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1 torchvision==0.29.2
-          pip install -e ".[dev,training]"
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision -c constraints.txt
+          pip install -e ".[dev,training]" -c constraints.txt
 
       - name: Run torch-dependent tests
         run: >-

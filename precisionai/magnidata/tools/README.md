@@ -21,7 +21,7 @@ image in a subfolder (`<DATASET>/images/<SUB>/<STEM>.png`) belongs to the datase
 ## Usage
 
 ```bash
-pip install -r precisionai/magnidata/requirements.txt   # torch CPU build: see file note
+pip install -r requirements.txt                         # from the repo root; torch CPU build: see file note
 python -m precisionai.magnidata.tools.features \
     --input images.csv --output features.csv          # full run (with NIMA)
 python -m precisionai.magnidata.tools.features \

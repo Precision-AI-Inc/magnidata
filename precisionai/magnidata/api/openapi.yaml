@@ -295,6 +295,7 @@ paths:
                   - [10.345864295959473, 27.49855613708496, -12.248773574829102]
         "400": {$ref: "#/components/responses/BadRequest"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyAnalyses"}
         "500": {$ref: "#/components/responses/ServerError"}
   /api/embedding/clusters:
     get:
@@ -309,7 +310,7 @@ paths:
         - $ref: "#/components/parameters/Variant"
         - name: k
           in: query
-          description: Number of clusters, clamped to 1–50 and to the row count. A non-integer means 20.
+          description: Number of clusters, clamped to 1–50 and to the row count. A non-integer is a 400.
           schema: {type: integer, minimum: 1, maximum: 50, default: 20}
       responses:
         "200":
@@ -320,6 +321,7 @@ paths:
               example: {labels: [3, 1, 2, 1, 4, 1, 3, 1, 4, 0]}
         "400": {$ref: "#/components/responses/BadRequest"}
         "404": {$ref: "#/components/responses/NotFound"}
+        "429": {$ref: "#/components/responses/TooManyAnalyses"}
         "500": {$ref: "#/components/responses/ServerError"}
   /api/embedding/analysis/{job_id}:
     get:
@@ -400,6 +402,8 @@ paths:
             image/jpeg:
               schema: {type: string, contentMediaType: image/jpeg}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/FileForbidden"}
+        "404": {$ref: "#/components/responses/FileNotFound"}
         "500": {$ref: "#/components/responses/ImageError"}
   /api/mask:
     get:
@@ -422,6 +426,8 @@ paths:
             image/png:
               schema: {type: string, contentMediaType: image/png}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/FileForbidden"}
+        "404": {$ref: "#/components/responses/FileNotFound"}
         "500": {$ref: "#/components/responses/ImageError"}
   /api/overlay:
     get:
@@ -449,6 +455,8 @@ paths:
             image/jpeg:
               schema: {type: string, contentMediaType: image/jpeg}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/FileForbidden"}
+        "404": {$ref: "#/components/responses/FileNotFound"}
         "500": {$ref: "#/components/responses/ImageError"}
   /api/mask/debug:
     get:
@@ -468,7 +476,8 @@ paths:
               schema: {$ref: "#/components/schemas/MaskDebug"}
         "400": {$ref: "#/components/responses/BadRequest"}
         "403": {$ref: "#/components/responses/DemoDisabled"}
-        "500": {$ref: "#/components/responses/ServerError"}
+        "404": {$ref: "#/components/responses/FileNotFound"}
+        "500": {$ref: "#/components/responses/ImageError"}
   /api/annotation/mask:
     get:
       tags: [images]
@@ -488,8 +497,9 @@ paths:
             image/png:
               schema: {type: string, contentMediaType: image/png}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/FileForbidden"}
         "404":
-          description: The image has no labels and no mask file.
+          description: The image file does not exist, or it has no labels and no mask file.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -515,8 +525,9 @@ paths:
             image/jpeg:
               schema: {type: string, contentMediaType: image/jpeg}
         "400": {$ref: "#/components/responses/BadRequest"}
+        "403": {$ref: "#/components/responses/FileForbidden"}
         "404":
-          description: The image has no labels and no mask file.
+          description: The image file does not exist, or it has no labels and no mask file.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Error"}
@@ -1031,8 +1042,8 @@ components:
     MaxSize:
       name: max_size
       in: query
-      description: Longest side of the output in pixels.
-      schema: {type: integer, default: 1600}
+      description: Longest side of the output in pixels. Anything but a positive integer is a 400.
+      schema: {type: integer, minimum: 1, default: 1600}
     RunId:
       name: run_id
       in: path
@@ -1088,11 +1099,34 @@ components:
           example:
             error: "MLflow request for experiments failed: this deployment has no MLflow server"
             mlflow_unavailable: true
-    ImageError:
-      description: The file could not be read or decoded (including a missing file).
+    FileNotFound:
+      description: The file does not exist.
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Error"}
+          example: {error: file not found}
+    FileForbidden:
+      description: >-
+        The server may not read the file: it lacks permission, or the URL's host is not on the
+        allowlist.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: file not readable}
+    ImageError:
+      description: The file could not be read or decoded.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: could not read or decode the file}
+    TooManyAnalyses:
+      description: >-
+        Demo mode only: as many analyses as the server allows are already computing (background
+        jobs and these routes together). Try again in a moment; cached results are still served.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+          example: {error: "too many analyses are running, try again in a moment"}
     ServerError:
       description: Unexpected server error. Not always JSON.
       content:

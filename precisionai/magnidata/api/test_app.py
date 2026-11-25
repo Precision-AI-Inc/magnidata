@@ -1325,3 +1325,193 @@ def test_cloud_union_is_built_from_tile_parts_and_keeps_their_parent(app_client)
     assert by_source[curation.CLOUD_SOURCE]["row_count"] == 2
     assert by_source[part1]["parent_sources"] == [full, curation.CLOUD_SOURCE]
     assert by_source[part2]["parent_sources"] == [full, curation.CLOUD_SOURCE]
+
+
+# ── Bad query values answer JSON 4xx ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-5", "1.5", ""])
+@pytest.mark.parametrize("route", ["/api/image", "/api/mask", "/api/annotation/mask", "/api/annotation/overlay"])
+def test_image_routes_reject_a_max_size_that_is_not_a_positive_integer(app_client, masked_image, route, value):
+    client, _ = app_client
+    img, _ = masked_image
+
+    resp = client.get(route, query_string={"path": img, "max_size": value})
+
+    assert resp.status_code == 400
+    assert resp.get_json() == {"error": "max_size must be a positive integer"}
+
+
+def test_overlay_rejects_a_max_size_that_is_not_an_integer(app_client, masked_image):
+    client, _ = app_client
+    img, mask = masked_image
+
+    resp = client.get("/api/overlay", query_string={"img": img, "mask": mask, "max_size": "abc"})
+
+    assert resp.status_code == 400
+    assert resp.get_json() == {"error": "max_size must be a positive integer"}
+
+
+@pytest.mark.parametrize("route", ["/api/image", "/api/mask", "/api/mask/debug", "/api/annotation/mask"])
+def test_image_routes_answer_404_json_for_a_missing_file(app_client, tmp_path, monkeypatch, route):
+    client, _ = app_client
+    monkeypatch.chdir(tmp_path)
+
+    resp = client.get(route, query_string={"path": "nope.png"})
+
+    assert resp.status_code == 404
+    assert resp.get_json() == {"error": "file not found"}
+
+
+def test_overlay_answers_404_json_for_a_missing_mask(app_client, masked_image):
+    client, _ = app_client
+    img, _ = masked_image
+
+    resp = client.get("/api/overlay", query_string={"img": img, "mask": "ds/masks/nope.png"})
+
+    assert resp.status_code == 404
+    assert resp.get_json() == {"error": "file not found"}
+
+
+def test_image_routes_do_not_return_the_raw_error_for_an_unreadable_file(app_client, tmp_path, monkeypatch):
+    client, _ = app_client
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "not-an-image.png").write_text("plain text")
+
+    resp = client.get("/api/image", query_string={"path": "not-an-image.png"})
+
+    assert resp.status_code == 500
+    assert resp.get_json() == {"error": "could not read or decode the file"}
+
+
+def test_image_routes_answer_403_json_for_a_disallowed_remote_host(app_client):
+    client, _ = app_client
+
+    resp = client.get("/api/image", query_string={"path": "https://example.com/a.png"})
+
+    assert resp.status_code == 403
+    assert resp.get_json() == {"error": "file not readable"}
+
+
+def test_projection_answers_404_json_for_a_missing_dataset(app_client):
+    client, _ = app_client
+
+    resp = client.get("/api/embedding/projection?source=data_user/nope.csv&method=pca")
+
+    assert resp.status_code == 404
+    assert resp.get_json() == {"error": "embeddings not found or unreadable for this dataset"}
+
+
+@pytest.mark.parametrize("value", ["abc", "2.5", ""])
+def test_clusters_reject_a_k_that_is_not_an_integer(app_client, tmp_path, value):
+    client, _ = app_client
+    source = _write_dataset(tmp_path, "kbad", ["a.jpg", "b.jpg"], {"embeddings": {"a.jpg": [1.0], "b.jpg": [2.0]}})
+
+    resp = client.get("/api/embedding/clusters", query_string={"source": source, "k": value})
+
+    assert resp.status_code == 400
+    assert resp.get_json() == {"error": "k must be an integer"}
+
+
+# ── Embedding caches are keyed on the resolved path and bounded ──────────────────
+
+
+def _three_row_dataset(tmp_path, stem):
+    return _write_dataset(
+        tmp_path,
+        stem,
+        ["a.jpg", "b.jpg", "c.jpg"],
+        {"embeddings": {"a.jpg": [1.0, 0.0], "b.jpg": [0.0, 1.0], "c.jpg": [1.0, 1.0]}},
+    )
+
+
+def test_spellings_of_one_dataset_share_one_cached_projection(app_client, tmp_path, monkeypatch):
+    client, app_module = app_client
+    source = _three_row_dataset(tmp_path, "alias")
+    (tmp_path / "linked").symlink_to(tmp_path / "data_user")
+    calls = []
+    original = app_module.projections.project
+
+    def counting_project(matrix, method):
+        calls.append(method)
+        return original(matrix, method)
+
+    monkeypatch.setattr(app_module.projections, "project", counting_project)
+    app_module._COMPUTE_CACHE.clear()
+    app_module._MATRIX_CACHE.clear()
+
+    spellings = [
+        source,
+        f"./{source}",
+        source.replace("/", "//"),
+        "data_user/../data_user/alias.csv",
+        "linked/alias.csv",
+    ]
+    responses = [client.get("/api/embedding/projection", query_string={"source": s}) for s in spellings]
+
+    assert [r.status_code for r in responses] == [200] * len(spellings)
+    assert all(r.get_json() == responses[0].get_json() for r in responses)
+    assert calls == ["pca"]
+    assert len(app_module._MATRIX_CACHE) == 1
+
+
+def test_spellings_of_one_dataset_share_one_cached_clustering(app_client, tmp_path):
+    client, app_module = app_client
+    source = _three_row_dataset(tmp_path, "aliasclust")
+    app_module._COMPUTE_CACHE.clear()
+
+    for spelling in (source, f"./{source}", source.replace("/", "//")):
+        assert client.get("/api/embedding/clusters", query_string={"source": spelling, "k": "2"}).status_code == 200
+
+    clust_keys = [key for key in app_module._COMPUTE_CACHE._entries if key[0] == "clust"]
+    assert len(clust_keys) == 1
+
+
+def test_lru_cache_forgets_the_least_recently_used_entry(app_client):
+    _, app_module = app_client
+    cache = app_module._LRUCache(2)
+    cache[("a",)] = 1
+    cache[("b",)] = 2
+    assert cache.get(("a",)) == 1  # "a" is now the most recently used
+
+    cache[("c",)] = 3
+
+    assert ("b",) not in cache
+    assert cache.get(("a",)) == 1
+    assert cache[("c",)] == 3
+    assert len(cache) == 2
+
+
+def test_matrix_cache_is_bounded(app_client, tmp_path, monkeypatch):
+    client, app_module = app_client
+    monkeypatch.setattr(app_module, "_MATRIX_CACHE", app_module._LRUCache(2))
+    sources = [_three_row_dataset(tmp_path, f"bounded{i}") for i in range(4)]
+
+    for source in sources:
+        assert client.get("/api/embedding/clusters", query_string={"source": source, "k": "2"}).status_code == 200
+
+    assert len(app_module._MATRIX_CACHE) == 2
+
+
+def test_compute_locks_are_released_after_use(app_client, tmp_path):
+    client, app_module = app_client
+    source = _three_row_dataset(tmp_path, "locks")
+
+    client.get("/api/embedding/projection", query_string={"source": source})
+    client.get("/api/embedding/clusters", query_string={"source": source, "variant": "missing"})
+
+    assert app_module._COMPUTE_LOCKS == {}
+
+
+def test_deleting_a_dataset_drops_its_cached_results(app_client, tmp_path):
+    client, app_module = app_client
+    source = _three_row_dataset(tmp_path, "dropme")
+    ds_id = app_module.db.create_dataset_record("Drop me", "", source, None, None, 3)["id"]
+    other = _three_row_dataset(tmp_path, "keepme")
+    for s in (f"./{source}", other):
+        assert client.get("/api/embedding/clusters", query_string={"source": s, "k": "2"}).status_code == 200
+
+    assert client.delete(f"/api/datasets/{ds_id}").status_code == 204
+
+    kept = {key[1] for cache in (app_module._COMPUTE_CACHE, app_module._MATRIX_CACHE) for key in cache._entries}
+    assert kept == {app_module._source_key(other)}

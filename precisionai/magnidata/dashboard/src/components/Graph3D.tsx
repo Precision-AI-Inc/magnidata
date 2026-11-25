@@ -582,7 +582,7 @@ type ThreeState = {
   tgtSize:          Float32Array
   n:                number
   animId:           number
-  clock:            THREE.Clock
+  startTime:        number   // performance.now() at scene creation; drives shader uTime
   lastInteract:     number
   firstLoad:        boolean
 }
@@ -1175,7 +1175,7 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
       curSize:  new Float32Array(n).fill(0),
       tgtSize:  new Float32Array(n).fill(SIZE_NORMAL),
       n, animId: 0,
-      clock: new THREE.Clock(),
+      startTime: performance.now(),
       lastInteract: 0, firstLoad: true,
     }
     threeRef.current = state
@@ -1185,7 +1185,7 @@ export function Graph3D({ data, rows, embeddingsAvailable, datasetSource, select
       state.animId = requestAnimationFrame(animate)
       controls.update()
 
-      const t = state.clock.getElapsedTime()
+      const t = (performance.now() - state.startTime) / 1000
       if (state.centroidMat) state.centroidMat.uniforms.uTime.value = t
       if (state.clusterLineMat) state.clusterLineMat.uniforms.uTime.value = t
 

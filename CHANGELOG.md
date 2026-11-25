@@ -60,6 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The image preview is titled with the row's file name when the dataset has no stem column (built datasets have
+  none), instead of the zero-based row index such as "0"; with no image column either it reads "Row N".
+- The Explorer's 3D view no longer uses the deprecated `THREE.Clock`, so Three.js stops logging a deprecation
+  warning on every load.
+- The MCP server keeps a text column's cells as text: a numeric-looking cell such as the id `007` comes back as
+  `"007"`, not `7`. A column is numeric only when every non-empty cell is a number that is not zero-padded, and
+  `describe_dataset` reports such id columns as text.
 - `/api/health` leaves the datalake's configured path out of its response in demo mode.
 - A missing file under `/.well-known/`, or a missing machine-readable file such as `robots.txt`, `sitemap.xml` or
   `openapi.json`, is a 404 instead of the dashboard's `index.html` with a 200. This applies both when the API serves the

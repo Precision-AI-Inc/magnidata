@@ -373,9 +373,9 @@ def _image_values(csv_path: str) -> list[str]:
 def _remove_stem_files(
     stem: str, others: list[dict], other_image_values: list[str], keep_images: bool = False
 ) -> list[str]:
-    source = f"{USER_DATA_REL}/{stem}.csv"
     images_prefix = f"{USER_DATA_REL}/{stem}{STEM_IMAGES_SUFFIX}/"
-    kept_suffixes = list(EMBEDDING_FILE_SUFFIXES) if any(r["emb_source"] == source for r in others) else []
+    in_use = any(_emb_stem(r["emb_source"]) == stem for r in others)
+    kept_suffixes = list(EMBEDDING_FILE_SUFFIXES) if in_use else []
     if keep_images or any(images_prefix in value for value in other_image_values):
         kept_suffixes.append(STEM_IMAGES_SUFFIX)
     manifest = f"{USER_DATA_REL}/{stem}{LEGACY_MANIFEST_SUFFIX}"
@@ -392,13 +392,24 @@ def _remove_stem_files(
     return [f"{USER_DATA_REL}/{stem}{suffix}" for suffix in kept_suffixes if os.path.lexists(base + suffix)]
 
 
+def _emb_stem(emb_source: str | None) -> str | None:
+    """Return the data_user/ stem whose embeddings `emb_source` names, else None.
+
+    Builds record the embeddings file itself (``<stem>.json``); datasets that fall back to
+    their own embeddings record their CSV (``<stem>.csv``). Both name the same stem.
+    """
+    if not emb_source:
+        return None
+    folder, filename = os.path.split(emb_source)
+    stem, ext = os.path.splitext(filename)
+    return stem if folder == USER_DATA_REL and ext in (".csv", ".json") and stem else None
+
+
 def _referenced_stems(emb_source: str | None, image_values: list[str]) -> set[str]:
     pattern = re.compile(rf"(?:^|/){USER_DATA_REL}/([^/]+){STEM_IMAGES_SUFFIX}/")
     stems = {match[1] for value in image_values if (match := pattern.search(value))}
-    if emb_source:
-        folder, filename = os.path.split(emb_source)
-        if folder == USER_DATA_REL and filename.endswith(".csv"):
-            stems.add(filename.removesuffix(".csv"))
+    if emb_stem := _emb_stem(emb_source):
+        stems.add(emb_stem)
     return stems
 
 

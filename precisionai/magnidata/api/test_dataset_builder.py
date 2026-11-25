@@ -1023,7 +1023,9 @@ def _built_dataset(user_data, stem):
         (user_data / name).write_text("x")
     (user_data / f"{stem}_images" / "images").mkdir(parents=True)
     (user_data / f"{stem}_images" / "images" / "a.png").write_text("x")
-    return db.create_dataset_record(stem, "", f"data_user/{stem}.csv", None, f"data_user/{stem}.csv", 1)
+    # A build records its embeddings file itself as emb_source (see start_upload_build), and a
+    # selection carved from it inherits that same value.
+    return db.create_dataset_record(stem, "", f"data_user/{stem}.csv", None, f"data_user/{stem}.json", 1)
 
 
 def _delete(rec):
@@ -1035,7 +1037,7 @@ def test_deleting_the_last_selection_removes_files_kept_for_it(tmp_path):
     user_data = tmp_path / "data_user"
     root = _built_dataset(user_data, "r")
     (user_data / "s.csv").write_text("image_path,cluster\ndata_user/r_images/images/a.png,0\n")
-    selection = db.create_dataset_record("S", "", "data_user/s.csv", root["source"], root["source"], 1)
+    selection = db.create_dataset_record("S", "", "data_user/s.csv", root["source"], root["emb_source"], 1)
 
     assert _delete(root) == ["data_user/r.json", "data_user/r_projections.json", "data_user/r_images"]
     assert _delete(selection) == []
@@ -1063,7 +1065,7 @@ def test_failed_demo_rebuild_keeps_files_a_selection_still_uses(monkeypatch, tmp
     user_data = tmp_path / "data_user"
     demo = _built_dataset(user_data, "coco128")
     (user_data / "s.csv").write_text("image_path,cluster\ndata_user/coco128_images/images/a.png,0\n")
-    db.create_dataset_record("S", "", "data_user/s.csv", demo["source"], demo["source"], 1)
+    db.create_dataset_record("S", "", "data_user/s.csv", demo["source"], demo["emb_source"], 1)
     _delete(demo)
 
     def failing_download(url, dest, force=False):
@@ -1085,8 +1087,8 @@ def test_deleting_a_selection_leaves_files_another_selection_still_uses(tmp_path
     rows = "image_path,cluster\ndata_user/r_images/images/a.png,0\n"
     (user_data / "s1.csv").write_text(rows)
     (user_data / "s2.csv").write_text(rows)
-    s1 = db.create_dataset_record("S1", "", "data_user/s1.csv", root["source"], root["source"], 1)
-    db.create_dataset_record("S2", "", "data_user/s2.csv", root["source"], root["source"], 1)
+    s1 = db.create_dataset_record("S1", "", "data_user/s1.csv", root["source"], root["emb_source"], 1)
+    db.create_dataset_record("S2", "", "data_user/s2.csv", root["source"], root["emb_source"], 1)
     _delete(root)
 
     assert _delete(s1) == ["data_user/r.json", "data_user/r_projections.json", "data_user/r_images"]

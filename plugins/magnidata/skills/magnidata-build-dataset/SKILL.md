@@ -54,7 +54,7 @@ Ask before copying large image folders; prefer hard links or moving files when t
 
    Labels in `labels/` are only used when `images/` is flat. The feature extractor looks for each label in a
    `labels/` folder beside the image's parent (`images/x.png` -> `labels/x.json`), so with subfolders it misses them: the build still
-   finishes, but `instance_count` and coverage come out empty and only the API log shows `coco:label_not_found`,
+   finishes, but `instance_count` and coverage come out empty and only the API log mentions it (an info line counting images with no label file),
    even though `local-folders` counts the labels. To keep labels, use a flat `images/` folder (one cluster), or
    use route C, which matches annotations by stem wherever the images sit.
 
@@ -67,16 +67,22 @@ Ask before copying large image folders; prefer hard links or moving files when t
    # -> {"job_id":"..."}
    ```
 
-3. Poll until `status` is `done` or `error`. Only one build runs at a time; a second one answers `409`.
+3. Poll until `status` is `done` or `error`. Only one build runs at a time; a second one answers `409`, and
+   `GET /api/datasets/build/current` returns the running build (with its `job_id`) if you lost track of it.
 
    ```bash
    curl -s $API/api/datasets/build/<job_id>
    # {"status":"extracting_features","percent":30,...} ... {"status":"done","dataset":{"source":"data_user/<stem>.csv",...}}
    ```
 
+   Files that cannot be read as images (a text file renamed `.png`, a truncated JPEG) are left out of the dataset;
+   the finished job lists each one in `skipped` as `{file, reason}` and its `message` gives the count. A build cut
+   off by an API restart ends as `error` and its partial output is removed; start it again.
+
 4. The dataset now appears in `GET /api/datasets` and in the dashboard at http://localhost:5175. The finished
    job's `dataset.source` identifies it: `data_user/<stem>.csv`, where `<stem>` is the folder name lower-cased, with
-   each run of characters other than letters, digits, `_` and `-` replaced by `_`. On the host that CSV is
+   each run of characters other than letters, digits, `_` and `-` replaced by `_`, plus `_2`, `_3`, … when files
+   under that name already exist. On the host that CSV is
    `precisionai/magnidata/data_user/<stem>.csv`. The build skips the slow learned-quality models (NIMA, NIQE,
    BRISQUE), so those columns are empty and `complexity_score` uses the deterministic quality terms.
 
@@ -90,10 +96,9 @@ the same stem; the API finds them by filename:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-# CPU-only machine: first install the CPU build of the torch and torchvision versions pinned in
-# precisionai/magnidata/requirements.txt (its header comment has the exact command):
-#   pip install torch==<pin> torchvision==<pin> --index-url https://download.pytorch.org/whl/cpu
-pip install -r precisionai/magnidata/requirements.txt
+# From the repository root. CPU-only machine: first install the CPU build of the pinned torch and torchvision:
+#   pip install torch torchvision -c constraints.txt --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
 
 python -m precisionai.magnidata.tools.embeddings \
   --input  precisionai/magnidata/data_user/<stem>.csv \

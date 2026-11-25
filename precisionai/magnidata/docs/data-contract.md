@@ -18,8 +18,10 @@ fails `pytest precisionai/magnidata/tools` if the two ever drift apart again.
 
 ### Generate it with the built-in tool
 
+From the repository root:
+
 ```bash
-pip install -r precisionai/magnidata/requirements.txt
+pip install -r requirements.txt
 python -m precisionai.magnidata.tools.features --input images.csv --output features.csv
 ```
 
@@ -70,7 +72,7 @@ python -m precisionai.magnidata.tools.embeddings \
 ```
 
 Default backbone is DINOv2 (`vit_small_patch14_dinov2.lvd142m` via `timm`, 384-dim),
-already covered by `precisionai/magnidata/requirements.txt` — no extra install. See
+already covered by the repository root's `requirements.txt` — no extra install. See
 `tools/embedding_models.py` for the model registry; adding a different backbone
 (including a future agriculture-trained checkpoint) means adding one entry there.
 A `<output>.provenance.json` sidecar is written alongside, same as the feature

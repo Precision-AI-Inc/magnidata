@@ -6,19 +6,22 @@ feature math, pinned model weights, and a provenance sidecar.
 
 ## Inputs (derived per image from the on-disk layout)
 
-From each `image_path` (`<DATASET>/images/<STEM>.png`) the tool finds its siblings:
+From each `image_path` (`<DATASET>/images/<STEM>.png`) the tool finds its siblings. An
+image in a subfolder (`<DATASET>/images/<SUB>/<STEM>.png`) belongs to the dataset above
+`images/`, and its label and mask are looked up under the same subfolder first
+(`labels/<SUB>/<STEM>.json`), then directly in `labels/`.
 
 | Source | Path | Provides |
 |--------|------|----------|
 | RGB image | the `image_path` itself (full res) | coverage, blur, illumination, white balance, NIMA |
 | COCO labels | `<DATASET>/labels/<STEM>.json` (polygon segmentation) | instances, entanglement/overlap, look-alike colour similarity |
 | Metadata | `<DATASET>/metadata/images_metadata.csv` (join by stem) | GSD, camera angle, sensor/model, focal length, growth stage, … |
-| Mask PNG | `<DATASET>/masks/<STEM>.png` (optional) | passthrough `mask_path` for dashboard overlay |
+| Mask PNG | `<DATASET>/masks/<STEM>.png` (optional; colour per class, near-black background) | passthrough `mask_path` for dashboard overlay; coverage and class columns when there is no COCO label |
 
 ## Usage
 
 ```bash
-pip install -r precisionai/magnidata/requirements.txt   # torch CPU build: see file note
+pip install -r requirements.txt                         # from the repo root; torch CPU build: see file note
 python -m precisionai.magnidata.tools.features \
     --input images.csv --output features.csv          # full run (with NIMA)
 python -m precisionai.magnidata.tools.features \
@@ -36,15 +39,16 @@ relative layout but a **`.jpg`** extension. `--image-source` controls resolution
 - `fullres`: full-res only (rows whose image is missing get `image_source=missing` + an error).
 - `thumbnail`: prefer thumbnails (fast pass).
 
-The source used per image is recorded in the `image_source` column
-(`fullres`/`thumb720`/`thumb64`/`missing`). Roots are env-overridable via
+The provenance sidecar records how many images were read from each source
+(`fullres`/`thumb720`/`thumb64`/`missing`) and says in its notes whether thumbnails were used. Roots are env-overridable via
 `DATALAKE_ROOT`, `THUMB_ROOT_720`, `THUMB_ROOT_64`. COCO masks are rasterized at the
 loaded image's resolution, so coverage/instance metrics stay valid on thumbnails — but
 **image-derived quality features (blur, noise, illumination, NIMA) are not comparable
 between full-res and thumbnail rows** (thumbnails are downscaled JPEGs).
 
 Outputs `features.csv` (one row per input image) and `features.csv.provenance.json`
-(git commit, library versions, NIMA weight hashes, all params, input hash).
+(git commit, library versions, NIMA weight hashes, all params, input hash, and how many
+rows were read from full-resolution images, thumbnails or not found).
 
 ## Output columns (curated schema v2)
 
@@ -52,9 +56,9 @@ Grouped by concept, in this order:
 
 - **Identity**: `image_path`, `width`, `height`
 - **Cluster passthrough** (from the input CSV, blank if absent): `cluster`, `cluster_l2`
-- **Coverage** (RGB+COCO): `annotation_ratio`, `annotated_px_count`, `fg_green_mean`, `bg_coverage`
-- **Instances / entanglement** (COCO): `instance_count`, `real_instance_count`, `mean_instance_area_ratio`, `instance_area_std`, `overlap_ratio`
-- **Class / look-alike colour** (COCO+colour): `class_count`, `smallest_class_ratio`, `class_entropy`, `mean_pairwise_color_dist`, `interclass_color_sim`
+- **Coverage** (RGB + COCO label or mask PNG): `annotation_ratio`, `annotated_px_count`, `fg_green_mean`, `bg_coverage`
+- **Instances / entanglement** (COCO only; a class-coloured mask does not separate objects): `instance_count`, `real_instance_count`, `mean_instance_area_ratio`, `instance_area_std`, `overlap_ratio`
+- **Class / look-alike colour** (COCO label or mask PNG, + colour): `class_count`, `smallest_class_ratio`, `class_entropy`, `mean_pairwise_color_dist`, `interclass_color_sim`
 - **Exposure**: `overexpose_ratio`, `underexpose_ratio`, `shadow_edge_ratio`
 - **Focus**: `blur_laplacian`, `tenengrad`
 - **Quality panel**: `noise_sigma`, `rms_contrast`, `dynamic_range`, `luma_entropy`, `colorfulness`

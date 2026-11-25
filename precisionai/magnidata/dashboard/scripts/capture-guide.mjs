@@ -13,7 +13,7 @@
  *   GUIDE_URL         portal with the partitioned data       (default http://127.0.0.1:5174)
  *   GUIDE_SOURCE_URL  portal with only AgriStress-500        (default http://127.0.0.1:5176)
  *   GUIDE_EMPTY_URL   portal with no datasets (fresh install) (default http://127.0.0.1:5177)
- *   CHROME_PATH       Chrome/Chromium executable             (default: newest in ~/.cache/ms-playwright)
+ *   CHROME_PATH       Chrome/Chromium executable             (default: Playwright's Chromium for this platform)
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -37,15 +37,40 @@ const PART_1_SOURCE = 'data_user/agristress-500_tiles-part1.csv'
 // A tile whose mask has three well-represented classes, so previews show something worth looking at.
 const SAMPLE = 'pai-FdHBsOXP_x01280_y03584.png'
 
+// Where a Playwright Chromium build keeps its executable, per platform and build era: Chrome for Testing
+// builds use chrome-linux64 / chrome-mac-* / chrome-win64, while linux arm64 and older builds use chrome-linux.
+const CHROME_EXECUTABLES = [
+  'chrome-linux64/chrome',
+  'chrome-linux/chrome',
+  'chrome-linux-arm64/chrome',
+  'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+  'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+  'chrome-mac/Chromium.app/Contents/MacOS/Chromium',
+  'chrome-win64/chrome.exe',
+  'chrome-win/chrome.exe',
+]
+
 function findChrome() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH
-  const cache = path.join(os.homedir(), '.cache/ms-playwright')
-  const builds = fs.existsSync(cache) ? fs.readdirSync(cache).filter(name => /^chromium-\d+$/.test(name)).sort() : []
-  for (const build of builds.reverse()) {
-    const candidate = path.join(cache, build, 'chrome-linux64/chrome')
-    if (fs.existsSync(candidate)) return candidate
+  // The build this playwright-core version expects, on this platform and architecture.
+  try {
+    const bundled = chromium.executablePath()
+    if (bundled && fs.existsSync(bundled)) return bundled
+  } catch {
+    // Not installed for this version; fall back to any cached build below.
   }
-  throw new Error('No Chrome found; set CHROME_PATH')
+  const cache = process.env.PLAYWRIGHT_BROWSERS_PATH || path.join(os.homedir(), '.cache/ms-playwright')
+  const revision = name => Number(name.slice('chromium-'.length))
+  const builds = fs.existsSync(cache)
+    ? fs.readdirSync(cache).filter(name => /^chromium-\d+$/.test(name)).sort((a, b) => revision(b) - revision(a))
+    : []
+  for (const build of builds) {
+    for (const executable of CHROME_EXECUTABLES) {
+      const candidate = path.join(cache, build, executable)
+      if (fs.existsSync(candidate)) return candidate
+    }
+  }
+  throw new Error(`No Chromium found under ${cache}; run "npx playwright-core install chromium" or set CHROME_PATH`)
 }
 
 const wanted = (process.argv.find(arg => arg.startsWith('--stage=')) ?? process.argv[process.argv.indexOf('--stage') + 1] ?? '')

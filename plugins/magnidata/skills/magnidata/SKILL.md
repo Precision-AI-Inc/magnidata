@@ -136,8 +136,8 @@ Experiments (training runs, local stack only). A **User Guide** inside the dashb
   checkout and restart the stack.
 - `/api/dataset/embeddings/variants` can list a `projections` entry. That is the precomputed-projection sidecar,
   not a model; ignore it when choosing a `variant`.
-- The demo allows at most four background embedding analyses at once (`POST /api/embedding/analysis` answers `429`
-  beyond that). The `GET` projection and cluster routes above are cached and do not count.
+- The demo allows four embedding analyses to compute at once, counting background jobs and uncached `GET` projection
+  and cluster requests together, and answers `429` past that; retry after a moment. Cached results are always served.
 - Empty quality columns (`nima_ava`, `niqe`, `brisque`) mean the dataset was built without the learned-quality
   models, not that the images scored zero.
 - The column schema, embeddings JSON format and naming rules are in the repository at

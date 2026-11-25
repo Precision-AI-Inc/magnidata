@@ -3,6 +3,7 @@
 
 """SQLite notes database."""
 
+import json
 import os
 import sqlite3
 from collections.abc import Generator
@@ -75,6 +76,19 @@ def init_db() -> None:
                 UNIQUE(dataset_source, image_name)
             );
             CREATE INDEX IF NOT EXISTS idx_partitions_source ON partitions(dataset_source);
+
+            -- Dataset-build jobs, so a job outlives a page reload and an API restart. `stem`
+            -- is the output name under data_user/ that the build has reserved.
+            CREATE TABLE IF NOT EXISTS build_jobs (
+                job_id      TEXT    PRIMARY KEY,
+                kind        TEXT    NOT NULL,
+                stem        TEXT    NOT NULL,
+                status      TEXT    NOT NULL,
+                state       TEXT    NOT NULL,          -- JSON snapshot served by the poll endpoint
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_build_jobs_status ON build_jobs(status);
         """)
         conn.execute(
             """INSERT OR IGNORE INTO dataset_parents (child_source, parent_source)
@@ -165,6 +179,38 @@ def delete_created_dataset(ds_id: int) -> dict | None:
             "DELETE FROM dataset_parents WHERE child_source = ? OR parent_source = ?", (row["source"], row["source"])
         )
         return dict(row)
+
+
+# ── Dataset-build jobs ───────────────────────────────────────────────────────
+FINISHED_BUILD_STATUSES = ("done", "error")
+
+
+def save_build_job(job_id: str, kind: str, stem: str, state: dict) -> None:
+    """Insert or replace the stored snapshot of a dataset-build job."""
+    with get_conn() as conn:
+        conn.execute(
+            """INSERT INTO build_jobs (job_id, kind, stem, status, state) VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(job_id) DO UPDATE SET
+                   status = excluded.status, state = excluded.state, updated_at = datetime('now')""",
+            (job_id, kind, stem, state["status"], json.dumps(state)),
+        )
+
+
+def get_build_job(job_id: str) -> dict | None:
+    """Return the stored snapshot of a dataset-build job, or None if it is unknown."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT state FROM build_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        return json.loads(row["state"]) if row else None
+
+
+def list_unfinished_build_jobs() -> list[dict]:
+    """Return ``{job_id, kind, stem, state}`` for every stored build that never reached done or error."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT job_id, kind, stem, state FROM build_jobs WHERE status NOT IN (?, ?) ORDER BY created_at",
+            FINISHED_BUILD_STATUSES,
+        ).fetchall()
+        return [{**dict(r), "state": json.loads(r["state"])} for r in rows]
 
 
 # ── Cluster partitions ───────────────────────────────────────────────────────

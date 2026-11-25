@@ -380,3 +380,69 @@ def test_a_normal_deployment_never_limits_analyses(default_client, monkeypatch):
 
     assert response.status_code == 202
     assert len(app_module._ANALYSIS_JOBS) == 101
+
+
+def _write_embedded_dataset(app_module):
+    root = app_module.DATA_ROOT
+    with open(f"{root}/data_user/a.csv", "w") as handle:
+        handle.write("image_path\nimages/a.jpg\nimages/b.jpg\nimages/c.jpg\n")
+    with open(f"{root}/data_user/a.json", "w") as handle:
+        handle.write('{"embeddings": {"a.jpg": [1.0, 0.0], "b.jpg": [0.0, 1.0], "c.jpg": [1.0, 1.0]}}')
+    return "data_user/a.csv"
+
+
+@pytest.mark.parametrize(
+    ("route", "params"), [("/api/embedding/projection", {"method": "pca"}), ("/api/embedding/clusters", {"k": "2"})]
+)
+def test_demo_mode_limits_the_get_analysis_routes_too(demo_client, route, params):
+    client, app_module = demo_client
+    source = _write_embedded_dataset(app_module)
+    _seed_analysis_jobs(app_module, ["running"] * app_module.DEMO_MAX_RUNNING_ANALYSES)
+
+    response = client.get(route, query_string={"source": source, **params})
+
+    assert response.status_code == 429
+    assert response.get_json() == {"error": "too many analyses are running, try again in a moment"}
+
+
+def test_demo_mode_still_serves_a_cached_result_when_full(demo_client):
+    client, app_module = demo_client
+    source = _write_embedded_dataset(app_module)
+    _seed_analysis_jobs(app_module, [])
+    first = client.get("/api/embedding/clusters", query_string={"source": source, "k": "2"})
+    _seed_analysis_jobs(app_module, ["running"] * app_module.DEMO_MAX_RUNNING_ANALYSES)
+
+    again = client.get("/api/embedding/clusters", query_string={"source": source, "k": "2"})
+
+    assert again.status_code == 200
+    assert again.get_json() == first.get_json()
+
+
+def test_demo_mode_counts_a_get_computation_against_new_analyses(demo_client, monkeypatch):
+    client, app_module = demo_client
+    source = _write_embedded_dataset(app_module)
+    monkeypatch.setattr(app_module, "_run_analysis_job", lambda *_args, **_kwargs: None)
+    _seed_analysis_jobs(app_module, ["running"] * (app_module.DEMO_MAX_RUNNING_ANALYSES - 1))
+    original = app_module.projections.project
+    during = []
+
+    def project_while_starting_an_analysis(matrix, method):
+        with app_module._ANALYSIS_JOBS_LOCK:
+            during.append(app_module._make_room_for_analysis())
+        return original(matrix, method)
+
+    monkeypatch.setattr(app_module.projections, "project", project_while_starting_an_analysis)
+
+    assert client.get("/api/embedding/projection", query_string={"source": source}).status_code == 200
+    assert during == [False]
+    assert app_module._INLINE_COMPUTES["running"] == 0
+    assert _start_analysis(client).status_code == 202
+
+
+def test_a_normal_deployment_never_limits_the_get_analysis_routes(default_client):
+    client, app_module = default_client
+    source = _write_embedded_dataset(app_module)
+    _seed_analysis_jobs(app_module, ["running"] * 20)
+
+    assert client.get("/api/embedding/projection", query_string={"source": source}).status_code == 200
+    assert client.get("/api/embedding/clusters", query_string={"source": source, "k": "2"}).status_code == 200

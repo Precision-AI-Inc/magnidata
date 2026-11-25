@@ -3,11 +3,14 @@
 
 """Batch feature-extraction tool — CSV (image_path) in -> dashboard-ready CSV out.
 
-For each image listed in the input CSV, derive its sibling COCO label and metadata
+For each image listed in the input CSV, derive its sibling COCO label, mask and metadata
 from the on-disk layout (``<DATASET>/images/<STEM>.png`` ->
-``<DATASET>/labels/<STEM>.json``, ``<DATASET>/metadata/images_metadata.csv``),
-compute the deterministic feature set, run NIMA, join metadata, and write one output
-row per image in the dashboard schema. A provenance sidecar is written alongside.
+``<DATASET>/labels/<STEM>.json``, ``<DATASET>/masks/<STEM>.png``,
+``<DATASET>/metadata/images_metadata.csv``; an image in a subfolder of ``images/`` looks
+for its label and mask under the same subfolder first), compute the deterministic
+feature set, run NIMA, join metadata, and write one output row per image in the
+dashboard schema. Coverage and class columns come from the COCO label, or from the
+colour mask when there is no label. A provenance sidecar is written alongside.
 
 Usage:
     python -m precisionai.magnidata.tools.features --input in.csv --output out.csv
@@ -20,18 +23,31 @@ import argparse
 import csv
 import importlib
 import io
+import logging
 import math
 import multiprocessing
 import os
 import sys
+from collections import Counter
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
-from . import coco_labels, image_source, instance_features, metadata_join, pixel_features, provenance, quality_features
+from . import (
+    coco_labels,
+    dataset_layout,
+    image_source,
+    instance_features,
+    mask_labels,
+    metadata_join,
+    pixel_features,
+    provenance,
+    quality_features,
+)
 from .schema import CLUSTER, FEATURE_SCHEMA_VERSION, OUTPUT_COLUMNS, blank_row
 
 if TYPE_CHECKING:
@@ -42,7 +58,14 @@ try:
 except ImportError:
     tqdm = None
 
+logger = logging.getLogger(__name__)
+
 ROUND_DECIMALS = 6
+# process_row() reports problems as "<area>:<detail>" strings. An "image:" problem means the
+# pixels could not be read at all, so every image-derived column of that row is blank; a
+# missing label file is normal (labels are optional) and only leaves the COCO columns blank.
+UNREADABLE_PREFIX = "image:"
+MISSING_LABEL = "coco:label_not_found"
 T = TypeVar("T")
 
 # ── Difficulty composite (transparent, reproducible; recorded in provenance) ───────
@@ -67,6 +90,7 @@ NIMA_LO, NIMA_HI = 3.0, 6.5  # nima higher=better; poorness = (HI-nima)/(HI-LO)
 
 PARAMS = {
     "bg_threshold_sum": 30,
+    "mask_background_max_channel": mask_labels.BACKGROUND_MAX_CHANNEL,
     "class_map_offset": coco_labels.CLASS_MAP_OFFSET,
     "min_instance_px": instance_features.MIN_INSTANCE_PX,
     "luma_coeff": list(pixel_features.LUMA_COEFF),
@@ -114,12 +138,21 @@ def _round(v: bool | float | int | str) -> bool | float | int | str:
     return v
 
 
+def _sibling_file(image_path: str, folder: str, filename: str) -> str:
+    """Return the first existing sibling ``<folder>/<filename>`` for an image.
+
+    When none exists the first candidate is returned, so callers report where the file
+    was expected.
+    """
+    candidates = dataset_layout.sibling_candidates(image_path, folder, filename)
+    return next((c for c in candidates if os.path.isfile(c)), candidates[0])
+
+
 def _derive_paths(image_path: str) -> tuple[str, str, str, str, str]:
-    images_dir = os.path.dirname(image_path)
-    dataset_dir = os.path.dirname(images_dir)
+    dataset_dir, _ = dataset_layout.dataset_layout(image_path)
     stem, ext = os.path.splitext(os.path.basename(image_path))
-    label_path = os.path.join(dataset_dir, "labels", stem + ".json")
-    mask_path = os.path.join(dataset_dir, "masks", stem + ".png")
+    label_path = _sibling_file(image_path, "labels", stem + ".json")
+    mask_path = _sibling_file(image_path, "masks", stem + ".png")
     return dataset_dir, stem, ext, label_path, mask_path
 
 
@@ -190,6 +223,9 @@ def _apply_rgb_features(
             row.update(pixel_features.illumination(luma, np.ones(luma.shape, dtype=bool)))
             row.update(pixel_features.focus(luma))
             row.update(quality_features.compute(rgb, luma))
+        except UnidentifiedImageError:
+            # Pillow's own message only names the in-memory buffer it was given.
+            errors.append("image:not a recognised image format")
         except Exception as exc:
             errors.append(f"image:{exc}")
 
@@ -202,23 +238,46 @@ def _apply_rgb_features(
     return rgb, luma, errors
 
 
-def _apply_coco_features(row: dict, rgb: np.ndarray, luma: np.ndarray | None, label_path: str) -> list[str]:
-    """Populate coverage/instance/look-alike-colour columns from the sibling COCO label file."""
+def _apply_class_map_features(row: dict, rgb: np.ndarray, luma: np.ndarray | None, class_map: np.ndarray) -> None:
+    """Populate coverage columns and refine the shadow proxy from a class map."""
+    fg = coco_labels.foreground_from_class_map(class_map)
+    bg = coco_labels.background_from_class_map(class_map)
+    row.update(pixel_features.coverage(fg, rgb))
+    row["bg_coverage"] = float(bg.sum()) / float(bg.size) if bg.size else 0.0
+    # refine illumination shadow proxy to the actual foreground (only if the
+    # RGB block above actually got far enough to compute luma)
+    if luma is not None:
+        row.update(pixel_features.illumination(luma, fg))
+
+
+def _apply_mask_features(row: dict, rgb: np.ndarray, luma: np.ndarray | None, mask_path: str) -> list[str]:
+    """Populate coverage and class columns from the sibling colour mask PNG."""
+    try:
+        class_map = mask_labels.load_class_map(mask_path, target_wh=(rgb.shape[1], rgb.shape[0]))
+        _apply_class_map_features(row, rgb, luma, class_map)
+        row.update(instance_features.class_metrics(rgb, class_map))
+    except Exception as exc:
+        return [f"mask:{exc}"]
+    return []
+
+
+def _apply_coco_features(
+    row: dict, rgb: np.ndarray, luma: np.ndarray | None, label_path: str, mask_path: str
+) -> list[str]:
+    """Populate coverage/instance/look-alike-colour columns from the sibling COCO label file.
+
+    Without a COCO label, a sibling colour mask supplies the coverage and class columns.
+    """
     if not os.path.isfile(label_path):
+        if os.path.isfile(mask_path):
+            return _apply_mask_features(row, rgb, luma, mask_path)
         return ["coco:label_not_found"]
     try:
         labels = coco_labels.parse(label_path)
         # Rasterize at the loaded image's resolution (handles thumbnails too).
         class_map = coco_labels.rasterize_class_map(labels, target_wh=(rgb.shape[1], rgb.shape[0]))
-        fg = coco_labels.foreground_from_class_map(class_map)
-        bg = coco_labels.background_from_class_map(class_map)
-        row.update(pixel_features.coverage(fg, rgb))
+        _apply_class_map_features(row, rgb, luma, class_map)
         row.update(instance_features.instance_metrics(labels, rgb, class_map))
-        row["bg_coverage"] = float(bg.sum()) / float(bg.size) if bg.size else 0.0
-        # refine illumination shadow proxy to the actual foreground (only if the
-        # RGB block above actually got far enough to compute luma)
-        if luma is not None:
-            row.update(pixel_features.illumination(luma, fg))
     except Exception as exc:
         return [f"coco:{exc}"]
     return []
@@ -230,6 +289,12 @@ def process_row(image_path: str, scorer: NimaScorer | None = None, image_mode: s
     ``error_str`` is empty on success. It is no longer an output column (the curated
     schema dropped it) — run() aggregates errors into an end-of-run stderr summary.
     """
+    row, error, _source = _compute_row(image_path, scorer, image_mode)
+    return row, error
+
+
+def _compute_row(image_path: str, scorer: NimaScorer | None, image_mode: str) -> tuple[dict, str, str]:
+    """Compute one output row; also return the image source read, which is not an output column."""
     row = blank_row()
     dataset_dir, stem, ext, label_path, mask_path = _derive_paths(image_path)
     row["image_path"] = image_path
@@ -250,11 +315,14 @@ def process_row(image_path: str, scorer: NimaScorer | None = None, image_mode: s
     errors.extend(rgb_errors)
 
     if rgb is not None:
-        errors.extend(_apply_coco_features(row, rgb, luma, label_path))
+        errors.extend(_apply_coco_features(row, rgb, luma, label_path, mask_path))
 
     # ── Metadata join ─────────────────────────────────────────────────────────────
     try:
-        meta, _matched = metadata_join.lookup(dataset_dir, stem)
+        meta, matched = metadata_join.lookup(dataset_dir, stem)
+        legacy_dir = dataset_layout.legacy_dataset_dir(image_path)
+        if not matched and legacy_dir is not None:
+            meta, _ = metadata_join.lookup(legacy_dir, stem)
         row.update(meta)
     except Exception as exc:
         errors.append(f"meta:{exc}")
@@ -264,21 +332,74 @@ def process_row(image_path: str, scorer: NimaScorer | None = None, image_mode: s
         row["complexity_score"], row["category"], _basis = _complexity(row)
 
     out = {k: _round(row.get(k, "")) for k in OUTPUT_COLUMNS}
-    return out, "; ".join(errors)
+    return out, "; ".join(errors), source
 
 
-def _process_rows(paths: list[str], scorer: NimaScorer | None, image_mode: str, workers: int) -> list[tuple[dict, str]]:
+def _process_rows(
+    paths: list[str], scorer: NimaScorer | None, image_mode: str, workers: int
+) -> list[tuple[dict, str, str]]:
     """Compute rows for every path in input order, across processes when that is safe."""
     if workers > 1 and scorer is None and len(paths) > 1:
         # spawn, not fork: the API server calls this from a multi-threaded process, where fork can deadlock.
         context = multiprocessing.get_context("spawn")
         with ProcessPoolExecutor(max_workers=min(workers, len(paths)), mp_context=context) as pool:
-            results = pool.map(process_row, paths, [None] * len(paths), [image_mode] * len(paths), chunksize=1)
+            results = pool.map(_compute_row, paths, [None] * len(paths), [image_mode] * len(paths), chunksize=1)
             return list(_progress(results, len(paths)))
-    return [process_row(path, scorer, image_mode) for path in _progress(paths, len(paths))]
+    return [_compute_row(path, scorer, image_mode) for path in _progress(paths, len(paths))]
 
 
-def run(
+@dataclass
+class FeatureReport:
+    """Summary of one feature-extraction pass.
+
+    Attributes
+    ----------
+    rows : int
+        Rows written to the output CSV.
+    unreadable : list of tuple of (str, str)
+        ``(image_path, reason)`` for every image whose pixels could not be decoded.
+    errors : list of tuple of (str, str)
+        ``(image_path, reason)`` for every other problem on a readable image.
+    missing_labels : int
+        Readable images that have no sibling COCO label file.
+    """
+
+    rows: int = 0
+    unreadable: list[tuple[str, str]] = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list)
+    missing_labels: int = 0
+
+
+def _classify(image_path: str, err: str, report: FeatureReport) -> bool:
+    """Record one row's problems in ``report`` and return whether its image was unreadable."""
+    problems = [p for p in err.split("; ") if p]
+    image_problems = [p for p in problems if p.startswith(UNREADABLE_PREFIX)]
+    if image_problems:
+        report.unreadable.append((image_path, "; ".join(p.removeprefix(UNREADABLE_PREFIX) for p in image_problems)))
+        return True
+    if MISSING_LABEL in problems:
+        report.missing_labels += 1
+    others = [p for p in problems if p != MISSING_LABEL]
+    if others:
+        report.errors.append((image_path, "; ".join(others)))
+    return False
+
+
+def _log_report(report: FeatureReport, total: int) -> None:
+    """Log unreadable images and real errors as warnings and missing labels as information."""
+    for title, items in (("could not be read", report.unreadable), ("had errors", report.errors)):
+        if not items:
+            continue
+        logger.warning("%d/%d images %s:", len(items), total, title)
+        for path, reason in items[:20]:
+            logger.warning("  %s: %s", os.path.basename(path), reason)
+        if len(items) > 20:
+            logger.warning("  … and %d more", len(items) - 20)
+    if report.missing_labels:
+        logger.info("%d/%d images have no label file; their annotation columns are blank", report.missing_labels, total)
+
+
+def extract(
     input_csv: str,
     output_csv: str,
     device: str = "cpu",
@@ -286,8 +407,9 @@ def run(
     skip_nima: bool = False,
     image_mode: str = "auto",
     workers: int = 1,
-) -> int:
-    """Extract features for every image listed in `input_csv` and write `output_csv`.
+    drop_unreadable: bool = False,
+) -> FeatureReport:
+    """Extract features for every image listed in `input_csv`, write `output_csv`, and report what happened.
 
     Parameters
     ----------
@@ -311,11 +433,15 @@ def run(
         Number of worker processes. Rows are independent and results keep input order, so the
         output is identical to a serial run. Ignored (serial) when the learned IQA scorer is
         enabled, since its models are not shared across processes.
+    drop_unreadable : bool, default False
+        Leave images whose pixels cannot be decoded out of the output CSV instead of writing
+        them as rows with every image-derived column blank. They are listed in the report
+        either way.
 
     Returns
     -------
-    int
-        The number of rows written.
+    FeatureReport
+        Rows written, unreadable images, other errors, and the count of images without labels.
     """
     with open(input_csv, newline="") as f:
         reader = csv.DictReader(f)
@@ -339,36 +465,63 @@ def run(
     paths = [(r.get(path_col) or "").strip() for r in rows]
     computed = _process_rows(paths, scorer, image_mode, workers)
 
-    out_rows, errored = [], []
-    for r, image_path, (row, err) in zip(rows, paths, computed, strict=True):
+    report = FeatureReport()
+    out_rows = []
+    sources: Counter[str] = Counter()
+    for r, image_path, (row, err, source) in zip(rows, paths, computed, strict=True):
+        if _classify(image_path, err, report) and drop_unreadable:
+            continue
+        sources[source] += 1
         for c in cluster_cols:  # passthrough cluster labels (verbatim)
             row[c] = r.get(c) or ""
         out_rows.append(row)
-        if err:
-            errored.append((image_path, err))
+    report.rows = len(out_rows)
 
     with open(output_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS)
         writer.writeheader()
         writer.writerows(out_rows)
 
-    if errored:
-        print(f"WARNING: {len(errored)}/{len(out_rows)} rows had errors:", file=sys.stderr)
-        for path, err in errored[:20]:
-            print(f"  {os.path.basename(path)}: {err}", file=sys.stderr)
-        if len(errored) > 20:
-            print(f"  … and {len(errored) - 20} more", file=sys.stderr)
+    _log_report(report, len(rows))
 
-    params = dict(PARAMS, image_mode=image_mode)
+    image_sources = dict(sorted(sources.items()))
+    params = dict(PARAMS, image_mode=image_mode, image_sources=image_sources)
     if scorer is not None:
         params.update(scorer.proc_params())
     prov = provenance.build(
-        input_csv, output_csv, params, FEATURE_SCHEMA_VERSION, weight_paths=scorer.weight_paths() if scorer else []
+        input_csv,
+        output_csv,
+        params,
+        FEATURE_SCHEMA_VERSION,
+        weight_paths=scorer.weight_paths() if scorer else [],
+        determinism_notes=[provenance.image_source_note(image_sources), *provenance.DEFAULT_DETERMINISM_NOTES],
     )
     provenance.write(prov, output_csv + ".provenance.json")
 
     print(f"Wrote {len(out_rows)} rows -> {output_csv}", file=sys.stderr)
-    return len(out_rows)
+    return report
+
+
+def run(
+    input_csv: str,
+    output_csv: str,
+    device: str = "cpu",
+    limit: int | None = None,
+    skip_nima: bool = False,
+    image_mode: str = "auto",
+    workers: int = 1,
+) -> int:
+    """Extract features for every image listed in `input_csv` and write `output_csv`.
+
+    Every input row is written, including rows whose image could not be read; see `extract`
+    for the parameters and for a variant that can drop those rows and reports them.
+
+    Returns
+    -------
+    int
+        The number of rows written.
+    """
+    return extract(input_csv, output_csv, device, limit, skip_nima, image_mode, workers).rows
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -391,6 +544,7 @@ def main(argv: list[str] | None = None) -> None:
         "image-derived features won't match full-res.",
     )
     args = ap.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     run(args.input, args.output, args.device, args.limit, args.skip_nima, args.image_source, args.workers)
 
 

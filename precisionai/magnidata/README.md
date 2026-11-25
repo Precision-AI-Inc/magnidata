@@ -13,7 +13,6 @@ magnidata/
                generator (CSV/images -> JSON, see docs/data-contract.md)
   docs/        data-contract.md — the multiparametric CSV + embeddings JSON contracts
   confi.yaml   Dataset registry (which CSVs the portal lists)
-  requirements.txt   deps for the tools/ feature extractor + embeddings generator (numpy/torch/timm/pyiqa)
   SUMMARY.md   Feature taxonomy reference for tools/ (atomic/model-based/compound tiers)
 ```
 
@@ -71,6 +70,9 @@ VITE_API_PROXY_TARGET=http://localhost:5050 npm run dev
 
 ## Run the feature extractor
 
+From the repository root (its `requirements.txt` holds the feature extractor's and embeddings generator's
+dependencies: numpy/torch/timm/pyiqa):
+
 ```bash
 pip install -r requirements.txt
 python -m precisionai.magnidata.tools.features --input data/agri-benc-0.0.3.csv --output out.csv
@@ -80,6 +82,8 @@ See `tools/README.md` for the full column schema, flags (`--skip-nima`, `--image
 `--device`, `--limit`), and reproducibility/provenance details.
 
 ## Run the embedding generator
+
+From the repository root:
 
 ```bash
 pip install -r requirements.txt

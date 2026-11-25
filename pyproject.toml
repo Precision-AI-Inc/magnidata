@@ -71,9 +71,11 @@ dependencies = [
 # Offline embeddings generation (tools/embeddings.py) and learned image-quality
 # scoring (tools/nima.py) — deliberately not a runtime dependency of the API
 # itself (see Dockerfile.api); install this extra to run those CLI tools.
+# Exact pins in this file are copies of constraints.txt, which is where a version changes;
+# precisionai/magnidata/test_dependency_pins.py fails when a copy disagrees.
 ml = [
     "torch==2.14.1",
-    "torchvision==0.29.2",
+    "torchvision==0.29.1",
     "timm==1.0.31",
     "pyiqa==0.1.16",
     "tqdm>=4.66",
@@ -82,7 +84,7 @@ ml = [
 # match the `ml` extra. Not a dependency of the API image.
 training = [
     "torch==2.14.1",
-    "torchvision==0.29.2",
+    "torchvision==0.29.1",
     "mlflow-skinny==3.18.0",
 ]
 # The MCP server (precisionai/magnidata/mcp_server) ships as its own distribution, magnidata-mcp, built from
@@ -104,7 +106,8 @@ dev = [
     "pre-commit>=3.7",
     # Pinned to the rev in .pre-commit-config.yaml — a different ruff version
     # reports a different rule set, so an unpinned local run would disagree with CI.
-    "ruff==0.17.4",
+    "ruff==0.17.5",
+    # CI pins pyright through constraints.txt.
     "pyright>=1.1",
     "genbadge[coverage]>=1.1",
     # test_openapi.py: validate openapi.yaml and check responses against its schemas.

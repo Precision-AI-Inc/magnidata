@@ -6,7 +6,8 @@
 - Instance stats come from per-annotation polygon masks (one annotation = one object).
 - Class colour / distribution come from the non-overlapping class map (each pixel
   belongs to exactly one class), which is the stable basis for look-alike-class
-  colour similarity.
+  colour similarity. ``class_metrics`` also serves class maps decoded from colour
+  mask PNGs (see mask_labels.py).
 """
 
 from __future__ import annotations
@@ -88,7 +89,29 @@ def instance_metrics(labels: cl.CocoLabels, rgb: np.ndarray, class_map: np.ndarr
         "overlap_ratio": overlap_px / fg_px if fg_px else 0.0,
     }
 
-    # ── Class colour (look-alike) + class distribution from the class map ─────────
+    out.update(class_metrics(rgb, class_map))
+    return out
+
+
+def class_metrics(rgb: np.ndarray, class_map: np.ndarray) -> dict:
+    """Compute class count/entropy and look-alike-class colour similarity from a class map.
+
+    Shared by COCO labels and colour mask PNGs, which both produce a non-overlapping class
+    map in the same encoding (see ``coco_labels.CLASS_MAP_OFFSET``).
+
+    Parameters
+    ----------
+    rgb : np.ndarray
+        (H, W, 3) uint8 RGB pixels, at the same resolution as `class_map`.
+    class_map : np.ndarray
+        Per-pixel class map: 0 unlabeled, background sentinel, foreground classes above it.
+
+    Returns
+    -------
+    dict
+        schema.py's CLASSES group.
+    """
+    out: dict = {}
     bg_val = cl.BACKGROUND_CATEGORY_ID + cl.CLASS_MAP_OFFSET
     fg_vals = [int(v) for v in np.unique(class_map) if v not in (0, bg_val)]
     fg_vals.sort()  # deterministic class ordering
@@ -109,7 +132,8 @@ def instance_metrics(labels: cl.CocoLabels, rgb: np.ndarray, class_map: np.ndarr
     if class_px_arr.size:
         frac = class_px_arr / class_px_arr.sum()
         out["smallest_class_ratio"] = float(frac.min())
-        out["class_entropy"] = float(-(frac * np.log2(frac + EPS)).sum())
+        # EPS keeps log2 finite but drives a single class's entropy to about -1e-6; clamp at 0
+        out["class_entropy"] = max(0.0, float(-(frac * np.log2(frac + EPS)).sum()))
     else:
         out["smallest_class_ratio"] = 0.0
         out["class_entropy"] = 0.0

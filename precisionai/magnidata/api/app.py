@@ -7,6 +7,7 @@ Serves images/masks/overlays from local disk, stores notes in SQLite.
 Also exposes dataset listing and CSV serving from local disk.
 """
 
+import collections
 import colorsys
 import contextlib
 import functools
@@ -19,6 +20,7 @@ import shutil
 import threading
 import urllib.parse
 import uuid
+from collections.abc import Callable, Iterator
 from typing import Any, cast
 
 import numpy as np
@@ -65,13 +67,26 @@ import mlflow_store
 import projections
 
 from precisionai.magnidata.tools import coco_labels as coco_labels_mod
+from precisionai.magnidata.tools import dataset_layout
 from precisionai.magnidata.training import dataset_check
 
 db.init_db()
+# Builds write, and deletes remove, under the same data root this app serves from.
+dataset_builder.DATA_ROOT = DATA_ROOT
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = dataset_builder.MAX_REQUEST_BYTES
 app.register_blueprint(experiments.bp)
+
+# Feature extraction runs in spawned worker processes, and under `python app.py` each one runs
+# this file again as __mp_main__, before multiprocessing.parent_process() is set. Only the
+# server process may close out builds: in a worker, the build that spawned it is still running.
+_interrupted_builds = dataset_builder.recover_interrupted_builds() if __name__ != "__mp_main__" else []
+if _interrupted_builds:
+    app.logger.warning(
+        "Marked %d dataset build(s) interrupted by the last API restart and removed their partial output",
+        len(_interrupted_builds),
+    )
 
 # Background threshold: pixels whose R+G+B sum is below this are treated as
 # background and rendered transparent in the mask/overlay views.
@@ -139,6 +154,31 @@ def _image_path(path: str) -> str:
             raise ValueError("invalid path")
         return path
     return _data_path(path)
+
+
+def _max_size_arg() -> int:
+    """Return the request's ``max_size`` query value (default 1600); raise ValueError unless a positive integer."""
+    message = "max_size must be a positive integer"
+    try:
+        value = int(request.args.get("max_size", "1600"))
+    except ValueError:
+        raise ValueError(message) from None
+    if value < 1:
+        raise ValueError(message)
+    return value
+
+
+def _image_read_error(exc: Exception) -> ResponseReturnValue:
+    """Answer an image route's failure to read or decode a file with a fixed JSON message.
+
+    The exception's own text can name server paths, so it is logged rather than returned.
+    """
+    if isinstance(exc, FileNotFoundError | IsADirectoryError):
+        return jsonify({"error": "file not found"}), 404
+    app.logger.warning("image request failed", exc_info=exc)
+    if isinstance(exc, PermissionError):
+        return jsonify({"error": "file not readable"}), 403
+    return jsonify({"error": "could not read or decode the file"}), 500
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
@@ -337,7 +377,10 @@ def mlflow_status() -> ResponseReturnValue:
 def get_image() -> ResponseReturnValue:
     """Return the image at `path` as a size-capped JPEG."""
     path = request.args.get("path", "").strip()
-    max_size = int(request.args.get("max_size", 1600))
+    try:
+        max_size = _max_size_arg()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if not path:
         return jsonify({"error": "path required"}), 400
     try:
@@ -348,7 +391,7 @@ def get_image() -> ResponseReturnValue:
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _image_read_error(exc)
 
 
 @app.get("/api/mask")
@@ -359,7 +402,10 @@ def get_mask() -> ResponseReturnValue:
     become fully transparent so the mask can be viewed on any background.
     """
     path = request.args.get("path", "").strip()
-    max_size = int(request.args.get("max_size", 1600))
+    try:
+        max_size = _max_size_arg()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if not path:
         return jsonify({"error": "path required"}), 400
     try:
@@ -370,7 +416,7 @@ def get_mask() -> ResponseReturnValue:
         buf.seek(0)
         return send_file(buf, mimetype="image/png")
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _image_read_error(exc)
 
 
 @app.get("/api/overlay")
@@ -382,7 +428,10 @@ def get_overlay() -> ResponseReturnValue:
     """
     img_path = request.args.get("img", "").strip()
     mask_path = request.args.get("mask", "").strip()
-    max_size = int(request.args.get("max_size", 1600))
+    try:
+        max_size = _max_size_arg()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     if not img_path or not mask_path:
         return jsonify({"error": "img and mask paths required"}), 400
@@ -397,7 +446,7 @@ def get_overlay() -> ResponseReturnValue:
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _image_read_error(exc)
 
 
 @app.get("/api/mask/debug")
@@ -428,15 +477,15 @@ def debug_mask() -> ResponseReturnValue:
             }
         )
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _image_read_error(exc)
 
 
 # ── Annotation mask / overlay (from whichever source the image has) ────────────
 # Two mask sources, tried in order:
-#   1. COCO polygon labels — labels/<stem>.json sibling to images/<stem>.ext (same
-#      convention tools/features.py::_derive_paths reads for instance features).
+#   1. COCO polygon labels — labels/[<sub>/]<stem>.json for images/[<sub>/]<stem>.ext,
+#      found by tools/dataset_layout.py, the same lookup tools/features.py uses.
 #      Rasterized on the fly, one distinct color per category.
-#   2. A pre-colored raster mask — masks/<stem>.<ext> sibling to images/<stem>.ext
+#   2. A pre-colored raster mask — masks/[<sub>/]<stem>.<ext>, found the same way
 #      (what /api/mask + /api/overlay above expect too, but nothing ever populated
 #      a mask_path column for them; datasets built with real masks, e.g.
 #      AgriStress-500, use this path instead of a CSV column at all).
@@ -451,12 +500,14 @@ def _category_color(category_id: int) -> tuple[int, int, int]:
     return int(r * 255), int(g * 255), int(b * 255)
 
 
-def _annotation_label_path(image_path: str) -> str:
-    """<DATASET>/labels/<STEM>.json for <DATASET>/images/<STEM>.ext."""
-    images_dir = os.path.dirname(image_path)
-    dataset_dir = os.path.dirname(images_dir)
+def _annotation_label_path(image_path: str) -> str | None:
+    """Return the absolute path of the image's COCO label file, or None if it has none."""
     stem = os.path.splitext(os.path.basename(image_path))[0]
-    return os.path.join(dataset_dir, "labels", stem + ".json")
+    for candidate in dataset_layout.sibling_candidates(image_path, "labels", stem + ".json"):
+        label_abs = os.path.normpath(os.path.join(DATA_ROOT, candidate))
+        if os.path.isfile(label_abs):
+            return label_abs
+    return None
 
 
 def _rasterize_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> Image.Image | None:
@@ -464,8 +515,8 @@ def _rasterize_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> I
 
     None if the image has no label file.
     """
-    label_abs = os.path.normpath(os.path.join(DATA_ROOT, _annotation_label_path(image_path)))
-    if not os.path.isfile(label_abs):
+    label_abs = _annotation_label_path(image_path)
+    if label_abs is None:
         return None
     labels = coco_labels_mod.parse(label_abs)
     class_map = coco_labels_mod.rasterize_class_map(labels, target_wh=target_wh)
@@ -482,25 +533,25 @@ def _rasterize_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> I
 
 
 def _sibling_raster_mask_bytes(image_path: str) -> bytes | None:
-    """Bytes of a pre-colored raster mask sibling to the image — <DATASET>/masks/<STEM>.ext next to <DATASET>/images/<STEM>.ext.
+    """Bytes of a pre-colored raster mask for the image — <DATASET>/masks/[<SUB>/]<STEM>.ext for <DATASET>/images/[<SUB>/]<STEM>.ext.
 
     This is the convention datasets like AgriStress-500 ship: one PNG per image,
     already colored per class, black = background — exactly _mask_as_rgba's format.
     Tries local paths and, for a remote image_path, the same allowlisted hosts
     /api/image already supports. None if no candidate is readable.
     """
-    images_dir = image_path.rsplit("/", 1)[0] if "/" in image_path else ""
-    dataset_dir = images_dir.rsplit("/", 1)[0] if "/" in images_dir else ""
     stem = os.path.splitext(os.path.basename(image_path))[0]
     for ext in (".png", ".jpg", ".jpeg"):
-        candidate = f"{dataset_dir}/masks/{stem}{ext}"
-        resolved = (
-            candidate if local_files.is_remote_url(image_path) else os.path.normpath(os.path.join(DATA_ROOT, candidate))
-        )
-        try:
-            return local_files.read_file(resolved)
-        except (OSError, PermissionError):
-            continue
+        for candidate in dataset_layout.sibling_candidates(image_path, "masks", stem + ext):
+            resolved = (
+                candidate
+                if local_files.is_remote_url(image_path)
+                else os.path.normpath(os.path.join(DATA_ROOT, candidate))
+            )
+            try:
+                return local_files.read_file(resolved)
+            except (OSError, PermissionError):
+                continue
     return None
 
 
@@ -527,7 +578,10 @@ def _load_annotation_mask(image_path: str, target_wh: tuple[int, int]) -> Image.
 def get_annotation_mask() -> ResponseReturnValue:
     """Return the colorized segmentation mask alone, as a transparent PNG."""
     path = request.args.get("path", "").strip()
-    max_size = int(request.args.get("max_size", 1600))
+    try:
+        max_size = _max_size_arg()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     if not path:
         return jsonify({"error": "path required"}), 400
     if os.path.isabs(path) or ".." in path:
@@ -542,7 +596,7 @@ def get_annotation_mask() -> ResponseReturnValue:
         buf.seek(0)
         return send_file(buf, mimetype="image/png")
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _image_read_error(exc)
 
 
 @app.get("/api/annotation/overlay")
@@ -552,7 +606,10 @@ def get_annotation_overlay() -> ResponseReturnValue:
     Opacity (0..1, default 0.5) backs the preview modal's Overlay transparency slider.
     """
     path = request.args.get("path", "").strip()
-    max_size = int(request.args.get("max_size", 1600))
+    try:
+        max_size = _max_size_arg()
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     try:
         alpha = max(0.0, min(1.0, float(request.args.get("alpha", 0.5))))
     except ValueError:
@@ -572,7 +629,7 @@ def get_annotation_overlay() -> ResponseReturnValue:
         buf.seek(0)
         return send_file(buf, mimetype="image/jpeg")
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 500
+        return _image_read_error(exc)
 
 
 # ── Notes ──────────────────────────────────────────────────────────────────────
@@ -759,14 +816,18 @@ def _slugify(name: str) -> str:
 
 
 def _write_child_csv(name: str, columns: list[str], rows: list[dict[str, str]]) -> str:
-    """Write rows to a unique CSV under the writable user-data dir and return its data-relative path."""
-    base_slug = _slugify(name)
-    rel = f"{USER_DATA_REL}/{base_slug}.csv"
-    n = 2
-    while os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, rel))) or db.get_created_dataset_by_source(rel):
-        rel = f"{USER_DATA_REL}/{base_slug}_{n}.csv"
-        n += 1
-    dataset_curation.write_rows(os.path.normpath(os.path.join(DATA_ROOT, rel)), columns, rows)
+    """Write rows to a unique CSV under the writable user-data dir and return its data-relative path.
+
+    The name is reserved the same way a dataset build reserves its own, so a selection saved
+    while a build runs can never take the path that build will write.
+    """
+    rel = f"{USER_DATA_REL}/{dataset_builder.reserve_stem(_slugify(name))}.csv"
+    path = os.path.normpath(os.path.join(DATA_ROOT, rel))
+    try:
+        dataset_curation.write_rows(path, columns, rows)
+    except Exception:
+        _remove_file(path)
+        raise
     return rel
 
 
@@ -932,10 +993,11 @@ def _remove_file(path: str) -> None:
 def remove_dataset(ds_id: int) -> ResponseReturnValue:
     """Delete a user-created dataset. Confi datasets are not deletable.
 
-    A row-subset child dataset (parent_source set) only removes its CSV — it inherits
-    the parent's embeddings and was never staged from its own images. A dataset built
-    from images (parent_source is None) also removes its embeddings JSON, staged
-    images folder, and provenance sidecars.
+    Removes the dataset's CSV and everything kept under its file name — embeddings JSON,
+    3D projections, staged images folder, provenance sidecars. Those always belong to it:
+    the name was reserved free of all of them when the dataset was made. Its lineage is
+    not consulted, since parents can be changed after the dataset was built. Embeddings
+    and images that other datasets still use are kept, and logged.
     """
     existing = db.get_created_dataset(ds_id)
     if existing and existing["source"] == dataset_curation.CLOUD_SOURCE:
@@ -944,21 +1006,11 @@ def remove_dataset(ds_id: int) -> ResponseReturnValue:
     if rec is None:
         return jsonify({"error": "dataset not found"}), 404
     src = rec["source"]
-    if src and src.startswith(USER_DATA_REL + "/") and ".." not in src:
-        csv_path = os.path.normpath(os.path.join(DATA_ROOT, src))
-        _remove_file(csv_path)
-        _remove_file(csv_path + ".provenance.json")
-        if rec["parent_source"] is None:
-            stem = os.path.splitext(csv_path)[0]
-            _remove_file(stem + ".json")
-            _remove_file(stem + ".json.provenance.json")
-            _remove_file(stem + "_projections.json")
-            images_dir = stem + "_images"
-            if os.path.isdir(images_dir):
-                shutil.rmtree(images_dir, ignore_errors=True)
-    # Drop any cached compute results for this source
-    for key in [k for k in _COMPUTE_CACHE if isinstance(k, tuple) and len(k) > 1 and k[1] == src]:
-        _COMPUTE_CACHE.pop(key, None)
+    _forget_cached_source(src)
+    with contextlib.suppress(ValueError):  # a source outside data_user/ has no files of ours to remove
+        kept = dataset_builder.remove_dataset_files(src, rec["emb_source"])
+        if kept:
+            app.logger.info("Deleted dataset %s; kept %s, still used by other datasets", src, ", ".join(kept))
     return ("", 204)
 
 
@@ -1093,6 +1145,15 @@ def build_dataset() -> ResponseReturnValue:
     return jsonify({"job_id": job_id}), 202
 
 
+@app.get("/api/datasets/build/current")
+def get_current_build_job() -> ResponseReturnValue:
+    """Return the running dataset build, so a reloaded page can resume showing its progress.
+
+    Returns ``{"job": null}`` while no build is running.
+    """
+    return jsonify({"job": dataset_builder.current_job()})
+
+
 @app.get("/api/datasets/build/<job_id>")
 def get_build_job(job_id: str) -> ResponseReturnValue:
     """Return the status of a background dataset-build job."""
@@ -1210,28 +1271,149 @@ def list_embedding_variants() -> ResponseReturnValue:
 # Heavy embedding math runs HERE, not in the browser. The ordinary endpoints return compact
 # arrays (3D positions, cluster labels, neighbour indices); the user-visible analysis job
 # deliberately returns only the selected projection together with its labels. Results are
-# cached in-process by key.
-_COMPUTE_CACHE: dict = {}
-# One lock per cache key, so concurrent requests for the same dataset share a single
-# parse/compute instead of each doing their own (see _base_matrix).
-_COMPUTE_LOCKS: dict[tuple, threading.Lock] = {}
+# cached in-process, keyed on the dataset's resolved path (see _source_key), and each cache
+# forgets its least recently used entries past a fixed size.
+COMPUTE_CACHE_MAX_ENTRIES = 128
+# Embedding matrices are by far the largest entries (rows x dimensions floats), so they get their own, smaller bound.
+MATRIX_CACHE_MAX_ENTRIES = 4
+
+
+class _LRUCache:
+    """Thread-safe mapping that forgets its least recently used entry once it holds more than `max_entries`."""
+
+    def __init__(self, max_entries: int) -> None:
+        self.max_entries = max_entries
+        self._entries: collections.OrderedDict[tuple, Any] = collections.OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: tuple, default: Any = None) -> Any:
+        """Return the value for `key` and mark it recently used, or `default` when absent."""
+        with self._lock:
+            if key not in self._entries:
+                return default
+            self._entries.move_to_end(key)
+            return self._entries[key]
+
+    def __contains__(self, key: object) -> bool:
+        with self._lock:
+            return key in self._entries
+
+    def __getitem__(self, key: tuple) -> Any:
+        with self._lock:
+            self._entries.move_to_end(key)
+            return self._entries[key]
+
+    def __setitem__(self, key: tuple, value: Any) -> None:
+        with self._lock:
+            self._entries[key] = value
+            self._entries.move_to_end(key)
+            while len(self._entries) > self.max_entries:
+                self._entries.popitem(last=False)
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+    def clear(self) -> None:
+        """Forget every entry."""
+        with self._lock:
+            self._entries.clear()
+
+    def discard(self, predicate: Callable[[tuple], bool]) -> None:
+        """Forget every entry whose key satisfies `predicate`."""
+        with self._lock:
+            for key in [k for k in self._entries if predicate(k)]:
+                del self._entries[key]
+
+
+_COMPUTE_CACHE = _LRUCache(COMPUTE_CACHE_MAX_ENTRIES)
+_MATRIX_CACHE = _LRUCache(MATRIX_CACHE_MAX_ENTRIES)
+# One lock per cache key while anyone holds or waits for it, so concurrent requests for the
+# same dataset share a single parse/compute instead of each doing their own (see _base_matrix).
+# Each entry is [lock, holders]; it is dropped when the last holder leaves, so keys that are
+# only ever asked for once (a misspelt variant, say) do not pile up.
+_COMPUTE_LOCKS: dict[tuple, list] = {}
 _COMPUTE_LOCKS_GUARD = threading.Lock()
 
 # Long-running, user-visible embedding analysis jobs.  The browser polls these instead of
 # holding an HTTP request open while LLE or a new K-means result is computed.
 _ANALYSIS_JOBS: dict[str, dict[str, Any]] = {}
 _ANALYSIS_JOBS_LOCK = threading.Lock()
+# Projections and clusterings the GET routes are computing right now. Demo mode counts them
+# against DEMO_MAX_RUNNING_ANALYSES together with the background jobs. Guarded by _ANALYSIS_JOBS_LOCK.
+_INLINE_COMPUTES = {"running": 0}
 
 
-def _compute_lock(key: tuple) -> threading.Lock:
-    """Return the lock guarding one compute-cache key, creating it on first use."""
+@contextlib.contextmanager
+def _compute_lock(key: tuple) -> Iterator[None]:
+    """Hold the lock guarding one compute-cache key for the duration of the block."""
     with _COMPUTE_LOCKS_GUARD:
-        return _COMPUTE_LOCKS.setdefault(key, threading.Lock())
+        entry = _COMPUTE_LOCKS.setdefault(key, [threading.Lock(), 0])
+        entry[1] += 1
+    try:
+        with entry[0]:
+            yield
+    finally:
+        with _COMPUTE_LOCKS_GUARD:
+            entry[1] -= 1
+            if entry[1] == 0:
+                del _COMPUTE_LOCKS[key]
+
+
+def _running_analyses() -> int:
+    """Return how many analyses are computing now, background jobs and GET routes alike.
+
+    Call with ``_ANALYSIS_JOBS_LOCK`` held.
+    """
+    running_jobs = sum(1 for job in _ANALYSIS_JOBS.values() if job["status"] not in {"done", "error"})
+    return running_jobs + _INLINE_COMPUTES["running"]
+
+
+@contextlib.contextmanager
+def _inline_compute_slot() -> Iterator[bool]:
+    """Count one GET-route computation as a running analysis; yield False when demo mode has no room for it."""
+    with _ANALYSIS_JOBS_LOCK:
+        if DEMO_MODE and _running_analyses() >= DEMO_MAX_RUNNING_ANALYSES:
+            allowed = False
+        else:
+            allowed = True
+            _INLINE_COMPUTES["running"] += 1
+    try:
+        yield allowed
+    finally:
+        if allowed:
+            with _ANALYSIS_JOBS_LOCK:
+                _INLINE_COMPUTES["running"] -= 1
+
+
+def _too_many_analyses() -> ResponseReturnValue:
+    """Answer 429 to a demo-mode analysis that would exceed DEMO_MAX_RUNNING_ANALYSES."""
+    return jsonify({"error": "too many analyses are running, try again in a moment"}), 429
 
 
 def _safe_source(source: str) -> str:
+    """Validate a dataset path inside the data root and return it lexically normalised (``./a//b`` -> ``a/b``)."""
     _data_path(source)
-    return source
+    return os.path.normpath(source)
+
+
+def _source_key(source: str) -> str:
+    """Return the resolved real path that identifies `source` in the compute caches.
+
+    Every spelling of one file (``data/d.csv``, ``./data/d.csv``, a symlink to it) maps to the
+    same key, so it is parsed, projected and cached once.
+    """
+    return _data_path(source)
+
+
+def _forget_cached_source(source: str) -> None:
+    """Drop every cached compute result for one dataset, under any spelling of its path."""
+    try:
+        key = _source_key(source)
+    except ValueError:
+        return
+    for cache in (_COMPUTE_CACHE, _MATRIX_CACHE):
+        cache.discard(lambda cached: cached[1] == key)
 
 
 def _safe_variant(variant: str | None) -> str | None:
@@ -1249,9 +1431,10 @@ def _emb_json_path(source: str, variant: str | None) -> str:
 
 def _dataset_paths(source: str) -> list[str]:
     """Ordered image-path values from the dataset CSV + the detected path column."""
-    key = ("paths", source)
-    if key in _COMPUTE_CACHE:
-        return _COMPUTE_CACHE[key]
+    key = ("paths", _source_key(source))
+    cached = _COMPUTE_CACHE.get(key)
+    if cached is not None:
+        return cached
     path = _data_path(source)
     paths = embeddings_io.csv_image_paths(path)
     _COMPUTE_CACHE[key] = paths
@@ -1280,18 +1463,18 @@ def _build_base_matrix(source: str, variant: str | None) -> np.ndarray:
 
 def _base_matrix(source: str, variant: str | None) -> np.ndarray:
     """[n, d] aligned to CSV row order (rows without an embedding → zeros). Cached as a small array."""
-    key = ("mat", source, variant)
-    cached = _COMPUTE_CACHE.get(key)
+    key = ("mat", _source_key(source), variant)
+    cached = _MATRIX_CACHE.get(key)
     if cached is not None:
         return cached
     # One parse per key: without this, every request arriving during a large file's parse
     # starts its own, and peak memory scales with how many happen to overlap.
     with _compute_lock(key):
-        cached = _COMPUTE_CACHE.get(key)
+        cached = _MATRIX_CACHE.get(key)
         if cached is not None:
             return cached
         matrix = _build_base_matrix(source, variant)
-        _COMPUTE_CACHE[key] = matrix
+        _MATRIX_CACHE[key] = matrix
         return matrix
 
 
@@ -1309,12 +1492,14 @@ def embedding_projection() -> ResponseReturnValue:
         variant = _safe_variant(request.args.get("variant", "").strip())
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    cache_key = ("proj", source, variant, method)
-    if cache_key in _COMPUTE_CACHE:
-        return jsonify({"positions": _COMPUTE_CACHE[cache_key]})
+    cache_key = ("proj", _source_key(source), variant, method)
+    cached = _COMPUTE_CACHE.get(cache_key)
+    if cached is not None:
+        return jsonify({"positions": cached})
     with _compute_lock(cache_key):
-        if cache_key in _COMPUTE_CACHE:
-            return jsonify({"positions": _COMPUTE_CACHE[cache_key]})
+        cached = _COMPUTE_CACHE.get(cache_key)
+        if cached is not None:
+            return jsonify({"positions": cached})
         return _projection_response(source, variant, method, cache_key)
 
 
@@ -1333,20 +1518,33 @@ def _stored_projection(source: str, variant: str | None, method: str) -> list[li
 
 def _projection_response(source: str, variant: str | None, method: str, cache_key: tuple) -> ResponseReturnValue:
     """Return the 3D projection for one (dataset, variant, method), computing it if needed."""
-    stored = _stored_projection(source, variant, method)
+    try:
+        stored = _stored_projection(source, variant, method)
+    except (FileNotFoundError, ValueError):
+        return _embeddings_unavailable(source, variant)
     if stored is not None:
         _COMPUTE_CACHE[cache_key] = stored
         return jsonify({"positions": stored})
 
-    try:
-        matrix = _base_matrix(source, variant)
-    except (FileNotFoundError, ValueError):
-        # File and parsing errors can name server paths; log them, answer with a fixed message.
-        app.logger.warning("embeddings unavailable for %s (%s)", source, variant, exc_info=True)
-        return jsonify({"error": "embeddings not found or unreadable for this dataset"}), 404
-    positions = projections.project(matrix, method)
+    with _inline_compute_slot() as allowed:
+        if not allowed:
+            return _too_many_analyses()
+        try:
+            matrix = _base_matrix(source, variant)
+        except (FileNotFoundError, ValueError):
+            return _embeddings_unavailable(source, variant)
+        positions = projections.project(matrix, method)
     _COMPUTE_CACHE[cache_key] = positions
     return jsonify({"positions": positions})
+
+
+def _embeddings_unavailable(source: str, variant: str | None) -> ResponseReturnValue:
+    """Log why a dataset's embeddings could not be loaded and answer 404 with a fixed message.
+
+    Call from an ``except`` block: file and parsing errors can name server paths, so only the log gets them.
+    """
+    app.logger.warning("embeddings unavailable for %s (%s)", source, variant, exc_info=True)
+    return jsonify({"error": "embeddings not found or unreadable for this dataset"}), 404
 
 
 @app.get("/api/embedding/clusters")
@@ -1363,29 +1561,32 @@ def embedding_clusters() -> ResponseReturnValue:
     try:
         k = max(1, min(50, int(request.args.get("k", "20"))))
     except ValueError:
-        k = 20
-    cache_key = ("clust", source, variant, k)
-    if cache_key in _COMPUTE_CACHE:
-        return jsonify({"labels": _COMPUTE_CACHE[cache_key]})
+        return jsonify({"error": "k must be an integer"}), 400
+    cache_key = ("clust", _source_key(source), variant, k)
+    cached = _COMPUTE_CACHE.get(cache_key)
+    if cached is not None:
+        return jsonify({"labels": cached})
     with _compute_lock(cache_key):
-        if cache_key in _COMPUTE_CACHE:
-            return jsonify({"labels": _COMPUTE_CACHE[cache_key]})
+        cached = _COMPUTE_CACHE.get(cache_key)
+        if cached is not None:
+            return jsonify({"labels": cached})
         return _clusters_response(source, variant, k, cache_key)
 
 
 def _clusters_response(source: str, variant: str | None, k: int, cache_key: tuple) -> ResponseReturnValue:
     """Compute, cache and return spherical k-means labels for one (dataset, variant, k)."""
-    try:
-        matrix = _base_matrix(source, variant)
-    except (FileNotFoundError, ValueError):
-        # File and parsing errors can name server paths; log them, answer with a fixed message.
-        app.logger.warning("embeddings unavailable for %s (%s)", source, variant, exc_info=True)
-        return jsonify({"error": "embeddings not found or unreadable for this dataset"}), 404
-    n = matrix.shape[0]
-    if n < 2:
-        return jsonify({"labels": [0] * n})
-    normalized = normalize(matrix)  # L2-normalize → KMeans on the unit sphere = cosine
-    labels = KMeans(n_clusters=min(k, n), n_init=cast(Any, 4), random_state=0).fit_predict(normalized)
+    with _inline_compute_slot() as allowed:
+        if not allowed:
+            return _too_many_analyses()
+        try:
+            matrix = _base_matrix(source, variant)
+        except (FileNotFoundError, ValueError):
+            return _embeddings_unavailable(source, variant)
+        n = matrix.shape[0]
+        if n < 2:
+            return jsonify({"labels": [0] * n})
+        normalized = normalize(matrix)  # L2-normalize → KMeans on the unit sphere = cosine
+        labels = KMeans(n_clusters=min(k, n), n_init=cast(Any, 4), random_state=0).fit_predict(normalized)
     out = labels.astype(int).tolist()
     _COMPUTE_CACHE[cache_key] = out
     return jsonify({"labels": out})
@@ -1416,7 +1617,7 @@ def _run_analysis_job(job_id: str, source: str, variant: str | None, k: int, red
         normalized = normalize(matrix)
         labels = KMeans(n_clusters=min(k, n), n_init=cast(Any, 4), random_state=0).fit_predict(normalized)
         label_list = labels.astype(int).tolist()
-        cache_key = ("clust", source, variant, k)
+        cache_key = ("clust", _source_key(source), variant, k)
         _COMPUTE_CACHE[cache_key] = label_list
         _set_analysis_job(
             job_id,
@@ -1442,9 +1643,9 @@ def _make_room_for_analysis() -> bool:
 
     Call with ``_ANALYSIS_JOBS_LOCK`` held.
     """
-    finished = [job_id for job_id, job in _ANALYSIS_JOBS.items() if job["status"] in {"done", "error"}]
-    if len(_ANALYSIS_JOBS) - len(finished) >= DEMO_MAX_RUNNING_ANALYSES:
+    if _running_analyses() >= DEMO_MAX_RUNNING_ANALYSES:
         return False
+    finished = [job_id for job_id, job in _ANALYSIS_JOBS.items() if job["status"] in {"done", "error"}]
     for job_id in finished[: max(0, len(finished) - DEMO_MAX_KEPT_ANALYSES + 1)]:
         del _ANALYSIS_JOBS[job_id]
     return True
@@ -1473,7 +1674,7 @@ def start_embedding_analysis() -> ResponseReturnValue:
     job_id = uuid.uuid4().hex
     with _ANALYSIS_JOBS_LOCK:
         if DEMO_MODE and not _make_room_for_analysis():
-            return jsonify({"error": "too many analyses are running, try again in a moment"}), 429
+            return _too_many_analyses()
         _ANALYSIS_JOBS[job_id] = {
             "job_id": job_id,
             "status": "queued",
@@ -1573,12 +1774,14 @@ def embedding_compare() -> ResponseReturnValue:
     variant = request.args.get("variant", "").strip()
     if not variant or not re.fullmatch(r"[A-Za-z0-9_-]+", variant):
         return jsonify({"error": "valid variant required"}), 400
-    cache_key = ("cmp", source, variant)
-    if cache_key in _COMPUTE_CACHE:
-        return jsonify(_COMPUTE_CACHE[cache_key])
+    cache_key = ("cmp", _source_key(source), variant)
+    cached = _COMPUTE_CACHE.get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     with _compute_lock(cache_key):
-        if cache_key in _COMPUTE_CACHE:
-            return jsonify(_COMPUTE_CACHE[cache_key])
+        cached = _COMPUTE_CACHE.get(cache_key)
+        if cached is not None:
+            return jsonify(cached)
         return _compare_response(source, variant, cache_key)
 
 

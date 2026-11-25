@@ -149,24 +149,30 @@ function Partition() {
         <li>Preview what it will do. Nothing is written.<Cmd id="partitionDry" /></li>
         <li>Run it for real. It tiles the images, then builds and registers each part (about a minute per part for this size).<Cmd id="partition" /></li>
       </Steps>
-      <Output>{`Source data_user/agristress500.csv: 8 images (8 with masks) -> 1771 tiles of 256x256, split by image into 2 parts
-  part 1: 4 images, 909 tiles
-  part 2: 4 images, 862 tiles
-  part 1: writing 909 tiles to image_sets/agristress-500_tiles-part1
-  part 2: writing 862 tiles to image_sets/agristress-500_tiles-part2
+      <Output>{`Source data_user/agristress500.csv: 8 images (8 with masks) -> 1753 tiles of 256x256, split by image into 2 parts
+  part 1: 4 images, 875 tiles
+  part 2: 4 images, 878 tiles
+  part 1: writing 875 tiles to image_sets/agristress-500_tiles-part1
+  part 2: writing 878 tiles to image_sets/agristress-500_tiles-part2
+  AgriStress-500 tiles part 1: staging 10% Indexing 875 images…
   AgriStress-500 tiles part 1: extracting_features 30% Extracting features…
   AgriStress-500 tiles part 1: done 100% Done
+  AgriStress-500 tiles part 2: staging 10% Indexing 878 images…
   AgriStress-500 tiles part 2: extracting_features 30% Extracting features…
   AgriStress-500 tiles part 2: done 100% Done
 Done. Open http://localhost:5175 to see the sub-datasets under data_user/agristress500.csv in the lineage graph.`}</Output>
       <Expect>
-        <p>Reload the Workspace page. Two new cards, <strong>AgriStress-500 tiles part 1</strong> and <strong>part 2</strong>, sit to
-          the right of AgriStress-500 with an arrow from it to each. Their experiment badges are gray: no runs yet.</p>
+        <p>Reload the Workspace page. Three new cards appear: <strong>AgriStress-500 tiles part 1</strong> (875 samples),
+          <strong> part 2</strong> (878 samples) and <strong>Cloud Dataset</strong> (1,753 samples). Each part has two parents, so two
+          arrows lead into it: one from AgriStress-500 and one from Cloud Dataset. Their experiment badges are gray: no runs yet.</p>
+        <p>Cloud Dataset is the union of the two parts. The portal creates it as soon as both parts exist, and uses it as the pool that
+          <strong> Complement</strong> draws similar images from (chapter 6). It is protected, so it has no trash icon.</p>
       </Expect>
       <Shot name="workspace-lineage" callouts={[
-        { x: 22, y: 50, text: 'The source dataset' },
-        { x: 70, y: 36, text: 'A tiled sub-dataset (part 1)' },
-        { x: 70, y: 70, text: 'A tiled sub-dataset (part 2)' },
+        { x: 40, y: 51, text: 'The source dataset' },
+        { x: 62, y: 51, text: 'A tiled sub-dataset (part 1)' },
+        { x: 62, y: 67, text: 'A tiled sub-dataset (part 2)' },
+        { x: 40, y: 67, text: 'Cloud Dataset, the union of both parts and their second parent' },
       ]} />
       <h3>What it did</h3>
       <ul>
@@ -176,6 +182,7 @@ Done. Open http://localhost:5175 to see the sub-datasets under data_user/agristr
           validate a model trained on another. Use <code>--split-by tile</code> to spread individual tiles instead.</li>
         <li><strong>Wrote</strong> the tiles to <code>image_sets/&lt;name&gt;-partN/images</code> and <code>masks</code>, with a <code>tile_manifest.csv</code>.</li>
         <li><strong>Built and registered</strong> each part and linked it under the source through the API. The tiles have no embeddings yet; chapter 10 adds them.</li>
+        <li>The portal then <strong>combined</strong> the two parts into Cloud Dataset and added it as a second parent of each part.</li>
       </ul>
       <h3>Options</h3>
       <table className="guide-table">
@@ -197,7 +204,11 @@ Done. Open http://localhost:5175 to see the sub-datasets under data_user/agristr
       </table>
       <Note tone="tip" title="Safe to repeat">
         Running the same command again skips parts that are already tiled and registered, so you can resume after
-        an interruption. Use <code>--help</code> to see every option:<Cmd id="partitionHelp" />
+        an interruption. If you change an option that changes the split (<code>--seed</code>, <code>--split-by</code>,
+        <code> --parts</code>, <code>--tile</code>, <code>--limit-images</code> or the source), the tool stops before writing
+        anything instead of mixing new tiles with old ones, and lists the part folders that hold the old tiles. Delete
+        those folders, and the old part datasets in the Workspace if they were registered, then run it again. Use <code>--help</code> to see every
+        option:<Cmd id="partitionHelp" />
       </Note>
       <Note title="Going bigger">
         The whole dataset is about 100,000 tiles and takes roughly a minute of feature extraction per 1,000 tiles.
@@ -312,7 +323,7 @@ function Train() {
       <Expect>
         <p>The portal takes you to <strong>Experiments</strong> and the header shows the run&apos;s status and progress (preparing data, indexing masks,
           training epochs, validating, scoring). On the Workspace page the dataset&apos;s flask badge turns yellow while it runs.
-          A small run like this one finishes in about a minute on a GPU, a few minutes on CPU.</p>
+          Five epochs on part 1 take about a minute on a GPU; on CPU expect around ten minutes (just under ten on a 14-core machine).</p>
       </Expect>
       <Shot name="run-live" />
       <h3>Read the results</h3>

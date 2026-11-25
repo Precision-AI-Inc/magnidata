@@ -75,9 +75,20 @@ def _write_upload(upload: UploadedImage, dest: str) -> None:
             out.write(chunk)
 
 
+# The conventional dataset layout keeps pictures in a folder named "images" (next to "labels"),
+# so that folder name says nothing about which group a picture belongs to.
+LAYOUT_IMAGES_DIR = "images"
+
+
 def cluster_for(relative_path: str) -> tuple[str, str]:
-    """(cluster, cluster_l2) from the relative folder path; a flat layout (no subfolder) gets 'uncategorized' for both."""
-    parts = relative_path.replace("\\", "/").split("/")[:-1]
+    """Return (cluster, cluster_l2) from the relative folder path.
+
+    Folders named ``images`` are skipped, so an uploaded ``images/siteA/x.jpg`` clusters as
+    ``siteA`` rather than ``images/siteA`` under a second level of just ``images``. A flat
+    layout (no other subfolder) gets 'uncategorized' for both.
+    """
+    folders = relative_path.replace("\\", "/").split("/")[:-1]
+    parts = [p for p in folders if p and p.lower() != LAYOUT_IMAGES_DIR]
     if not parts:
         return "uncategorized", "uncategorized"
     return "/".join(parts), parts[0]

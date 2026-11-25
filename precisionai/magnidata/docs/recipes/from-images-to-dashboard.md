@@ -86,17 +86,17 @@ source .venv-magnidata/bin/activate
 python -m pip install --upgrade pip
 ```
 
-For a CPU-only machine, install the pinned CPU PyTorch wheels first:
+For a CPU-only machine, install the pinned CPU PyTorch wheels first (`constraints.txt` holds the versions):
 
 ```bash
-pip install torch==2.14.0 torchvision==0.29.0 --index-url https://download.pytorch.org/whl/cpu
-pip install -r precisionai/magnidata/requirements.txt
+pip install torch torchvision -c constraints.txt --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
 ```
 
 On a GPU machine, the default package index is fine:
 
 ```bash
-pip install -r precisionai/magnidata/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## 2. Choose the source folder and dataset name
@@ -291,9 +291,10 @@ python -m precisionai.magnidata.tools.features \
   --skip-nima
 ```
 
-For arbitrary image folders, it is normal to see warnings such as
-`coco:label_not_found` or missing metadata. RGB-derived features and embeddings still
-work. If you provide COCO labels and metadata, the extractor will use them.
+For arbitrary image folders, it is normal to see an info line counting images with no
+label file, or warnings about missing metadata. RGB-derived features and embeddings still
+work. If you provide COCO labels and metadata, the extractor will use them. Files that
+cannot be decoded as images are listed as warnings.
 
 Optional COCO layout:
 

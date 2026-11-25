@@ -41,6 +41,10 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 COCO128_URL = "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco128-seg.zip"
+# SHA-256 of the archive at COCO128_URL, so a truncated or tampered download is never used.
+COCO128_SHA256 = "8219f78b7d5ec2a164b2f8bca873918c34d275bc94e3bd87cf01b15d97fe1cad"
+# Seconds a download may go without receiving data before it is abandoned.
+DOWNLOAD_TIMEOUT = 60.0
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
 # The trainer reads colour masks and accepts at most 32 classes (background included), while COCO128
@@ -191,27 +195,52 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def download(url: str, dest: Path, force: bool = False) -> None:
-    """Download a URL to a local file, reusing a cached copy when possible.
+def known_sha256(url: str) -> str | None:
+    """Return the published SHA-256 of ``url`` when it is the default COCO128 archive.
 
     Parameters
     ----------
     url : str
-        Source URL; must use the ``http`` or ``https`` scheme.
-    dest : Path
-        Destination file path.
-    force : bool
-        Redownload even if ``dest`` already exists.
-    """
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() and not force:
-        log(f"Using cached download: {dest}")
-        return
+        Download URL.
 
-    log(f"Downloading {url}")
-    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
-        raise ValueError(f"unsupported URL scheme for download: {url!r}")
-    with urllib.request.urlopen(url) as response, dest.open("wb") as f:
+    Returns
+    -------
+    str | None
+        :data:`COCO128_SHA256` for :data:`COCO128_URL`, otherwise ``None``.
+    """
+    return COCO128_SHA256 if url == COCO128_URL else None
+
+
+def archive_is_intact(path: Path, sha256: str | None = None) -> bool:
+    """Return whether ``path`` holds a complete download.
+
+    Parameters
+    ----------
+    path : Path
+        Downloaded zip archive.
+    sha256 : str | None
+        Expected SHA-256. When ``None`` the zip's own CRCs are checked instead, which still
+        catches a truncated file.
+
+    Returns
+    -------
+    bool
+        ``True`` when the file exists and matches ``sha256`` (or is a readable zip archive).
+    """
+    if not path.is_file():
+        return False
+    if sha256 is not None:
+        return sha256_file(path) == sha256.lower()
+    try:
+        with zipfile.ZipFile(path) as zf:
+            return zf.testzip() is None
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+
+def _fetch(url: str, dest: Path, timeout: float) -> None:
+    """Stream ``url`` into ``dest``, raising ``OSError`` when the body ends early."""
+    with urllib.request.urlopen(url, timeout=timeout) as response, dest.open("wb") as f:
         total = int(response.headers.get("Content-Length") or 0)
         seen = 0
         while True:
@@ -225,11 +254,71 @@ def download(url: str, dest: Path, force: bool = False) -> None:
                 print(f"\r[coco128] download {pct:5.1f}% ({seen / 1_000_000:.1f} MB)", end="", file=sys.stderr)
         if total:
             print(file=sys.stderr)
+    if total and seen != total:
+        raise OSError(f"download of {url} stopped after {seen} of {total} bytes")
+
+
+def download(
+    url: str, dest: Path, force: bool = False, sha256: str | None = None, timeout: float = DOWNLOAD_TIMEOUT
+) -> bool:
+    """Download a zip archive to a local file, reusing a cached copy only when it is intact.
+
+    The body is written to ``<dest>.part`` and moved to ``dest`` only after it is complete and
+    verified, so an interrupted or corrupt download is never mistaken for a cached one. A cached
+    file that fails verification is downloaded again.
+
+    Parameters
+    ----------
+    url : str
+        Source URL; must use the ``http`` or ``https`` scheme.
+    dest : Path
+        Destination file path.
+    force : bool
+        Redownload even if an intact ``dest`` already exists.
+    sha256 : str | None
+        Expected SHA-256 of the archive; see :func:`archive_is_intact` for the check used without one.
+    timeout : float
+        Seconds the connection may stall before the download is abandoned.
+
+    Returns
+    -------
+    bool
+        ``True`` when the archive was downloaded, ``False`` when the cached copy was reused.
+
+    Raises
+    ------
+    OSError
+        If the download stalls, ends early or fails verification.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and not force:
+        if archive_is_intact(dest, sha256):
+            log(f"Using cached download: {dest}")
+            return False
+        log(f"Cached download {dest} is incomplete or corrupt; downloading it again")
+
+    if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+        raise ValueError(f"unsupported URL scheme for download: {url!r}")
+    log(f"Downloading {url}")
+    partial = dest.with_name(dest.name + ".part")
+    try:
+        _fetch(url, partial, timeout)
+        if not archive_is_intact(partial, sha256):
+            what = "does not match the expected SHA-256" if sha256 is not None else "is not a valid zip archive"
+            raise OSError(f"downloaded file from {url} {what}")
+        partial.replace(dest)
+    finally:
+        partial.unlink(missing_ok=True)
     log(f"Downloaded {dest} ({dest.stat().st_size / 1_000_000:.1f} MB)")
+    return True
 
 
 def extract(zip_path: Path, extract_dir: Path, force: bool = False) -> Path:
     """Extract the COCO128 zip archive, reusing a cached extraction when possible.
+
+    The archive is unpacked into a sibling ``<extract_dir>.partial`` folder that replaces
+    ``extract_dir`` only once extraction finishes, so an interrupted run never leaves a
+    half-extracted folder that a later run would reuse.
 
     Parameters
     ----------
@@ -238,7 +327,8 @@ def extract(zip_path: Path, extract_dir: Path, force: bool = False) -> Path:
     extract_dir : Path
         Directory to extract into.
     force : bool
-        Delete and re-extract even if a cached extraction already exists.
+        Delete and re-extract even if a cached extraction already exists. Pass ``True``
+        whenever :func:`download` fetched a new archive.
 
     Returns
     -------
@@ -246,26 +336,34 @@ def extract(zip_path: Path, extract_dir: Path, force: bool = False) -> Path:
         Path to the ``coco128`` directory containing ``images/train2017`` and
         ``labels/train2017``.
     """
-    coco_root = extract_dir / "coco128"
-    if coco_root.is_dir() and not force:
+    coco_root = _find_coco_root(extract_dir) if extract_dir.is_dir() else None
+    if coco_root is not None and not force:
         log(f"Using cached extraction: {coco_root}")
         return coco_root
-    if force and extract_dir.exists():
-        shutil.rmtree(extract_dir)
-    extract_dir.mkdir(parents=True, exist_ok=True)
+    staging = extract_dir.with_name(extract_dir.name + ".partial")
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
     log(f"Extracting {zip_path} -> {extract_dir}")
     with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(extract_dir)
-    if not coco_root.is_dir():
-        matches = [
-            p
-            for p in extract_dir.rglob("*")
-            if (p / "images" / "train2017").is_dir() and (p / "labels" / "train2017").is_dir()
-        ]
-        if not matches:
-            raise FileNotFoundError("could not find extracted coco128/images/train2017 and labels/train2017")
-        coco_root = matches[0]
-    return coco_root
+        zf.extractall(staging)
+    staged_root = _find_coco_root(staging)
+    if staged_root is None:
+        shutil.rmtree(staging)
+        raise FileNotFoundError("could not find extracted coco128/images/train2017 and labels/train2017")
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
+    staging.rename(extract_dir)
+    return extract_dir / staged_root.relative_to(staging)
+
+
+def _find_coco_root(extract_dir: Path) -> Path | None:
+    """Return the extracted folder holding ``images/train2017`` and ``labels/train2017``, if any."""
+    candidates = [extract_dir / "coco128", *sorted(extract_dir.rglob("*"))]
+    for path in candidates:
+        if (path / "images" / "train2017").is_dir() and (path / "labels" / "train2017").is_dir():
+            return path
+    return None
 
 
 def read_yolo_seg_labels(path: Path) -> list[YoloInstance]:
@@ -855,7 +953,7 @@ def run_pipeline(
         except Exception as exc:
             raise RuntimeError(
                 "--with-nima was requested, but pyiqa is not importable. "
-                "Install precisionai/magnidata/requirements.txt first."
+                "Install the repository root's requirements.txt first."
             ) from exc
 
     log(f"Generating features -> {feature_csv.relative_to(root)}")
@@ -873,7 +971,7 @@ def run_pipeline(
     for module_name in ("torch", "timm"):
         _ensure_importable(
             module_name,
-            "Install precisionai/magnidata/requirements.txt or rerun with --no-embeddings.",
+            "Install the repository root's requirements.txt or rerun with --no-embeddings.",
         )
 
     log(f"Generating {args.embedding_model} embeddings -> {embeddings_json.relative_to(root)}")
@@ -1112,8 +1210,8 @@ def main(argv: list[str] | None = None) -> None:
     zip_path = cache_dir / Path(urllib.parse.urlparse(args.download_url).path).name
     extract_dir = cache_dir / "extracted"
 
-    download(args.download_url, zip_path, force=args.force_download)
-    coco_root = extract(zip_path, extract_dir, force=args.force_extract)
+    fetched = download(args.download_url, zip_path, force=args.force_download, sha256=known_sha256(args.download_url))
+    coco_root = extract(zip_path, extract_dir, force=args.force_extract or fetched)
     log(f"COCO128 root: {coco_root.relative_to(root)}")
 
     manifest, stage_stats = stage_coco128(args, root, coco_root)

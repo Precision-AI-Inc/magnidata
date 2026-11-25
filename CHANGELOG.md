@@ -57,6 +57,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `constraints.txt` at the repository root holds the exact versions that several install paths share: Pillow,
+  torch, torchvision, timm, pyiqa, MLflow, ruff and pyright. The trainer image, `requirements.txt`, `requirements-dev.txt` and
+  CI install under it, and `test_dependency_pins.py` fails when a copy it cannot feed (the `pyproject.toml` extras,
+  the API's requirements file, the MLflow server image tag, the pre-commit ruff rev) names a different version.
+- The local MLflow server image is `v3.18.0`, the release the API, trainer and tests already use as a client; the API
+  image's `mlflow-skinny` moves from 3.11.1 to 3.18.0 to match. The 3.18.0 server migrates a database created by
+  3.11.1 on its first start (checked with both images: the schema is upgraded and existing runs stay readable), so an
+  existing `magnidata-mlflow` volume keeps working without a manual `mlflow db upgrade`. The migration is one-way: the
+  3.11.1 server cannot open the upgraded database.
+- torchvision is pinned to 0.29.1, the build the PyTorch CPU and CUDA wheel indexes publish for torch 2.14.1 (0.29.2
+  is on PyPI only).
+- `precisionai/magnidata/requirements.txt`, an out-of-date copy of the root `requirements.txt`, is removed; the docs,
+  agent skill and error messages that pointed at it name the root file.
+- `requirements-dev.txt` installs the package with its `[dev]` extra, so it brings Flask and the other API
+  dependencies the tests import.
+- The dashboard's lock file takes the non-breaking `npm audit fix` updates (browserslist, nanoid, postcss,
+  postcss-selector-parser, source-map-js, baseline-browser-mapping). The remaining advisories are in the dev server and
+  test runner (esbuild through vite 5, tinypool through vitest 2) and need major upgrades to vite and vitest.
 - The training modules' missing-dependency errors say `pip install 'magnidata[training]'`, the extra that provides
   torch, torchvision and MLflow, instead of an editable-install command.
 - The compose stack publishes the portal, API and MLflow on `127.0.0.1` only, and `python app.py` listens on
@@ -80,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The MCP server keeps a text column's cells as text: a numeric-looking cell such as the id `007` comes back as
   `"007"`, not `7`. A column is numeric only when every non-empty cell is a number that is not zero-padded, and
   `describe_dataset` reports such id columns as text.
+- The trainer image keeps the torch build its Dockerfile installs. It installed torch 2.14.0 from the CPU (or the GPU
+  override's CUDA) index, then the `training` extra's torch 2.14.1 pin replaced it with the default PyPI wheel and its
+  CUDA 13 libraries, so the "CPU" image was 10.5 GB. Both installs now read their versions from `constraints.txt`; the
+  CPU image is about 1.9 GB with `torch 2.14.1+cpu`.
+- `pip install -e ".[dev]" -c constraints.txt` installs Pillow 12.3.0, the version `requirements.txt` already used,
+  instead of the newest Pillow; pyright is clean with both Pillow 12.3.0 and Pillow 13.0.0.
+- The ruff pre-commit hook runs v0.17.4, the version `pyproject.toml` pins, instead of v0.17.1.
 - Training with *Input resolution: Original size* no longer swaps width and height. The trainer resized every
   image and mask to the transposed shape, so a 640x480 dataset trained on stretched 480x640 images and saved 480x640
   predictions, while on-demand inference used the right geometry. `SegmentationDataset` and `ResizedCache` now take
@@ -92,6 +117,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README's quickstart clones over HTTPS, so it works without a GitHub SSH key.
 - `/api/dataset/embeddings/variants` no longer lists a dataset's projections sidecar (`<stem>_projections.json`) as a
   comparison model.
+- The API's embedding caches no longer grow without limit. They are keyed on the dataset's resolved path, so
+  `data/d.csv`, `./data/d.csv`, `data//d.csv` and a symlink to the file share one cached matrix, projection and
+  clustering, and each cache forgets its least recently used entries past a fixed size (four embedding matrices, 128
+  other results). Deleting a dataset drops its cached results under any spelling of its path.
+- In demo mode, uncached `GET /api/embedding/projection` and `GET /api/embedding/clusters` requests count toward the
+  limit of four analyses computing at once, together with `POST /api/embedding/analysis` jobs, and answer 429 past it.
+  Before, only the POST route was limited, and the GET routes ran t-SNE and k-means with no cap.
+- Bad query values get a JSON 4xx instead of an HTML or raw-error 500. A `max_size` that is not a positive integer is a
+  400 on `/api/image`, `/api/mask`, `/api/overlay`, `/api/annotation/mask` and `/api/annotation/overlay`; a missing file
+  on those routes (and `/api/mask/debug`) is a 404 `file not found`, a disallowed one a 403, and an unreadable one a
+  500 with a fixed message instead of the Python error text. `/api/embedding/projection` answers 404 JSON for a
+  dataset that does not exist, as `/api/embedding/clusters` already did, and `/api/embedding/clusters` rejects a
+  non-integer `k` with 400 instead of quietly using 20.
+- Datasets with colour mask PNGs and no COCO labels, such as AgriStress-500 and its tiles, get the coverage and class
+  columns (`annotation_ratio`, `annotated_px_count`, `fg_green_mean`, `bg_coverage`, `class_count`,
+  `smallest_class_ratio`, `class_entropy`, `mean_pairwise_color_dist`, `interclass_color_sim`). Each mask colour is a
+  class and near-black is background; in a single-channel (greyscale) mask each non-zero value is a class id and 0 is
+  background. The instance columns stay empty for these datasets, because a class-coloured mask does not separate
+  touching objects. A mask with more than 32 classes, background included (the trainer's limit), is reported as a
+  `mask:` error and its columns stay blank: such a mask usually has anti-aliased, resized or JPEG-compressed edges.
+- The feature extractor finds COCO labels and masks for images in subfolders of `images/`. It looks under the same
+  subfolder of `labels/` or `masks/` first, then directly in `labels/` or `masks/`, and joins metadata from the dataset
+  folder above `images/`. The dashboard's annotation overlay uses the same lookup. An image whose own folder is not
+  under its dataset's `images/` (for example `/srv/images/<dataset>/raw/x.png`) still finds its labels, masks and
+  metadata in its grandparent folder, as before.
+- The feature extractor's provenance file says whether features were computed on full-resolution images or on
+  thumbnails, and records how many images came from each source. It used to say full resolution every time.
+- `class_entropy` is 0 for an image with one class, not -0.000001.
+- The COCO128 download, in `prepare_coco128_dashboard` and in the portal's one-click demo, checks the archive's SHA-256,
+  gives up after 60 seconds without data, and writes to a `.part` file that becomes the cached zip only when it is
+  complete. A cached zip that fails the check is downloaded again instead of failing every later build, and extraction
+  goes through a temporary folder so an interrupted one is never reused.
+- `partition_dataset` compares each part folder with the tiles it plans to write. A re-run with another seed, split,
+  part count, tile size, sample or source stops before writing anything instead of reporting "already tiled" over the
+  old split or adding new tiles beside old ones, so a source image can no longer end up in two parts; the error
+  names the part folders to delete before tiling again. CMYK and other modes PNG cannot store are converted instead
+  of crashing the run. Deliberate behavior change: a source CSV with two different images that share a file stem
+  (for example `a.jpg` in two folders, or `a.jpg` beside `a.png`) now fails instead of tiling, since tile names are
+  built from the stem and their tiles would overwrite each other and could land in different parts.
+- The User Guide's partition chapter shows the output and cards a real run produces: 1,753 tiles (875 + 878), and a
+  third card, Cloud Dataset, drawn as a second parent of each part, with the lineage screenshot recaptured from a real
+  run to match. The first training run's CPU time now reads around ten minutes rather than a few.
+  `scripts/capture-guide.mjs` finds Playwright's Chromium on linux arm64, macOS and Windows as well as linux x64.
+- Reloading the portal during a dataset build no longer loses its progress. A new endpoint,
+  `GET /api/datasets/build/current`, returns the running build, and the portal asks for it on load and resumes the
+  progress badge. Build jobs are also stored in the database: polling a build that an API restart cut off reports it
+  as interrupted instead of an unknown job, and the API removes that build's partial output (and any upload scratch
+  files) when it starts. An interrupted AgriStress-500 download keeps the files it already fetched, so starting the
+  demo again resumes it.
+- Files that cannot be read as images (a text file renamed `.png`, a truncated JPEG) are left out of an upload or
+  server-folder build instead of becoming rows with every column blank. The finished job lists them in `skipped`, its
+  message says how many were left out, and the portal's badge lists them on hover; a build where nothing could be
+  read fails. The feature tool logs images without a label file as one information line, and keeps its warnings for
+  unreadable images and real errors.
+- A dataset build claims its output file name on disk before it starts, so saving or merging a selection with the
+  same name while the build runs gets a new name instead of being overwritten and then deleted by the build. A name
+  is only reused once nothing is left under it.
+- Deleting a dataset removes everything stored under its name (embeddings, projections, staged images, provenance and
+  the feature manifest older builds left beside the CSV), whatever its parents are. Embeddings and images that
+  another dataset still uses, such as a selection saved from it, are kept and logged, and removed once the last
+  dataset using them is deleted. Before, a dataset whose parents
+  were set after it was built, such as a partition part, left its images, embeddings and `_input.csv` behind, where
+  they could attach to the next dataset with that name. Builds from a server folder no longer write that manifest
+  beside the dataset at all.
+- Uploading a folder named `images` no longer adds `images` as an extra cluster level: `images/siteA/x.jpg` clusters
+  as `siteA`, the same as a server-folder build.
 - The trainer worker no longer abandons a training process when an MLflow call fails while it watches one. A failed
   cancel check or log upload is logged and tried again, and if watching fails for any other reason the training
   process is stopped first, so the worker can never start a second run beside one it lost track of.

@@ -8,8 +8,8 @@
     "caption": "Add dataset \u2192 Load Demo lists the one-click demos; AgriStress-500 is the one this guide uses."
   },
   "workspace-lineage": {
-    "alt": "The lineage graph with AgriStress-500 on the left and two tiled sub-datasets connected to it",
-    "caption": "After partitioning: both sub-datasets hang under AgriStress-500. The gray flask means no experiments yet."
+    "alt": "The lineage graph with AgriStress-500 and Cloud Dataset on the left, each connected to both tiled sub-datasets",
+    "caption": "After partitioning: both sub-datasets hang under AgriStress-500 and under Cloud Dataset, their union. The gray flask means no experiments yet."
   },
   "panel-statistics": {
     "alt": "The detail panel of a sub-dataset on the Statistics tab, showing feature distributions",

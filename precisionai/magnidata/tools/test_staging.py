@@ -10,7 +10,9 @@ import csv
 import hashlib
 import os
 
-from .staging import UploadedImage, remap_embeddings, stage_images
+import pytest
+
+from .staging import UploadedImage, cluster_for, remap_embeddings, stage_images
 
 
 def test_stage_images_writes_files_and_manifest(tmp_path):
@@ -220,3 +222,30 @@ def test_remap_embeddings_gives_every_same_named_upload_the_vector():
     staged = {"x/a.png": "a-11111111.png", "y/a.png": "a-22222222.png"}
 
     assert remap_embeddings({"a.png": [1.0]}, staged) == {"a-11111111.png": [1.0], "a-22222222.png": [1.0]}
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "expected"),
+    [
+        ("images/siteA/a.png", ("siteA", "siteA")),
+        ("images/siteA/row1/a.png", ("siteA/row1", "siteA")),
+        ("images/a.png", ("uncategorized", "uncategorized")),
+        ("field/images/siteA/a.png", ("field/siteA", "field")),
+        ("Images\\siteA\\a.png", ("siteA", "siteA")),
+        ("field_rows/a.png", ("field_rows", "field_rows")),
+    ],
+)
+def test_cluster_for_skips_the_layout_images_folder(relative_path, expected):
+    assert cluster_for(relative_path) == expected
+
+
+def test_uploaded_images_folder_is_not_a_cluster_level(tmp_path):
+    images = [
+        UploadedImage(relative_path="images/siteA/a.png", data=b"AAAA"),
+        UploadedImage(relative_path="images/siteB/b.png", data=b"BBBB"),
+    ]
+    manifest_path = stage_images(images, os.path.join(str(tmp_path), "s"))
+
+    with open(manifest_path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [(r["cluster"], r["cluster_l2"]) for r in rows] == [("siteA", "siteA"), ("siteB", "siteB")]

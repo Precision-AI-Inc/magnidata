@@ -633,6 +633,35 @@ paths:
                 items: {$ref: "#/components/schemas/LocalFolder"}
               example:
                 - {folder: field_trial, image_count: 240, label_count: 240, built: false}
+  /api/datasets/build/current:
+    get:
+      tags: [builds]
+      operationId: getCurrentBuildJob
+      summary: Return the dataset build that is running now, so a client that lost track of it can resume polling.
+      responses:
+        "200":
+          description: The running build, or `null` while none runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job]
+                properties:
+                  job:
+                    oneOf:
+                      - type: "null"
+                      - $ref: "#/components/schemas/BuildJob"
+              example:
+                job:
+                  job_id: 0f1e2d3c4b5a69788796a5b4c3d2e1f0
+                  kind: demo:agristress500
+                  status: staging
+                  percent: 29
+                  message: Downloading AgriStress-500 (200/451)…
+                  name: AgriStress-500
+                  dataset: null
+                  error: null
+                  skipped: []
   /api/datasets/build/{job_id}:
     get:
       tags: [builds]
@@ -1379,6 +1408,10 @@ components:
       type: object
       required: [status, percent, message, name, dataset, error]
       properties:
+        job_id: {type: string}
+        kind:
+          type: string
+          description: "`upload`, `local`, or `demo:<demo key>`."
         status:
           type: string
           enum: [queued, staging, extracting_features, projecting, registering, done, error]
@@ -1391,6 +1424,15 @@ components:
             - type: "null"
             - $ref: "#/components/schemas/BuiltDataset"
         error: {type: [string, "null"]}
+        skipped:
+          type: array
+          description: Images that could not be read as an image and were left out of the dataset.
+          items:
+            type: object
+            required: [file, reason]
+            properties:
+              file: {type: string, description: The file name as uploaded, or its path inside the image_sets folder.}
+              reason: {type: string}
     BuiltDataset:
       type: object
       required: [id, name, description, source, parent_source, row_count, deletable, has_embeddings]

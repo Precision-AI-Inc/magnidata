@@ -23,6 +23,7 @@ import argparse
 import csv
 import importlib
 import io
+import logging
 import math
 import multiprocessing
 import os
@@ -30,10 +31,11 @@ import sys
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from . import (
     coco_labels,
@@ -56,7 +58,14 @@ try:
 except ImportError:
     tqdm = None
 
+logger = logging.getLogger(__name__)
+
 ROUND_DECIMALS = 6
+# process_row() reports problems as "<area>:<detail>" strings. An "image:" problem means the
+# pixels could not be read at all, so every image-derived column of that row is blank; a
+# missing label file is normal (labels are optional) and only leaves the COCO columns blank.
+UNREADABLE_PREFIX = "image:"
+MISSING_LABEL = "coco:label_not_found"
 T = TypeVar("T")
 
 # ── Difficulty composite (transparent, reproducible; recorded in provenance) ───────
@@ -214,6 +223,9 @@ def _apply_rgb_features(
             row.update(pixel_features.illumination(luma, np.ones(luma.shape, dtype=bool)))
             row.update(pixel_features.focus(luma))
             row.update(quality_features.compute(rgb, luma))
+        except UnidentifiedImageError:
+            # Pillow's own message only names the in-memory buffer it was given.
+            errors.append("image:not a recognised image format")
         except Exception as exc:
             errors.append(f"image:{exc}")
 
@@ -336,7 +348,58 @@ def _process_rows(
     return [_compute_row(path, scorer, image_mode) for path in _progress(paths, len(paths))]
 
 
-def run(
+@dataclass
+class FeatureReport:
+    """Summary of one feature-extraction pass.
+
+    Attributes
+    ----------
+    rows : int
+        Rows written to the output CSV.
+    unreadable : list of tuple of (str, str)
+        ``(image_path, reason)`` for every image whose pixels could not be decoded.
+    errors : list of tuple of (str, str)
+        ``(image_path, reason)`` for every other problem on a readable image.
+    missing_labels : int
+        Readable images that have no sibling COCO label file.
+    """
+
+    rows: int = 0
+    unreadable: list[tuple[str, str]] = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list)
+    missing_labels: int = 0
+
+
+def _classify(image_path: str, err: str, report: FeatureReport) -> bool:
+    """Record one row's problems in ``report`` and return whether its image was unreadable."""
+    problems = [p for p in err.split("; ") if p]
+    image_problems = [p for p in problems if p.startswith(UNREADABLE_PREFIX)]
+    if image_problems:
+        report.unreadable.append((image_path, "; ".join(p.removeprefix(UNREADABLE_PREFIX) for p in image_problems)))
+        return True
+    if MISSING_LABEL in problems:
+        report.missing_labels += 1
+    others = [p for p in problems if p != MISSING_LABEL]
+    if others:
+        report.errors.append((image_path, "; ".join(others)))
+    return False
+
+
+def _log_report(report: FeatureReport, total: int) -> None:
+    """Log unreadable images and real errors as warnings and missing labels as information."""
+    for title, items in (("could not be read", report.unreadable), ("had errors", report.errors)):
+        if not items:
+            continue
+        logger.warning("%d/%d images %s:", len(items), total, title)
+        for path, reason in items[:20]:
+            logger.warning("  %s: %s", os.path.basename(path), reason)
+        if len(items) > 20:
+            logger.warning("  … and %d more", len(items) - 20)
+    if report.missing_labels:
+        logger.info("%d/%d images have no label file; their annotation columns are blank", report.missing_labels, total)
+
+
+def extract(
     input_csv: str,
     output_csv: str,
     device: str = "cpu",
@@ -344,8 +407,9 @@ def run(
     skip_nima: bool = False,
     image_mode: str = "auto",
     workers: int = 1,
-) -> int:
-    """Extract features for every image listed in `input_csv` and write `output_csv`.
+    drop_unreadable: bool = False,
+) -> FeatureReport:
+    """Extract features for every image listed in `input_csv`, write `output_csv`, and report what happened.
 
     Parameters
     ----------
@@ -369,11 +433,15 @@ def run(
         Number of worker processes. Rows are independent and results keep input order, so the
         output is identical to a serial run. Ignored (serial) when the learned IQA scorer is
         enabled, since its models are not shared across processes.
+    drop_unreadable : bool, default False
+        Leave images whose pixels cannot be decoded out of the output CSV instead of writing
+        them as rows with every image-derived column blank. They are listed in the report
+        either way.
 
     Returns
     -------
-    int
-        The number of rows written.
+    FeatureReport
+        Rows written, unreadable images, other errors, and the count of images without labels.
     """
     with open(input_csv, newline="") as f:
         reader = csv.DictReader(f)
@@ -397,27 +465,24 @@ def run(
     paths = [(r.get(path_col) or "").strip() for r in rows]
     computed = _process_rows(paths, scorer, image_mode, workers)
 
-    out_rows, errored = [], []
+    report = FeatureReport()
+    out_rows = []
     sources: Counter[str] = Counter()
     for r, image_path, (row, err, source) in zip(rows, paths, computed, strict=True):
+        if _classify(image_path, err, report) and drop_unreadable:
+            continue
         sources[source] += 1
         for c in cluster_cols:  # passthrough cluster labels (verbatim)
             row[c] = r.get(c) or ""
         out_rows.append(row)
-        if err:
-            errored.append((image_path, err))
+    report.rows = len(out_rows)
 
     with open(output_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=OUTPUT_COLUMNS)
         writer.writeheader()
         writer.writerows(out_rows)
 
-    if errored:
-        print(f"WARNING: {len(errored)}/{len(out_rows)} rows had errors:", file=sys.stderr)
-        for path, err in errored[:20]:
-            print(f"  {os.path.basename(path)}: {err}", file=sys.stderr)
-        if len(errored) > 20:
-            print(f"  … and {len(errored) - 20} more", file=sys.stderr)
+    _log_report(report, len(rows))
 
     image_sources = dict(sorted(sources.items()))
     params = dict(PARAMS, image_mode=image_mode, image_sources=image_sources)
@@ -434,7 +499,29 @@ def run(
     provenance.write(prov, output_csv + ".provenance.json")
 
     print(f"Wrote {len(out_rows)} rows -> {output_csv}", file=sys.stderr)
-    return len(out_rows)
+    return report
+
+
+def run(
+    input_csv: str,
+    output_csv: str,
+    device: str = "cpu",
+    limit: int | None = None,
+    skip_nima: bool = False,
+    image_mode: str = "auto",
+    workers: int = 1,
+) -> int:
+    """Extract features for every image listed in `input_csv` and write `output_csv`.
+
+    Every input row is written, including rows whose image could not be read; see `extract`
+    for the parameters and for a variant that can drop those rows and reports them.
+
+    Returns
+    -------
+    int
+        The number of rows written.
+    """
+    return extract(input_csv, output_csv, device, limit, skip_nima, image_mode, workers).rows
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -457,6 +544,7 @@ def main(argv: list[str] | None = None) -> None:
         "image-derived features won't match full-res.",
     )
     args = ap.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     run(args.input, args.output, args.device, args.limit, args.skip_nima, args.image_source, args.workers)
 
 

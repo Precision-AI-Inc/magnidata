@@ -15,6 +15,7 @@ import importlib
 import io
 import json
 import os
+import runpy
 import threading
 from pathlib import Path
 
@@ -320,6 +321,57 @@ def test_get_build_job_returns_job_status(app_client, monkeypatch):
     assert r.get_json()["status"] == "done"
 
 
+def test_current_build_is_null_while_nothing_runs(app_client):
+    client, _ = app_client
+
+    r = client.get("/api/datasets/build/current")
+
+    assert r.status_code == 200
+    assert r.get_json() == {"job": None}
+
+
+def test_current_build_returns_the_running_job(app_client, monkeypatch):
+    client, app_module = app_client
+    running = {"job_id": "j1", "status": "staging", "percent": 29, "message": "Downloading AgriStress-500 (200/451)…"}
+    monkeypatch.setattr(app_module.dataset_builder, "current_job", lambda: running)
+
+    r = client.get("/api/datasets/build/current")
+
+    assert r.get_json() == {"job": running}
+
+
+def test_build_job_cut_off_by_a_restart_is_reported_not_forgotten(app_client, monkeypatch, tmp_path):
+    _, app_module = app_client
+    builder = app_module.dataset_builder
+    state = {"job_id": "old", "kind": "upload", "status": "extracting_features", "percent": 60, "message": "…"}
+    app_module.db.save_build_job("old", "upload", "half", {**state, "name": "Half", "dataset": None, "error": None})
+    (tmp_path / "data_user" / "half.csv").write_text("")
+    monkeypatch.setattr(builder, "_jobs", {})
+
+    importlib.reload(app_module)  # what an API restart does
+    with app_module.app.test_client() as client:
+        r = client.get("/api/datasets/build/old")
+
+    assert r.status_code == 200
+    assert r.get_json()["status"] == "error"
+    assert "API restarted" in r.get_json()["error"]
+    assert not (tmp_path / "data_user" / "half.csv").exists()
+
+
+def test_feature_worker_importing_the_app_leaves_the_running_build_alone(app_client, monkeypatch, tmp_path):
+    _, app_module = app_client
+    state = {"job_id": "live", "kind": "local", "status": "extracting_features", "percent": 30, "message": "…"}
+    app_module.db.save_build_job("live", "local", "big", {**state, "name": "Big", "dataset": None, "error": None})
+    scratch = tmp_path / "data_user" / "_incoming" / "build-live"
+    scratch.mkdir(parents=True)
+    monkeypatch.setattr(app_module.dataset_builder, "_jobs", {})
+
+    runpy.run_path(app_module.__file__, run_name="__mp_main__")  # what a spawned feature worker does
+
+    assert app_module.dataset_builder.get_job("live")["status"] == "extracting_features"
+    assert scratch.is_dir()
+
+
 def test_get_build_job_404_for_unknown_id(app_client, monkeypatch):
     client, app_module = app_client
     monkeypatch.setattr(app_module.dataset_builder, "get_job", lambda job_id: None)
@@ -447,6 +499,64 @@ def test_remove_dataset_child_only_removes_its_own_csv(app_client):
     assert r.status_code == 204
     assert not os.path.exists(child_csv)
     assert os.path.exists(parent_json)  # the parent's embeddings must survive
+
+
+def test_remove_dataset_cleans_up_a_built_dataset_whose_parents_were_set_later(app_client):
+    # The partition CLI builds each part from images, then attaches it under its source; delete
+    # must still remove the images, embeddings and manifest the build left under its name.
+    client, app_module = app_client
+    db = app_module.db
+    user_data = Path(app_module.DATA_ROOT) / "data_user"
+    for name in ("tiles-part2.csv", "tiles-part2.json", "tiles-part2_projections.json", "tiles-part2_input.csv"):
+        (user_data / name).write_text("x")
+    (user_data / "tiles-part2_images" / "images").mkdir(parents=True)
+    rec = db.create_dataset_record("Tiles part 2", "", "data_user/tiles-part2.csv", None, None, 1)
+    db.set_dataset_parents(rec["source"], ["data_user/agristress500.csv"])
+
+    r = client.delete(f"/api/datasets/{rec['id']}")
+
+    assert r.status_code == 204
+    assert list(user_data.iterdir()) == []
+
+
+def test_remove_dataset_keeps_embeddings_and_images_a_selection_still_uses(app_client):
+    client, app_module = app_client
+    user_data = Path(app_module.DATA_ROOT) / "data_user"
+    parent = "data_user/tiles-part2.csv"
+    image = user_data / "tiles-part2_images" / "images" / "a.png"
+    image.parent.mkdir(parents=True)
+    image.write_text("x")
+    (user_data / "tiles-part2.json").write_text("{}")
+    _write_feature_csv(
+        user_data / "tiles-part2.csv",
+        [{"image_path": "data_user/tiles-part2_images/images/a.png", "width": "256", "score": "0"}],
+    )
+    rec = app_module.db.create_dataset_record("Tiles part 2", "", parent, None, parent, 1)
+    child = client.post("/api/datasets", json={"name": "Pick", "parent_source": parent, "image_names": ["a.png"]})
+    assert child.status_code == 201
+
+    assert client.delete(f"/api/datasets/{rec['id']}").status_code == 204
+
+    catalog = {d["source"]: d for d in client.get("/api/datasets").get_json()}
+    assert parent not in catalog
+    assert catalog[child.get_json()["source"]]["has_embeddings"] is True
+    assert image.is_file()
+    assert not (user_data / "tiles-part2.csv").exists()
+
+
+def test_saved_selection_does_not_take_a_running_builds_name(app_client):
+    client, app_module = app_client
+    root = Path(app_module.DATA_ROOT)
+    parent = "data_user/parent.csv"
+    _write_feature_csv(root / parent, [{"image_path": "images/a.png", "width": "256", "score": "0"}])
+    app_module.db.create_dataset_record("Parent", "", parent, None, None, 1)
+    assert app_module.dataset_builder.reserve_stem("my_set") == "my_set"  # as a running build named "My Set" does
+
+    r = client.post("/api/datasets", json={"name": "My Set", "parent_source": parent, "image_names": ["a.png"]})
+
+    assert r.status_code == 201
+    assert r.get_json()["source"] == "data_user/my_set_2.csv"
+    assert (root / "data_user" / "my_set.csv").read_text() == ""
 
 
 # ── GET /api/annotation/mask + /api/annotation/overlay ─────────────────────────────

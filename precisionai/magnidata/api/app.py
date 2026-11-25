@@ -71,10 +71,22 @@ from precisionai.magnidata.tools import dataset_layout
 from precisionai.magnidata.training import dataset_check
 
 db.init_db()
+# Builds write, and deletes remove, under the same data root this app serves from.
+dataset_builder.DATA_ROOT = DATA_ROOT
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = dataset_builder.MAX_REQUEST_BYTES
 app.register_blueprint(experiments.bp)
+
+# Feature extraction runs in spawned worker processes, and under `python app.py` each one runs
+# this file again as __mp_main__, before multiprocessing.parent_process() is set. Only the
+# server process may close out builds: in a worker, the build that spawned it is still running.
+_interrupted_builds = dataset_builder.recover_interrupted_builds() if __name__ != "__mp_main__" else []
+if _interrupted_builds:
+    app.logger.warning(
+        "Marked %d dataset build(s) interrupted by the last API restart and removed their partial output",
+        len(_interrupted_builds),
+    )
 
 # Background threshold: pixels whose R+G+B sum is below this are treated as
 # background and rendered transparent in the mask/overlay views.
@@ -804,14 +816,18 @@ def _slugify(name: str) -> str:
 
 
 def _write_child_csv(name: str, columns: list[str], rows: list[dict[str, str]]) -> str:
-    """Write rows to a unique CSV under the writable user-data dir and return its data-relative path."""
-    base_slug = _slugify(name)
-    rel = f"{USER_DATA_REL}/{base_slug}.csv"
-    n = 2
-    while os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, rel))) or db.get_created_dataset_by_source(rel):
-        rel = f"{USER_DATA_REL}/{base_slug}_{n}.csv"
-        n += 1
-    dataset_curation.write_rows(os.path.normpath(os.path.join(DATA_ROOT, rel)), columns, rows)
+    """Write rows to a unique CSV under the writable user-data dir and return its data-relative path.
+
+    The name is reserved the same way a dataset build reserves its own, so a selection saved
+    while a build runs can never take the path that build will write.
+    """
+    rel = f"{USER_DATA_REL}/{dataset_builder.reserve_stem(_slugify(name))}.csv"
+    path = os.path.normpath(os.path.join(DATA_ROOT, rel))
+    try:
+        dataset_curation.write_rows(path, columns, rows)
+    except Exception:
+        _remove_file(path)
+        raise
     return rel
 
 
@@ -977,10 +993,11 @@ def _remove_file(path: str) -> None:
 def remove_dataset(ds_id: int) -> ResponseReturnValue:
     """Delete a user-created dataset. Confi datasets are not deletable.
 
-    A row-subset child dataset (parent_source set) only removes its CSV — it inherits
-    the parent's embeddings and was never staged from its own images. A dataset built
-    from images (parent_source is None) also removes its embeddings JSON, staged
-    images folder, and provenance sidecars.
+    Removes the dataset's CSV and everything kept under its file name — embeddings JSON,
+    3D projections, staged images folder, provenance sidecars. Those always belong to it:
+    the name was reserved free of all of them when the dataset was made. Its lineage is
+    not consulted, since parents can be changed after the dataset was built. Embeddings
+    and images that other datasets still use are kept, and logged.
     """
     existing = db.get_created_dataset(ds_id)
     if existing and existing["source"] == dataset_curation.CLOUD_SOURCE:
@@ -990,18 +1007,10 @@ def remove_dataset(ds_id: int) -> ResponseReturnValue:
         return jsonify({"error": "dataset not found"}), 404
     src = rec["source"]
     _forget_cached_source(src)
-    if src and src.startswith(USER_DATA_REL + "/") and ".." not in src:
-        csv_path = os.path.normpath(os.path.join(DATA_ROOT, src))
-        _remove_file(csv_path)
-        _remove_file(csv_path + ".provenance.json")
-        if rec["parent_source"] is None:
-            stem = os.path.splitext(csv_path)[0]
-            _remove_file(stem + ".json")
-            _remove_file(stem + ".json.provenance.json")
-            _remove_file(stem + "_projections.json")
-            images_dir = stem + "_images"
-            if os.path.isdir(images_dir):
-                shutil.rmtree(images_dir, ignore_errors=True)
+    with contextlib.suppress(ValueError):  # a source outside data_user/ has no files of ours to remove
+        kept = dataset_builder.remove_dataset_files(src, rec["emb_source"])
+        if kept:
+            app.logger.info("Deleted dataset %s; kept %s, still used by other datasets", src, ", ".join(kept))
     return ("", 204)
 
 
@@ -1134,6 +1143,15 @@ def build_dataset() -> ResponseReturnValue:
         if upload_tmp_dir and not job_started:
             shutil.rmtree(upload_tmp_dir, ignore_errors=True)
     return jsonify({"job_id": job_id}), 202
+
+
+@app.get("/api/datasets/build/current")
+def get_current_build_job() -> ResponseReturnValue:
+    """Return the running dataset build, so a reloaded page can resume showing its progress.
+
+    Returns ``{"job": null}`` while no build is running.
+    """
+    return jsonify({"job": dataset_builder.current_job()})
 
 
 @app.get("/api/datasets/build/<job_id>")

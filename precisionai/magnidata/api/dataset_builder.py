@@ -5,7 +5,14 @@
 
 Stage images, extract features, and register in the created_datasets table. Runs in
 a background thread; progress is tracked in an in-process job dict polled by
-GET /api/datasets/build/<job_id>.
+GET /api/datasets/build/<job_id>, and every change is also written to the build_jobs
+table so a reloaded page can find the running build again
+(GET /api/datasets/build/current) and a build cut off by an API restart is reported as
+interrupted, with its partial output removed, instead of being forgotten.
+
+A build claims its output name (its "stem" under data_user/) by creating the dataset
+CSV exclusively before any work starts, so nothing else — another build, or a selection
+saved in the meantime — can take the same path while it runs (see reserve_stem).
 
 This build pipeline does not compute embeddings — no model runs here. Embeddings are
 bring-your-own: an upload build may optionally include a pre-computed embeddings JSON
@@ -49,6 +56,7 @@ import threading
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -151,11 +159,30 @@ DEMOS: list[dict] = [
     {"key": AGRISTRESS_KEY, "name": AGRISTRESS_NAME, "description": AGRISTRESS_DESCRIPTION, "enabled": True},
 ]
 
+# Demo datasets always build to these fixed stems, so no other dataset may take them.
+DEMO_STEMS = frozenset({COCO128_STEM, AGRISTRESS_STEM})
+# Everything a dataset with stem S may have next to its CSV under data_user/. A stem is only
+# handed out while none of these exist, so whatever is found under a dataset's stem is its own.
+EMBEDDING_FILE_SUFFIXES = (".json", ".json.provenance.json", "_projections.json")
+STEM_FILE_SUFFIXES = (".csv", ".csv.provenance.json", *EMBEDDING_FILE_SUFFIXES)
+STEM_IMAGES_SUFFIX = "_images"
+# Feature manifest that local builds used to leave beside the dataset CSV; removed on delete.
+LEGACY_MANIFEST_SUFFIX = "_input.csv"
+# Stems whose own files carry these names would sit inside another stem's files (S_projections.json,
+# S_input.csv), so S and S<suffix> are never both handed out.
+OVERLAPPING_STEM_SUFFIXES = ("_projections", "_input")
+IMAGE_PATH_COLUMNS = ("image_path", "thumbnail_image")
+
+FINISHED_STATUSES = frozenset(db.FINISHED_BUILD_STATUSES)
+INTERRUPTED_MESSAGE = "Interrupted: the API restarted while this build was running. Start it again."
+
 _jobs: dict[str, dict] = {}
+_job_keys: dict[str, tuple[str, str]] = {}  # job_id -> (kind, stem), the stored record's fixed fields
 _jobs_lock = threading.Lock()
 _build_lock = threading.Lock()
-# Name of the dataset the running build is producing, so a rejected concurrent request can
-# say which build holds the single build slot. Empty while no build runs.
+_reserve_lock = threading.Lock()
+# Name and job id of the build holding the single build slot, so a rejected concurrent request
+# can say which build is running and a reloaded page can find it. Empty while no build runs.
 _active_build: dict[str, str] = {}
 
 
@@ -170,25 +197,81 @@ class BuildInProgressError(RuntimeError):
 def get_job(job_id: str) -> dict | None:
     """Return a snapshot of the job's current state, or None if job_id is unknown.
 
-    The returned dict is a shallow copy, safe to read without holding _jobs_lock.
+    Jobs started by an earlier API process are read from the build_jobs table. The returned
+    dict is a copy, safe to read without holding _jobs_lock.
     """
     with _jobs_lock:
         job = _jobs.get(job_id)
-        return dict(job) if job is not None else None
+        if job is not None:
+            return dict(job)
+    return db.get_build_job(job_id)
 
 
-def _new_job(name: str = "") -> str:
+def current_job() -> dict | None:
+    """Return the build that holds the build slot, or None while no build is running.
+
+    Returns
+    -------
+    dict or None
+        The same snapshot as `get_job`, including ``job_id``, so a client that lost track
+        of the build (a reloaded page) can resume polling it.
+    """
+    job_id = _active_build.get("job_id")
+    job = get_job(job_id) if job_id else None
+    if job is None or job["status"] in FINISHED_STATUSES:
+        return None
+    return job
+
+
+def _new_job(name: str, kind: str, stem: str) -> str:
     job_id = uuid.uuid4().hex
+    state = {
+        "job_id": job_id,
+        "kind": kind,
+        "status": "queued",
+        "percent": 0,
+        "message": "Queued…",
+        "name": name,
+        "dataset": None,
+        "error": None,
+        "skipped": [],
+    }
     with _jobs_lock:
-        _jobs[job_id] = {
-            "status": "queued",
-            "percent": 0,
-            "message": "Queued…",
-            "name": name,
-            "dataset": None,
-            "error": None,
-        }
+        _jobs[job_id] = state
+        _job_keys[job_id] = (kind, stem)
+        db.save_build_job(job_id, kind, stem, state)
+    _active_build["job_id"] = job_id
     return job_id
+
+
+def recover_interrupted_builds() -> list[str]:
+    """Close out builds that an earlier API process left running, and remove what they left behind.
+
+    Called once at API start-up. Each stored build that never reached done or error is
+    marked as an interrupted error (so a client polling it, or reading it later, is told
+    what happened) and its partial output is removed. The AgriStress-500 download is kept
+    so that starting the demo again resumes it. Upload scratch files are removed too.
+
+    Returns
+    -------
+    list of str
+        The ids of the builds marked as interrupted.
+    """
+    recovered = []
+    for record in db.list_unfinished_build_jobs():
+        if record["job_id"] in _jobs:  # running in this process
+            continue
+        keep_images = record["kind"] == f"demo:{AGRISTRESS_KEY}"
+        _cleanup_partial(record["stem"], keep_images=keep_images)
+        message = INTERRUPTED_MESSAGE
+        if keep_images:
+            message += " Files already downloaded are kept, so the download resumes."
+        state = {**record["state"], "status": "error", "percent": None, "message": message, "error": message}
+        db.save_build_job(record["job_id"], record["kind"], record["stem"], state)
+        recovered.append(record["job_id"])
+    if not _build_lock.locked():
+        shutil.rmtree(Path(DATA_ROOT) / USER_DATA_REL / INCOMING_UPLOAD_DIRNAME, ignore_errors=True)
+    return recovered
 
 
 def _acquire_build_slot(name: str) -> None:
@@ -210,7 +293,10 @@ def _release_build_slot() -> None:
 
 def _update_job(job_id: str, **fields: Any) -> None:
     with _jobs_lock:
-        _jobs[job_id].update(fields)
+        job = _jobs[job_id]
+        job.update(fields)
+        kind, stem = _job_keys[job_id]
+        db.save_build_job(job_id, kind, stem, job)
 
 
 def _slugify(name: str) -> str:
@@ -218,16 +304,161 @@ def _slugify(name: str) -> str:
     return s or "dataset"
 
 
-def _unique_stem(base_slug: str) -> str:
-    existing_sources = {r["source"] for r in db.list_created_datasets()}
-    stem = base_slug
-    n = 2
-    while f"{USER_DATA_REL}/{stem}.csv" in existing_sources or os.path.isfile(
-        os.path.join(DATA_ROOT, USER_DATA_REL, f"{stem}.csv")
-    ):
-        stem = f"{base_slug}_{n}"
-        n += 1
-    return stem
+def _stem_base(stem: str) -> str:
+    """Return the path every file named after `stem` starts with, confined to data_user/."""
+    root = os.path.normpath(os.path.join(DATA_ROOT, USER_DATA_REL))
+    base = os.path.normpath(os.path.join(root, stem))
+    if not base.startswith(root + os.sep):
+        raise ValueError(f"dataset stem escapes {USER_DATA_REL}/: {stem!r}")
+    return base
+
+
+def _stem_occupied(stem: str, registered: set[str]) -> bool:
+    base = _stem_base(stem)
+    return (
+        stem in DEMO_STEMS
+        or f"{USER_DATA_REL}/{stem}.csv" in registered
+        or any(os.path.lexists(base + suffix) for suffix in STEM_FILE_SUFFIXES)
+        or os.path.lexists(base + STEM_IMAGES_SUFFIX)
+    )
+
+
+def _stem_in_use(stem: str, registered: set[str]) -> bool:
+    related = [stem + suffix for suffix in OVERLAPPING_STEM_SUFFIXES]
+    related += [stem.removesuffix(suffix) for suffix in OVERLAPPING_STEM_SUFFIXES if stem.endswith(suffix)]
+    return any(_stem_occupied(s, registered) for s in (stem, *related))
+
+
+def reserve_stem(base_slug: str) -> str:
+    """Claim a free output stem under data_user/ and return it.
+
+    The claim is the dataset CSV itself, created empty and exclusively, so it holds across
+    threads and survives an API restart (an interrupted build's claim is released by
+    `recover_interrupted_builds`). A stem is free only when no dataset is registered under
+    it and none of the files and folders a dataset keeps beside its CSV exist; the demo
+    stems are never handed out. ``S`` and ``S_projections`` / ``S_input`` count as one name,
+    since the second's files would carry the first's sidecar names. The caller owns the CSV from here on and must either write
+    it or remove it.
+
+    Parameters
+    ----------
+    base_slug : str
+        Preferred stem; ``_2``, ``_3``, … are appended until a free one is found.
+
+    Returns
+    -------
+    str
+        The reserved stem; its CSV is ``data_user/<stem>.csv``.
+    """
+    with _reserve_lock:
+        registered = {r["source"] for r in db.list_created_datasets()}
+        stem, n = base_slug, 2
+        while True:
+            if not _stem_in_use(stem, registered):
+                with contextlib.suppress(FileExistsError), open(_stem_base(stem) + ".csv", "x"):
+                    return stem
+            stem = f"{base_slug}_{n}"
+            n += 1
+
+
+def _reserve_demo_stem(stem: str) -> None:
+    """Claim a demo's fixed stem; the caller has already checked that no dataset is registered there."""
+    with _reserve_lock, open(_stem_base(stem) + ".csv", "w"):
+        pass
+
+
+def _image_values(csv_path: str) -> list[str]:
+    try:
+        with open(csv_path, newline="") as f:
+            return [row.get(column) or "" for row in csv.DictReader(f) for column in IMAGE_PATH_COLUMNS]
+    except (OSError, UnicodeDecodeError, csv.Error):
+        return []
+
+
+def _remove_stem_files(
+    stem: str, others: list[dict], other_image_values: list[str], keep_images: bool = False
+) -> list[str]:
+    images_prefix = f"{USER_DATA_REL}/{stem}{STEM_IMAGES_SUFFIX}/"
+    in_use = any(_emb_stem(r["emb_source"]) == stem for r in others)
+    kept_suffixes: list[str] = list(EMBEDDING_FILE_SUFFIXES) if in_use else []
+    if keep_images or any(images_prefix in value for value in other_image_values):
+        kept_suffixes.append(STEM_IMAGES_SUFFIX)
+    base = _stem_base(stem)
+    manifest = f"{USER_DATA_REL}/{stem}{LEGACY_MANIFEST_SUFFIX}"
+    if all(r["source"] != manifest for r in others):
+        with contextlib.suppress(OSError):
+            os.remove(base + LEGACY_MANIFEST_SUFFIX)
+    for suffix in STEM_FILE_SUFFIXES:
+        if suffix not in kept_suffixes:
+            with contextlib.suppress(OSError):
+                os.remove(base + suffix)
+    if STEM_IMAGES_SUFFIX not in kept_suffixes:
+        shutil.rmtree(base + STEM_IMAGES_SUFFIX, ignore_errors=True)
+    return [f"{USER_DATA_REL}/{stem}{suffix}" for suffix in kept_suffixes if os.path.lexists(base + suffix)]
+
+
+def _emb_stem(emb_source: str | None) -> str | None:
+    """Return the data_user/ stem whose embeddings `emb_source` names, else None.
+
+    Builds record the embeddings file itself (``<stem>.json``); datasets that fall back to
+    their own embeddings record their CSV (``<stem>.csv``). Both name the same stem.
+    """
+    if not emb_source:
+        return None
+    folder, filename = os.path.split(emb_source)
+    stem, ext = os.path.splitext(filename)
+    return stem if folder == USER_DATA_REL and ext in (".csv", ".json") and stem else None
+
+
+def _referenced_stems(emb_source: str | None, image_values: list[str]) -> set[str]:
+    pattern = re.compile(rf"(?:^|/){USER_DATA_REL}/([^/]+){STEM_IMAGES_SUFFIX}/")
+    stems = {match[1] for value in image_values if (match := pattern.search(value))}
+    if emb_stem := _emb_stem(emb_source):
+        stems.add(emb_stem)
+    return stems - {".", ".."}
+
+
+def remove_dataset_files(source: str, emb_source: str | None = None) -> list[str]:
+    """Delete what a dataset keeps under data_user/: its CSV and the files and folders named after its stem.
+
+    Stems are only handed out while nothing exists under them (see `reserve_stem`), so
+    these files belong to this dataset however it was made and whatever its lineage says
+    now. Its embeddings (``<stem>.json``, its provenance and projections) are kept while
+    another registered dataset still takes its embeddings from this one, and its images
+    folder is kept while another registered dataset's rows still point into it. A leftover
+    ``<stem>_input.csv`` manifest is removed too, unless it is another registered dataset's CSV.
+
+    Files kept that way when an earlier dataset was deleted are removed here once this was
+    the last dataset using them: the embeddings of `emb_source` and the images folders this
+    dataset's rows point into, for each such stem that no longer has a dataset CSV.
+
+    Parameters
+    ----------
+    source : str
+        The dataset's CSV path relative to DATA_ROOT; must be directly under data_user/.
+        The dataset must already be unregistered.
+    emb_source : str, optional
+        The dataset path whose embeddings this dataset used.
+
+    Returns
+    -------
+    list of str
+        Paths relative to DATA_ROOT that were kept because other datasets still use them.
+    """
+    folder, filename = os.path.split(source)
+    stem = filename.removesuffix(".csv")
+    if folder != USER_DATA_REL or stem == filename or stem in ("", ".", ".."):
+        raise ValueError(f"not a dataset CSV directly under {USER_DATA_REL}/: {source!r}")
+    others = db.list_created_datasets()
+    registered = {r["source"] for r in others}
+    other_image_values = [v for r in others for v in _image_values(os.path.join(DATA_ROOT, r["source"]))]
+    referenced = _referenced_stems(emb_source, _image_values(os.path.join(DATA_ROOT, source)))
+    kept = _remove_stem_files(stem, others, other_image_values)
+    for orphan in sorted(referenced - {stem}):
+        orphan_csv = f"{USER_DATA_REL}/{orphan}.csv"
+        if orphan_csv not in registered and not os.path.lexists(os.path.join(DATA_ROOT, orphan_csv)):
+            kept += _remove_stem_files(orphan, others, other_image_values)
+    return kept
 
 
 def _count_csv_rows(path: str) -> int:
@@ -269,12 +500,45 @@ def _dataset_meta(rec: dict) -> dict:
 
 
 def _cleanup_partial(stem: str, keep_images: bool = False) -> None:
-    base = os.path.join(DATA_ROOT, USER_DATA_REL, stem)
-    for suffix in (".csv", ".csv.provenance.json", ".json", ".json.provenance.json", "_projections.json"):
-        with contextlib.suppress(OSError):
-            os.remove(base + suffix)
-    if not keep_images:
-        shutil.rmtree(base + "_images", ignore_errors=True)
+    others = db.list_created_datasets()
+    image_values = (
+        [] if keep_images else [v for r in others for v in _image_values(os.path.join(DATA_ROOT, r["source"]))]
+    )
+    _remove_stem_files(stem, others, image_values, keep_images)
+
+
+def _start_worker(job_id: str, target: Callable[[], None]) -> None:
+    """Run ``target`` in a background thread that frees the build slot when it ends."""
+
+    def worker() -> None:
+        try:
+            target()
+        finally:
+            _release_build_slot()
+
+    threading.Thread(target=worker, daemon=True, name=f"dataset-build-{job_id[:8]}").start()
+
+
+def _claim(name: str, kind: str, stem: str | None, base_slug: str = "") -> tuple[str, str]:
+    """Take the build slot, reserve the output stem and record the job; return (job_id, stem).
+
+    `stem` is a demo's fixed stem; otherwise a free stem derived from `base_slug` is reserved.
+    Everything taken is given back if a later step fails.
+    """
+    _acquire_build_slot(name)
+    try:
+        if stem is None:
+            stem = reserve_stem(base_slug)
+        else:
+            _reserve_demo_stem(stem)
+        try:
+            return _new_job(name, kind, stem), stem
+        except Exception:
+            _cleanup_partial(stem, keep_images=True)
+            raise
+    except Exception:
+        _release_build_slot()
+        raise
 
 
 def _uploaded_size(upload: bytes | staging_mod.UploadedImage) -> int:
@@ -399,19 +663,15 @@ def start_upload_build(
     if embeddings_file is not None:
         _validate_embeddings_file(embeddings_file)
     name, description = name.strip(), description.strip()
-    _acquire_build_slot(name)
+    job_id, stem = _claim(name, "upload", None, _slugify(name))
 
-    job_id = _new_job(name)
-    stem = _unique_stem(_slugify(name))
-
-    def worker() -> None:
+    def work() -> None:
         try:
             _run_upload_build(job_id, images, annotations, embeddings_file, name, description, stem)
         finally:
             _cleanup_upload_sources(images, annotations, embeddings_file)
-            _release_build_slot()
 
-    threading.Thread(target=worker, daemon=True).start()
+    _start_worker(job_id, work)
     return job_id
 
 
@@ -452,14 +712,20 @@ def _run_upload_build(
 
         _update_job(job_id, status="extracting_features", percent=60, message="Extracting features…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
-        features_mod.run(
+        report = features_mod.extract(
             manifest_path,
             feature_csv_rel,
             device="cpu",
             skip_nima=True,
             image_mode="fullres",
             workers=_feature_workers(),
+            drop_unreadable=True,
         )
+        original_names = {staged: original for original, staged in staged_names.items()}
+        skipped = _skipped_files(report, len(images), lambda path: original_names.get(os.path.basename(path), path))
+        for path, _reason in report.unreadable:
+            with contextlib.suppress(OSError):
+                os.remove(path)
 
         emb_json_rel = None
         if embeddings_file is not None:
@@ -473,10 +739,34 @@ def _run_upload_build(
         row_count = _count_csv_rows(feature_csv_rel)
         rec = db.create_dataset_record(name, description, feature_csv_rel, None, emb_json_rel, row_count)
 
-        _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
+        _finish(job_id, rec, skipped)
     except Exception as exc:
         _cleanup_partial(stem)
         _update_job(job_id, status="error", percent=None, message=str(exc), error=str(exc))
+
+
+def _skipped_files(
+    report: features_mod.FeatureReport, total: int, display_name: Callable[[str], str]
+) -> list[dict[str, str]]:
+    """Return ``[{file, reason}]`` for the images feature extraction could not read.
+
+    Raises when none of them could be read, since an empty dataset is no use to anyone.
+    """
+    skipped = [{"file": display_name(path), "reason": reason} for path, reason in report.unreadable]
+    if total and len(skipped) >= total:
+        example = f" (for example {skipped[0]['file']}: {skipped[0]['reason']})" if skipped else ""
+        raise RuntimeError(f"none of the {total} images could be read as an image{example}")
+    return skipped
+
+
+def _finish(job_id: str, rec: dict, skipped: list[dict[str, str]] | None = None) -> None:
+    """Mark a build done, saying how many files were left out because they could not be read."""
+    skipped = skipped or []
+    message = "Done"
+    if skipped:
+        noun = "file" if len(skipped) == 1 else "files"
+        message = f"Done — {len(skipped)} unreadable {noun} left out"
+    _update_job(job_id, status="done", percent=100, message=message, dataset=_dataset_meta(rec), skipped=skipped)
 
 
 # ── Local image_sets build ────────────────────────────────────────────────────
@@ -605,18 +895,10 @@ def start_local_build(folder: str, name: str = "", description: str = "") -> str
 
     dataset_name = name.strip() or folder_name
     description = description.strip()
-    _acquire_build_slot(dataset_name)
-
-    job_id = _new_job(dataset_name)
-    stem = _unique_stem(_local_stem(folder_name))
-
-    def worker() -> None:
-        try:
-            _run_local_build(job_id, images, folder_path, folder_name, dataset_name, description, stem)
-        finally:
-            _release_build_slot()
-
-    threading.Thread(target=worker, daemon=True).start()
+    job_id, stem = _claim(dataset_name, "local", None, _local_stem(folder_name))
+    _start_worker(
+        job_id, lambda: _run_local_build(job_id, images, folder_path, folder_name, dataset_name, description, stem)
+    )
     return job_id
 
 
@@ -629,33 +911,40 @@ def _run_local_build(
     description: str,
     stem: str,
 ) -> None:
-    manifest_rel = f"{USER_DATA_REL}/{stem}_input.csv"
+    # The manifest is scratch: it goes in the upload scratch area, never next to dataset CSVs,
+    # where its name could belong to another dataset.
+    scratch_rel = f"{USER_DATA_REL}/{INCOMING_UPLOAD_DIRNAME}/build-{job_id}"
+    manifest_rel = f"{scratch_rel}/manifest.csv"
+    prefix = f"{IMAGE_SETS_REL}/{folder_name}/"
     try:
         _update_job(job_id, status="staging", percent=10, message=f"Indexing {len(images)} images…")
+        os.makedirs(os.path.join(DATA_ROOT, scratch_rel), exist_ok=True)
         _write_local_manifest(images, folder_path / "images", folder_name, manifest_rel)
 
         _update_job(job_id, status="extracting_features", percent=30, message="Extracting features…")
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
-        features_mod.run(
+        report = features_mod.extract(
             manifest_rel,
             feature_csv_rel,
             device="cpu",
             skip_nima=True,
             image_mode="fullres",
             workers=_feature_workers(),
+            drop_unreadable=True,
         )
+        skipped = _skipped_files(report, len(images), lambda path: path.removeprefix(prefix))
 
         _update_job(job_id, status="registering", percent=95, message="Registering dataset…")
         row_count = _count_csv_rows(feature_csv_rel)
         rec = db.create_dataset_record(name, description, feature_csv_rel, None, None, row_count)
 
-        _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
+        _finish(job_id, rec, skipped)
     except Exception as exc:
         # Only the derived artifacts are removed — image_sets/ is the user's own data.
-        with contextlib.suppress(OSError):
-            os.remove(os.path.join(DATA_ROOT, manifest_rel))
         _cleanup_partial(stem)
         _update_job(job_id, status="error", percent=None, message=str(exc), error=str(exc))
+    finally:
+        shutil.rmtree(os.path.join(DATA_ROOT, scratch_rel), ignore_errors=True)
 
 
 # ── Demo build ────────────────────────────────────────────────────────────────
@@ -691,17 +980,8 @@ def start_demo_build(demo_key: str) -> str:
         # The records live in a persistent volume while data_user/ is a bind mount, so a fresh
         # checkout can keep a record whose CSV is gone. /api/datasets already hides such records.
         db.delete_created_dataset(existing["id"])
-    _acquire_build_slot(demo["name"])
-
-    job_id = _new_job(demo["name"])
-
-    def worker() -> None:
-        try:
-            worker_fn(job_id)
-        finally:
-            _release_build_slot()
-
-    threading.Thread(target=worker, daemon=True).start()
+    job_id, _stem = _claim(demo["name"], f"demo:{demo_key}", stem)
+    _start_worker(job_id, lambda: worker_fn(job_id))
     return job_id
 
 
@@ -740,7 +1020,9 @@ def _run_demo_build(job_id: str) -> None:
 
         _update_job(job_id, status="staging", percent=90, message="Attaching precomputed embeddings…")
         embeddings_json = data_dir / f"{stem}.json"
-        shutil.copyfile(COCO128_EMBEDDINGS_ASSET, embeddings_json)
+        embeddings_tmp = embeddings_json.with_name(embeddings_json.name + ".part")
+        shutil.copyfile(COCO128_EMBEDDINGS_ASSET, embeddings_tmp)
+        embeddings_tmp.replace(embeddings_json)
         _check_embeddings_match_csv(feature_csv, embeddings_json)
 
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
@@ -751,7 +1033,7 @@ def _run_demo_build(job_id: str) -> None:
         row_count = _count_csv_rows(str(feature_csv))
         rec = db.create_dataset_record(COCO128_NAME, COCO128_DESCRIPTION, feature_csv_rel, None, emb_rel, row_count)
 
-        _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
+        _finish(job_id, rec)
     except Exception as exc:
         _cleanup_partial(stem)
         _update_job(job_id, status="error", percent=None, message=str(exc), error=str(exc))
@@ -828,8 +1110,12 @@ def _agristress_file_pairs() -> list[tuple[str, str, str]]:
 def _fetch_to_file(url: str, dest: Path) -> None:
     """Stream a URL to ``dest`` via a temp file, so an interrupted download is never mistaken for a finished one."""
     tmp = dest.with_name(dest.name + ".part")
-    with _urlopen(url, timeout=60) as resp, open(tmp, "wb") as f:
-        shutil.copyfileobj(resp, f, length=1024 * 1024)
+    try:
+        with _urlopen(url, timeout=60) as resp, open(tmp, "wb") as f:
+            shutil.copyfileobj(resp, f, length=1024 * 1024)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     tmp.replace(dest)
 
 
@@ -946,11 +1232,7 @@ def _run_agristress_build(job_id: str) -> None:
 
         _update_job(job_id, status="staging", percent=90, message="Downloading SEED embeddings…")
         emb_rel = f"{USER_DATA_REL}/{stem}.json"
-        with (
-            _urlopen(AGRISTRESS_EMBEDDINGS_URL, timeout=60) as resp,
-            open(os.path.join(DATA_ROOT, emb_rel), "wb") as f,
-        ):
-            f.write(resp.read())
+        _fetch_to_file(AGRISTRESS_EMBEDDINGS_URL, Path(DATA_ROOT) / emb_rel)
 
         _precompute_projections(job_id, feature_csv_rel, emb_rel)
 
@@ -960,7 +1242,7 @@ def _run_agristress_build(job_id: str) -> None:
             AGRISTRESS_NAME, AGRISTRESS_DESCRIPTION, feature_csv_rel, None, emb_rel, row_count
         )
 
-        _update_job(job_id, status="done", percent=100, message="Done", dataset=_dataset_meta(rec))
+        _finish(job_id, rec)
     except Exception as exc:
         _cleanup_partial(stem, keep_images=True)
         _update_job(job_id, status="error", percent=None, message=str(exc), error=str(exc))

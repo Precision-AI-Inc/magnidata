@@ -135,6 +135,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   third card, Cloud Dataset, drawn as a second parent of each part, with the lineage screenshot recaptured from a real
   run to match. The first training run's CPU time now reads around ten minutes rather than a few.
   `scripts/capture-guide.mjs` finds Playwright's Chromium on linux arm64, macOS and Windows as well as linux x64.
+- Reloading the portal during a dataset build no longer loses its progress. A new endpoint,
+  `GET /api/datasets/build/current`, returns the running build, and the portal asks for it on load and resumes the
+  progress badge. Build jobs are also stored in the database: polling a build that an API restart cut off reports it
+  as interrupted instead of an unknown job, and the API removes that build's partial output (and any upload scratch
+  files) when it starts. An interrupted AgriStress-500 download keeps the files it already fetched, so starting the
+  demo again resumes it.
+- Files that cannot be read as images (a text file renamed `.png`, a truncated JPEG) are left out of an upload or
+  server-folder build instead of becoming rows with every column blank. The finished job lists them in `skipped`, its
+  message says how many were left out, and the portal's badge lists them on hover; a build where nothing could be
+  read fails. The feature tool logs images without a label file as one information line, and keeps its warnings for
+  unreadable images and real errors.
+- A dataset build claims its output file name on disk before it starts, so saving or merging a selection with the
+  same name while the build runs gets a new name instead of being overwritten and then deleted by the build. A name
+  is only reused once nothing is left under it.
+- Deleting a dataset removes everything stored under its name (embeddings, projections, staged images, provenance and
+  the feature manifest older builds left beside the CSV), whatever its parents are. Embeddings and images that
+  another dataset still uses, such as a selection saved from it, are kept and logged, and removed once the last
+  dataset using them is deleted. Before, a dataset whose parents
+  were set after it was built, such as a partition part, left its images, embeddings and `_input.csv` behind, where
+  they could attach to the next dataset with that name. Builds from a server folder no longer write that manifest
+  beside the dataset at all.
+- Uploading a folder named `images` no longer adds `images` as an extra cluster level: `images/siteA/x.jpg` clusters
+  as `siteA`, the same as a server-folder build.
 - The trainer worker no longer abandons a training process when an MLflow call fails while it watches one. A failed
   cancel check or log upload is logged and tried again, and if watching fails for any other reason the training
   process is stopped first, so the worker can never start a second run beside one it lost track of.

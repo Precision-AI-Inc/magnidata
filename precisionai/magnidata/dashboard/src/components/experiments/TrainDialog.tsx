@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import { api, errorText } from '../../api'
 import type { TrainingPresets } from '../../api'
-import { launchParams, validateParams } from '../../lib/train'
+import { launchParams, presetUnavailableReason, startingPreset, validateParams } from '../../lib/train'
 import { advancedFor, advancedFromRun, advancedPayload, formatValue, groupSettings } from '../../lib/advanced'
 import type { AdvancedInput, AdvancedSetting } from '../../lib/advanced'
 import type { FieldErrors, TrainParams } from '../../lib/train'
@@ -47,15 +47,19 @@ function initial(defaults: Record<string, unknown>): TrainParams {
 
 /** Launch a training run on the loaded dataset. Server-side validation errors are shown beside the field. */
 export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, initialParams, initialRunParams, initialPreset, onClose, onLaunched }: Props) {
-  const startPreset = presets.presets.find(p => p.key === initialPreset) ?? presets.presets[0]
+  const engines = presets.backend.engines
+  const startPreset = startingPreset(presets.presets, initialPreset, engines)
+  // A retrain whose preset this trainer cannot run starts from the fallback preset's own defaults.
+  const keepsInitial = !initialPreset || startPreset.key === initialPreset
   const [preset, setPreset] = useState(startPreset.key)
   const [name, setName] = useState('')
-  const [params, setParams] = useState<TrainParams>(() => ({ ...initial(startPreset.defaults), ...initialParams }))
+  const [params, setParams] = useState<TrainParams>(() => ({ ...initial(startPreset.defaults), ...(keepsInitial ? initialParams : {}) }))
   const [serverErrors, setServerErrors] = useState<FieldErrors>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const selectedPreset = presets.presets.find(p => p.key === preset) ?? startPreset
   const isAgriTune = selectedPreset.engine === 'agritune'
+  const missingEngines = [...new Set(presets.presets.map(p => presetUnavailableReason(p.engine, engines)).filter(Boolean))]
   const advancedSettings = useMemo(() => advancedFor(presets.advanced ?? [], preset), [presets.advanced, preset])
   const [advanced, setAdvanced] = useState<Record<string, AdvancedInput>>(() => advancedFromRun(presets.advanced ?? [], initialRunParams ?? {}))
   const [advancedServerErrors, setAdvancedServerErrors] = useState<Record<string, string>>({})
@@ -65,6 +69,7 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
   const clientErrors = useMemo(() => validateParams(params, presets.bounds), [params, presets.bounds])
   const errors = { ...serverErrors, ...clientErrors }
   const valid = Object.keys(clientErrors).length === 0 && (!isAgriTune || Object.keys(advancedResult.errors).length === 0)
+    && presetUnavailableReason(selectedPreset.engine, engines) === null
   const setAdvancedInput = (key: string, input: AdvancedInput) => {
     setAdvanced(prev => ({ ...prev, [key]: input }))
     setAdvancedServerErrors(prev => ({ ...prev, [key]: '' }))
@@ -132,9 +137,17 @@ export function TrainDialog({ presets, datasetSource, datasetName, parentRunId, 
           </div>
           <label className="text-xs" style={{ color: 'var(--c-t2)' }}>Preset
             <select value={preset} onChange={e => choosePreset(e.target.value)} className="w-full px-2 py-1 rounded-lg text-xs mt-1" style={inputStyle}>
-              {presets.presets.map(p => <option key={p.key} value={p.key}>{p.engine === 'agritune' ? 'AgriTune · ' : ''}{p.label}</option>)}
+              {presets.presets.map(p => {
+                const unavailable = presetUnavailableReason(p.engine, engines)
+                return <option key={p.key} value={p.key} disabled={unavailable !== null} title={unavailable ?? undefined}>
+                  {p.engine === 'agritune' ? 'AgriTune · ' : ''}{p.label}{unavailable ? ' (not installed)' : ''}
+                </option>
+              })}
             </select>
             <span className="block mt-1" style={{ color: 'var(--c-t3)' }}>{selectedPreset.description}</span>
+            {missingEngines.length > 0 && <span className="block mt-1" style={{ color: 'var(--c-t3)' }}>
+              {missingEngines.join('; ')}, so its presets are disabled. The User Guide's “Train with AgriTune” chapter shows how to add it.
+            </span>}
           </label>
 
           {isAgriTune && <div className="byod-hint" style={{ padding: '9px 10px', borderRadius: 8, background: 'var(--c-raised)' }}>

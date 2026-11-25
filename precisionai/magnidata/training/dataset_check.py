@@ -16,6 +16,9 @@ from precisionai.magnidata.training import contract
 
 MASK_COLUMN = "mask_path"
 CHECKED_ROWS = 20
+# The folders under the data root that hold datasets and images. The rest of it holds the API's notes
+# database, confi.yaml and code, so a path a request names must point into one of these.
+DATA_DIRS = ("data", "data_user", "image_sets")
 
 
 def resolve_under(root: str | Path, relative: str) -> Path | None:
@@ -28,6 +31,19 @@ def resolve_under(root: str | Path, relative: str) -> Path | None:
     if not path.startswith(base.rstrip(os.sep) + os.sep):
         return None
     return Path(path)
+
+
+def resolve_data_path(root: str | Path, relative: str) -> Path | None:
+    """Join ``relative`` to ``root``; None unless it lands inside one of ``DATA_DIRS`` under ``root``."""
+    path = resolve_under(root, relative)
+    if path is None:
+        return None
+    base = os.path.realpath(root)
+    for name in DATA_DIRS:
+        folder = os.path.realpath(os.path.join(base, name))
+        if str(path).startswith(folder.rstrip(os.sep) + os.sep):
+            return path
+    return None
 
 
 def sibling_mask_path(image_path: str) -> str:

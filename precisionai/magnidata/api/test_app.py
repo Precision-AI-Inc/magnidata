@@ -1025,15 +1025,14 @@ def test_experiment_routes_are_registered(app_client):
 @pytest.fixture
 def masked_image(app_client, tmp_path, monkeypatch):
     """A 20x10 green image with a red mask over its left half, in the <dataset>/images + masks layout."""
-    monkeypatch.chdir(tmp_path)  # these endpoints open paths relative to the working directory (/app in Docker)
-    folder = tmp_path / "ds"
+    folder = tmp_path / "data_user" / "ds"
     (folder / "images").mkdir(parents=True)
     (folder / "masks").mkdir()
     Image.new("RGB", (20, 10), (10, 160, 10)).save(folder / "images" / "x.png")
     mask = np.zeros((10, 20, 3), dtype=np.uint8)
     mask[:, :10] = (230, 20, 20)
     Image.fromarray(mask).save(folder / "masks" / "x.png")
-    return "ds/images/x.png", "ds/masks/x.png"
+    return "data_user/ds/images/x.png", "data_user/ds/masks/x.png"
 
 
 def _pixel(resp, xy):
@@ -1066,10 +1065,9 @@ def test_annotation_overlay_honours_alpha(app_client, masked_image):
 
 def test_annotation_overlay_without_mask_is_404(app_client, tmp_path, monkeypatch):
     client, _ = app_client
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "plain" / "images").mkdir(parents=True)
-    Image.new("RGB", (4, 4), (1, 2, 3)).save(tmp_path / "plain" / "images" / "y.png")
-    assert client.get("/api/annotation/overlay?path=plain/images/y.png").status_code == 404
+    (tmp_path / "data_user" / "plain" / "images").mkdir(parents=True)
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(tmp_path / "data_user" / "plain" / "images" / "y.png")
+    assert client.get("/api/annotation/overlay?path=data_user/plain/images/y.png").status_code == 404
     assert client.get("/api/annotation/overlay?path=../x.png").status_code == 400
 
 

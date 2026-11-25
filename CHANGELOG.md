@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The README links the technical report (`docs/paper/magnidata-technical-report.pdf`) right after its opening summary,
+  with its title and one sentence on what it covers, and a *Technical report* badge next to the others.
 - `magnidata` is ready to publish to PyPI. The package declares console scripts `magnidata-features`,
   `magnidata-embeddings`, `magnidata-train` and `magnidata-attach` (the `python -m` forms still work); its PyPI page
   text is `README.pypi.md`, which says what the installed package does and does not run and uses absolute links; and
@@ -50,14 +52,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and linked from the README. `test_openapi.py` fails when a GET route is added or removed without the document, and
   checks real responses, and the document's examples, against its schemas. Both Dockerfiles copy the file next to
   `app.py`.
+- A `training` CI job installs CPU torch and runs the trainer, data, loss and worker tests (and
+  `api/test_e2e_smoke.py`), which skip in the main unit-test matrix because it does not install torch.
 
 ### Changed
 
 - The training modules' missing-dependency errors say `pip install 'magnidata[training]'`, the extra that provides
   torch, torchvision and MLflow, instead of an editable-install command.
+- The compose stack publishes the portal, API and MLflow on `127.0.0.1` only, and `python app.py` listens on
+  `127.0.0.1` unless `API_HOST` says otherwise. Set `MAGNIDATA_BIND_ADDRESS` in the git-ignored `.env` to publish on
+  another address. The Compose project name (`COMPOSE_PROJECT_NAME`) and ports (`MAGNIDATA_PORTAL_PORT`,
+  `MAGNIDATA_API_PORT`, `MAGNIDATA_MLFLOW_PORT`) are read from `.env` too, with the same defaults as before, so a
+  second checkout can run its own stack beside the first. The new `.env.example` lists every setting.
+- The `api` and `trainer` containers run as the owner of the checkout's `data/` folder (or `MAGNIDATA_UID` and
+  `MAGNIDATA_GID`), not as root, so the files they write under `data_user/` can be deleted without sudo. On start they
+  hand any root-owned files an earlier version left in `data_user/` and in the notes database's volume to that user.
+- `partition_dataset` defaults `--api` and `--portal` to the ports in `MAGNIDATA_API_PORT` and
+  `MAGNIDATA_PORTAL_PORT`, read from the environment or the `.env` in the working directory, instead of always 5051
+  and 5175.
 
 ### Fixed
 
+- The image preview is titled with the row's file name when the dataset has no stem column (built datasets have
+  none), instead of the zero-based row index such as "0"; with no image column either it reads "Row N".
+- The Explorer's 3D view no longer uses the deprecated `THREE.Clock`, so Three.js stops logging a deprecation
+  warning on every load.
+- The MCP server keeps a text column's cells as text: a numeric-looking cell such as the id `007` comes back as
+  `"007"`, not `7`. A column is numeric only when every non-empty cell is a number that is not zero-padded, and
+  `describe_dataset` reports such id columns as text.
+- Training with *Input resolution: Original size* no longer swaps width and height. The trainer resized every
+  image and mask to the transposed shape, so a 640x480 dataset trained on stretched 480x640 images and saved 480x640
+  predictions, while on-demand inference used the right geometry. `SegmentationDataset` and `ResizedCache` now take
+  `(width, height)` like `native_size` and the checkpoint's `input_size`; cached entries stored transposed are decoded
+  again on first use.
 - `/api/health` leaves the datalake's configured path out of its response in demo mode.
 - A missing file under `/.well-known/`, or a missing machine-readable file such as `robots.txt`, `sitemap.xml` or
   `openapi.json`, is a 404 instead of the dashboard's `index.html` with a 200. This applies both when the API serves the
@@ -76,6 +103,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The feature extractor's provenance file says whether features were computed on full-resolution images or on
   thumbnails, and records how many images came from each source. It used to say full resolution every time.
 - `class_entropy` is 0 for an image with one class, not -0.000001.
+- The trainer worker no longer abandons a training process when an MLflow call fails while it watches one. A failed
+  cancel check or log upload is logged and tried again, and if watching fails for any other reason the training
+  process is stopped first, so the worker can never start a second run beside one it lost track of.
+- A run that a worker claimed but never started, for example because the worker was killed in between, no longer stays
+  `SCHEDULED` forever and blocks every new launch. The worker requeues such runs when it starts and between runs, and
+  between runs it also fails a `RUNNING` run still tagged with its own id ("worker lost track of the run").
+- AgriTune presets are disabled in the Train dialog, marked "(not installed)", when the trainer has no AgriTune. The
+  worker checks at startup which engines it can run and writes them into its heartbeat file; `GET
+  /api/training/presets` reports them as `backend.engines`, and launching a preset of a missing engine answers 400
+  instead of queueing a run that fails seconds later.
+- With Epochs set to 0 the Train dialog no longer says "Score every N epochs must be between 1 and 0"; only Epochs
+  shows an error.
+- The workspace's Trainer card reads "Busy" while a run launched from MagniData is queued or training, instead of
+  "Ready".
+- Runs launched from MagniData record a user instead of MLflow's "unknown": `MAGNIDATA_RUN_USER` if set (Docker
+  Compose passes the host's `$USER`), else the account the API runs as. Older runs with the user "unknown" are listed
+  without one.
+
+### Security
+
+- The API answers cross-origin browser requests only from its portal (`MAGNIDATA_PORTAL_URL`, and the Vite dev server
+  on `http://localhost:5174`), or from the origins listed in `MAGNIDATA_CORS_ORIGINS`; it was open to every origin.
+  A request that could change data, sent by a browser from any other site, is refused with 403 even when it needs no
+  CORS preflight, such as a form upload to `/api/datasets/build`. A demo deployment still allows any origin. The
+  compose nginx forwards the `Host` header with its port, so the portal's own requests are recognised.
+- The API refuses, with 403, a request whose `Host` header is not `localhost`, `127.0.0.1`, `[::1]` or the compose
+  service name `api` (on any port), or a name listed in `MAGNIDATA_ALLOWED_HOSTS`. A web page whose own name was
+  re-pointed at this machine (DNS rebinding) passed the same-host check and could read and change data. Demo mode
+  skips the check.
+- Every path a request names is confined to `data/`, `data_user/` and `image_sets/` under the data root:
+  `/api/dataset/csv` and the other `source` parameters, the image endpoints' `path`, `img` and `mask`, and a run's
+  `dataset_source` when it is linked, matched, trained on or used for inference. Before,
+  `/api/dataset/csv?source=db/notes.db` returned the notes database, `source=confi.yaml` the catalog, and
+  `/api/image?path=` opened any absolute path in the container. An image endpoint still takes an absolute path under
+  the configured datalake (`DATALAKE_ROOT`) or a URL on an allowlisted host, except in demo mode.
+- MLflow answers only the Host names it is reached by (`mlflow:5000`, `localhost`, `127.0.0.1`) instead of
+  `--allowed-hosts "*"`; `MAGNIDATA_MLFLOW_ALLOWED_HOSTS` adds others.
+- In demo mode `/api/mask/debug` is refused for every method. A `HEAD` request ran the handler, which reads any path
+  into memory, because the refusal list named only `GET`; a `HEAD` to any refused `GET` route is now refused too.
+- Pillow's decompression-bomb guard is on again in the API. Importing `tools/features.py` switched it off for the
+  whole process (`Image.MAX_IMAGE_PIXELS = None`), so a small upload with enormous dimensions could exhaust memory.
+  An image over Pillow's limit (about 179 megapixels) is now reported as that image's error.
 
 ## [0.1.1] - 2026-10-27
 

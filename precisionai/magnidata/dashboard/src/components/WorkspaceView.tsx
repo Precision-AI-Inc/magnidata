@@ -3,6 +3,7 @@ import { Activity, CheckCircle2, Database, FlaskConical, Loader2, Plus, Sparkles
 import { api } from '../api'
 import type { DatasetMeta, MlflowStatus, RunSummary, TrainingPresets } from '../api'
 import { formatBytes } from '../lib/datasetPanel'
+import { trainerCard } from '../lib/train'
 import { nextSelection, readWorkspaceSelection, rememberWorkspaceSelection } from '../lib/workspaceSelection'
 import { useExperimentCounts } from '../hooks/useExperimentCounts'
 import { DatasetGraph } from './DatasetGraph'
@@ -87,12 +88,12 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
   }), [datasets])
 
   const active = services.runs.filter(run => run.status === 'RUNNING' || run.status === 'SCHEDULED').length
-  const trainerReady = !!services.mlflow?.reachable && !!services.presets?.backend.available
-  const trainerDetail = services.loading
-    ? 'checking services'
-    : trainerReady
-      ? (active ? `${active} run${active === 1 ? '' : 's'} in progress` : 'worker idle')
-      : (services.presets?.backend.reason || (services.mlflow?.reachable ? 'no worker heartbeat' : 'MLflow unavailable'))
+  const trainer = trainerCard({
+    loading: services.loading,
+    mlflowReachable: !!services.mlflow?.reachable,
+    backend: services.presets?.backend,
+    runs: services.runs,
+  })
 
   return (
     <div className="workspace-view">
@@ -101,7 +102,8 @@ export function WorkspaceView({ datasets, onOpenDataset, onViewExperiments, onDe
         <SummaryCard icon={Activity} tone="blue" label="Samples" value={totals.samples.toLocaleString()} detail="across all datasets" />
         <SummaryCard icon={Sparkles} tone="green" label="Explorer ready" value={String(totals.explorerReady)} detail="with embeddings" />
         <SummaryCard icon={FlaskConical} tone="amber" label="Runs" value={services.loading ? '…' : String(services.runs.length)} detail={active ? `${active} active now` : 'recent training runs'} active={active > 0} />
-        <SummaryCard icon={trainerReady ? CheckCircle2 : Loader2} tone={trainerReady ? 'green' : 'amber'} label="Trainer" value={services.loading ? '…' : trainerReady ? 'Ready' : 'Offline'} detail={trainerDetail} />
+        <SummaryCard icon={trainer.value === 'Ready' ? CheckCircle2 : Loader2} tone={trainer.value === 'Busy' ? 'blue' : trainer.ready ? 'green' : 'amber'}
+                     label="Trainer" value={trainer.value} detail={trainer.detail} active={trainer.value === 'Busy'} />
       </section>
 
       <div className="workspace-toolbar">

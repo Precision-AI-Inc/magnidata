@@ -26,6 +26,13 @@ COPY precisionai/magnidata/api/app.py precisionai/magnidata/api/db.py precisiona
      precisionai/magnidata/api/trainer_backend.py precisionai/magnidata/api/training_presets.py \
      precisionai/magnidata/api/openapi.yaml ./
 
+# Runs the server as the owner of the checkout rather than root (see the script).
+COPY --chmod=0755 docker/run-as-host-user.sh /usr/local/bin/run-as-host-user.sh
+ENTRYPOINT ["/usr/local/bin/run-as-host-user.sh"]
+
+# Inside the container the API must listen on every interface for the published port to reach it;
+# docker-compose.yml publishes that port on 127.0.0.1 of the host only.
+ENV API_HOST=0.0.0.0
 EXPOSE 5050
 
 CMD ["python", "app.py"]

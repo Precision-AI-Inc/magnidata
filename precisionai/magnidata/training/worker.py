@@ -13,6 +13,7 @@ Usage::
 """
 
 import argparse
+import json
 import os
 import signal
 import socket
@@ -40,6 +41,8 @@ POLL_S = 5.0
 LOG_UPLOAD_S = 30.0
 CANCEL_CHECK_S = 2.0
 TERM_GRACE_S = 30.0
+AGRITUNE_MODULE = "precisionai.magnidata.training.agritune"
+ENGINE_PROBE_TIMEOUT_S = 300.0
 ERROR_TAG = "magnidata.error"
 TERMINAL = {s.value for s in (contract.RunStatus.FINISHED, contract.RunStatus.FAILED, contract.RunStatus.KILLED)}
 
@@ -53,10 +56,42 @@ def worker_id() -> str:
 
 
 def touch_heartbeat(data_root: Path) -> None:
-    """Refresh ``data_user/.trainer_heartbeat`` so the API knows a worker is alive."""
+    """Refresh ``data_user/.trainer_heartbeat`` so the API knows a worker is alive; its content is kept."""
     path = data_root / "data_user" / HEARTBEAT_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch()
+
+
+def write_heartbeat(data_root: Path, engines: Sequence[str]) -> None:
+    """Write the heartbeat file with this worker's id and the training engines it can run.
+
+    The API reads the engines to hide presets this trainer cannot train. The file is replaced atomically, so the
+    API never reads half of it.
+    """
+    path = data_root / "data_user" / HEARTBEAT_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".tmp")
+    partial.write_text(json.dumps({"worker": worker_id(), "engines": list(engines)}))
+    partial.replace(path)
+
+
+def available_engines(
+    agritune_module: str = AGRITUNE_MODULE, probe_timeout_s: float = ENGINE_PROBE_TIMEOUT_S
+) -> list[str]:
+    """Return the training engines this trainer can run: always ``reference``, plus ``agritune`` if it imports.
+
+    The AgriTune adapter is imported in a child process, exactly as a run would import it, so a missing or partial
+    AgriTune checkout is found without loading torch into the worker.
+    """
+    engines = ["reference"]
+    probe = [sys.executable, "-c", f"import {agritune_module}"]
+    try:
+        found = subprocess.run(probe, capture_output=True, timeout=probe_timeout_s, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        found = False
+    if found:
+        engines.append("agritune")
+    return engines
 
 
 def _experiment_ids(client: Any) -> list[str]:
@@ -122,26 +157,43 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def recover_stale(client: Any, me: str | None = None) -> list[str]:
-    """Fail ``RUNNING`` runs that an earlier worker process on this host left behind.
+def _stale(tag: str, me: str, include_self: bool) -> bool:
+    """Whether a worker tag names a worker on this host that no longer has the run.
 
-    A run is stale when its worker tag names this host with a dead pid, or with this
-    process's pid but a different token (a restart that reused the pid). Runs of other
-    hosts and of this very process are left alone. Returns the failed run ids.
+    That is a dead pid, or this process's pid with a different token (a restart that reused the pid). With
+    ``include_self`` this very process counts too, which is right only while it runs nothing.
+    """
+    host, my_pid, _ = me.split(":")
+    parts = tag.split(":")
+    if len(parts) != 3 or parts[0] != host or not parts[1].isdigit():
+        return False
+    if tag == me:
+        return include_self
+    return parts[1] == my_pid or not _pid_alive(int(parts[1]))
+
+
+def recover_stale(client: Any, me: str | None = None, include_self: bool = False) -> list[str]:
+    """Release the runs that a worker process on this host claimed and no longer looks after.
+
+    A stale ``RUNNING`` run is failed. A stale ``SCHEDULED`` run, claimed but never started, loses its worker tag
+    so it is queued again; left alone it would stay scheduled forever and block every new launch. Runs of other
+    hosts are left alone, and so are this process's own unless ``include_self`` says it is idle. Returns the ids of
+    the runs it failed or requeued.
     """
     me = me or worker_id()
-    host, my_pid, _ = me.split(":")
-    failed = []
+    recovered = []
     for run in _search(client, contract.RunStatus.RUNNING.value):
         tag = run.data.tags.get(contract.TAG_WORKER, "")
-        parts = tag.split(":")
-        if len(parts) != 3 or parts[0] != host or tag == me or not parts[1].isdigit():
-            continue
-        if parts[1] == my_pid or not _pid_alive(int(parts[1])):
-            client.set_tag(run.info.run_id, ERROR_TAG, "worker restarted during run")
+        if _stale(tag, me, include_self):
+            reason = "worker lost track of the run" if tag == me else "worker restarted during run"
+            client.set_tag(run.info.run_id, ERROR_TAG, reason)
             client.set_terminated(run.info.run_id, contract.RunStatus.FAILED.value)
-            failed.append(run.info.run_id)
-    return failed
+            recovered.append(run.info.run_id)
+    for run in _search(client, contract.RunStatus.SCHEDULED.value):
+        if _stale(run.data.tags.get(contract.TAG_WORKER, ""), me, include_self):
+            client.delete_tag(run.info.run_id, contract.TAG_WORKER)
+            recovered.append(run.info.run_id)
+    return recovered
 
 
 def _last_line(path: Path) -> str:
@@ -179,7 +231,7 @@ def agritune_argv(run_id: str, data_root: Path, tracking_uri: str) -> list[str]:
     return [
         sys.executable,
         "-m",
-        "precisionai.magnidata.training.agritune",
+        AGRITUNE_MODULE,
         "--run-id",
         run_id,
         "--data-root",
@@ -226,6 +278,23 @@ def _stop_child(child: subprocess.Popen) -> None:
         child.wait()
 
 
+def _tolerant(what: str, fn: Callable[[], Any]) -> Any:
+    """Return ``fn()``, or None after logging the error: a failed MLflow call must not abandon a running child."""
+    try:
+        return fn()
+    except Exception as err:
+        print(
+            f"worker: {what} failed, still watching the trainer: {type(err).__name__}: {err}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+
+def _cancel_requested(client: Any, run_id: str) -> bool:
+    return client.get_run(run_id).data.tags.get(contract.TAG_CANCEL_REQUESTED) == "true"
+
+
 def _watch(
     child: subprocess.Popen,
     client: Any,
@@ -239,6 +308,7 @@ def _watch(
 
     With ``cancel_check_s`` the run's cancel tag is polled that often and the child is stopped as soon as
     it is set. The AgriTune trainer only looks at the tag between epochs, which can be minutes apart.
+    MLflow errors on the way are logged and retried on the next interval, so the child is never left unwatched.
     """
     last_upload = time.monotonic()
     last_cancel_check = last_upload
@@ -249,14 +319,24 @@ def _watch(
             return True
         if cancel_check_s is not None and time.monotonic() - last_cancel_check >= cancel_check_s:
             last_cancel_check = time.monotonic()
-            if client.get_run(run_id).data.tags.get(contract.TAG_CANCEL_REQUESTED) == "true":
+            if _tolerant("cancel check", lambda: _cancel_requested(client, run_id)):
                 _stop_child(child)
                 return True
         if time.monotonic() - last_upload >= upload_every:
-            _upload_log(client, run_id, log)
             last_upload = time.monotonic()
+            _tolerant("log upload", lambda: _upload_log(client, run_id, log))
         time.sleep(0.5)
     return False
+
+
+def _supervise(child: subprocess.Popen, watch: Callable[[], bool]) -> bool:
+    """Run ``watch`` over ``child``; if it raises, stop the child first so no training outlives its worker's watch."""
+    try:
+        return watch()
+    except BaseException:
+        if child.poll() is None:
+            _stop_child(child)
+        raise
 
 
 def run_one(
@@ -287,14 +367,17 @@ def run_one(
         )
     with open(log, "w") as out:
         child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT, env=_child_env())
-        interrupted = _watch(
+        interrupted = _supervise(
             child,
-            client,
-            run_id,
-            log,
-            lambda: touch_heartbeat(data_root),
-            log_upload_s,
-            cancel_check_s=CANCEL_CHECK_S if engine == "agritune" else None,
+            lambda: _watch(
+                child,
+                client,
+                run_id,
+                log,
+                lambda: touch_heartbeat(data_root),
+                log_upload_s,
+                cancel_check_s=CANCEL_CHECK_S if engine == "agritune" else None,
+            ),
         )
     status = client.get_run(run_id).info.status
     if status not in TERMINAL:
@@ -321,7 +404,9 @@ def run_inference(client: Any, run_id: str, data_root: Path, argv: Sequence[str]
     command = list(argv) if argv else inference_argv(run_id, image_name, data_root, client.tracking_uri)
     with open(log, "w") as out:
         child = subprocess.Popen(command, stdout=out, stderr=subprocess.STDOUT, env=_child_env())
-        interrupted = _watch(child, client, run_id, log, lambda: touch_heartbeat(data_root), LOG_UPLOAD_S)
+        interrupted = _supervise(
+            child, lambda: _watch(child, client, run_id, log, lambda: touch_heartbeat(data_root), LOG_UPLOAD_S)
+        )
     _upload_log(client, run_id, log)
     if child.returncode == 0 and not interrupted:
         client.set_tag(run_id, contract.TAG_INFERENCE_ERROR, "")
@@ -338,12 +423,18 @@ def run_inference(client: Any, run_id: str, data_root: Path, argv: Sequence[str]
 
 
 def loop(client: Any, data_root: Path, max_iterations: int | None = None, poll_s: float = POLL_S) -> None:
-    """Poll for scheduled runs until stopped (or for ``max_iterations`` passes)."""
+    """Poll for scheduled runs until stopped (or for ``max_iterations`` passes).
+
+    Each pass first releases runs this host's workers claimed and no longer look after, this process's own
+    included: between runs it trains nothing, so a run still tagged with its id was lost to an error.
+    """
     iteration = 0
     while not stop_requested.is_set() and (max_iterations is None or iteration < max_iterations):
         iteration += 1
         touch_heartbeat(data_root)
         try:
+            for run_id in recover_stale(client, include_self=True):
+                print(f"worker: released stale run {run_id}", flush=True)
             handled = False
             for run in find_scheduled(client):
                 if run_one(client, run.info.run_id, data_root) is not None:
@@ -370,10 +461,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop_requested.set())
     signal.signal(signal.SIGINT, lambda *_: stop_requested.set())
     client = mlflow.MlflowClient(tracking_uri=args.tracking_uri)
-    print(f"worker {worker_id()} watching {args.tracking_uri}", flush=True)
+    # Reported in before the engine probe, which imports torch and can take a while; until the engines are known,
+    # the API offers every preset.
     touch_heartbeat(args.data_root)
-    for run_id in recover_stale(client):
-        print(f"worker: marked stale run {run_id} as FAILED", flush=True)
+    engines = available_engines()
+    print(f"worker {worker_id()} watching {args.tracking_uri}; engines: {', '.join(engines)}", flush=True)
+    write_heartbeat(args.data_root, engines)
     loop(client, args.data_root, poll_s=args.poll_s)
     return 0
 

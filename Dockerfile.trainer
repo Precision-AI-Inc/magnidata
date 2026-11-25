@@ -29,4 +29,8 @@ RUN --mount=type=bind,from=agritune,target=/agritune \
     fi
 RUN SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0 pip install --no-cache-dir -c constraints.txt ".[training]"
 
+# Runs the worker as the owner of the checkout rather than root (see the script).
+COPY --chmod=0755 docker/run-as-host-user.sh /usr/local/bin/run-as-host-user.sh
+ENTRYPOINT ["/usr/local/bin/run-as-host-user.sh"]
+
 CMD ["python", "-m", "precisionai.magnidata.training.worker", "--data-root", "/app"]

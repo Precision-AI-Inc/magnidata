@@ -63,6 +63,9 @@ export function validateParams(params: TrainParams, bounds: Record<string, Bound
     if (typeof value !== 'number' || !Number.isFinite(value)) { errors[field] = 'must be a number'; continue }
     if (bound.type === 'int' && !Number.isInteger(value)) { errors[field] = 'must be a whole number'; continue }
     const [lo, hi] = range(bound, params)
+    // A limit taken from another field that is itself out of range ("Score every" with 0 epochs) says nothing
+    // useful here; that field carries the error.
+    if (typeof bound.max === 'string' && !(hi >= lo)) continue
     if (value < lo || value > hi) errors[field] = `must be between ${lo} and ${hi}`
     else if (bound.multiple_of && value % bound.multiple_of) errors[field] = `must be a multiple of ${bound.multiple_of}`
   }
@@ -112,6 +115,50 @@ export function launchParams(params: TrainParams, engine: string): Partial<Train
 
 export function isActive(status: string | null | undefined): boolean {
   return status === 'SCHEDULED' || status === 'RUNNING'
+}
+
+const ENGINE_LABELS: Record<string, string> = { reference: 'the reference trainer', agritune: 'AgriTune' }
+
+/**
+ * Why a preset of `engine` cannot be trained, or null when it can. `engines` is what the trainer worker reported;
+ * null means it has not said (an older worker, or none running), and then every preset is offered.
+ */
+export function presetUnavailableReason(engine: string, engines: readonly string[] | null | undefined): string | null {
+  if (!engines || engines.includes(engine)) return null
+  return `${ENGINE_LABELS[engine] ?? engine} is not installed in the trainer`
+}
+
+/** The preset the Train dialog opens on: `wanted` if the trainer can run it, else the first one it can. */
+export function startingPreset<P extends { key: string; engine: string }>(
+  presets: readonly P[], wanted: string | undefined, engines: readonly string[] | null | undefined,
+): P {
+  const usable = presets.filter(p => presetUnavailableReason(p.engine, engines) === null)
+  return usable.find(p => p.key === wanted) ?? usable[0] ?? presets.find(p => p.key === wanted) ?? presets[0]
+}
+
+export interface TrainerCard {
+  value: 'Busy' | 'Ready' | 'Offline' | '…'
+  detail: string
+  ready: boolean
+}
+
+/** What the workspace's Trainer card says: offline, ready and idle, or busy with UI-launched runs. */
+export function trainerCard(s: {
+  loading: boolean
+  mlflowReachable: boolean
+  backend?: { available: boolean; reason: string | null } | null
+  runs: readonly { status: string; magnidata?: Record<string, string> }[]
+}): TrainerCard {
+  if (s.loading) return { value: '…', detail: 'checking services', ready: false }
+  if (!s.mlflowReachable || !s.backend?.available) {
+    const detail = s.backend?.reason || (s.mlflowReachable ? 'no worker heartbeat' : 'MLflow unavailable')
+    return { value: 'Offline', detail, ready: false }
+  }
+  // The worker trains only runs launched from MagniData; an external run in progress does not occupy it.
+  const queue = s.runs.filter(run => isActive(run.status) && run.magnidata?.['magnidata.origin'] === 'ui')
+  if (!queue.length) return { value: 'Ready', detail: 'worker idle', ready: true }
+  const running = queue.some(run => run.status === 'RUNNING')
+  return { value: 'Busy', detail: running ? 'training a run' : 'starting a queued run', ready: true }
 }
 
 export interface TrainState {

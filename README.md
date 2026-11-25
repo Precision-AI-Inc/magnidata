@@ -6,6 +6,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
 [![Hugging Face Space](https://img.shields.io/badge/Hugging%20Face-Live%20demo-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/spaces/precisionaiinc/magnidata)
+[![Technical report](https://img.shields.io/badge/Technical%20report-PDF-B31B1B)](docs/paper/magnidata-technical-report.pdf)
 
 ---
 
@@ -13,6 +14,11 @@ Precision AI Open Source Data Visualization Tool for exploring image datasets: a
 deterministic feature-extraction pipeline, a Flask API, and a React/Three.js dashboard
 for browsing images, segmentation masks, and embeddings — including a live 3D
 PCA/t-SNE/cluster view over a dataset's embedding space.
+
+**Technical report:** [*MagniData: Opening the Black Box After Every Epoch*](docs/paper/magnidata-technical-report.pdf)
+(PDF, five pages) relates the content of a dataset to the learning behaviour of a model: per-image training signals
+recorded at every epoch sit in a common space with photometric, geometric and embedding features, and the report runs
+four models on the same 875 tiles of an agricultural segmentation dataset and compares them tile by tile.
 
 **Try it without installing anything:** the [live demo on Hugging Face](https://huggingface.co/spaces/precisionaiinc/magnidata)
 has COCO128 and AgriStress-500 already loaded. Its HTTP API answers read-only requests at
@@ -54,6 +60,15 @@ docker compose up --build
 #   api    -> http://localhost:5051/api/health
 #   mlflow -> http://localhost:5052   (experiment tracking UI)
 ```
+
+The stack has no authentication, so it listens on `127.0.0.1` only: other machines cannot reach it, and the API
+answers cross-origin browser requests only from the portal. It also answers only requests addressed to `localhost`,
+`127.0.0.1` or `[::1]`; publish it on another address with `MAGNIDATA_BIND_ADDRESS` and list the name you reach it
+by in `MAGNIDATA_ALLOWED_HOSTS`. The ports, the address they are published on, the
+Compose project name and the user the containers run as are read from a git-ignored `.env` next to
+`docker-compose.yml`; [`.env.example`](.env.example) lists each one with its default. A second checkout on the same
+machine sets its own `COMPOSE_PROJECT_NAME` and ports there to run beside the first. The `api` and `trainer`
+containers run as the owner of the checkout, so what they write under `data_user/` is yours to delete.
 
 **New here?** Open **User Guide** in the portal. It is a self-contained, illustrated guide that takes you from
 `docker compose up` through loading AgriStress-500, partitioning it into sub-datasets from the command line,
@@ -132,7 +147,8 @@ that API without authentication.
   [Feature extraction & embeddings CLI](#feature-extraction--embeddings-cli)). The API and dashboard run with
   `docker compose up` (see [Quickstart](#quickstart--run-the-full-stack)).
 - **HTTP API base URLs:** `https://precisionaiinc-magnidata.hf.space/api` for the public demo, and
-  `http://localhost:5051/api` for your own stack. Responses are JSON unless noted, and CORS is open.
+  `http://localhost:5051/api` for your own stack. Responses are JSON unless noted. The demo allows any CORS origin;
+  your own stack allows only its portal.
 
 The demo is read-only: every request that would change data, build a dataset or train answers
 `403 {"error": "Disabled for the Demo"}`. It runs on small CPU hardware and sleeps after two days without visitors,
@@ -157,7 +173,9 @@ so the first request after a quiet spell can take a minute while it wakes. On yo
 | `GET /api/annotation/overlay?path=&alpha=` | The image with its segmentation annotation drawn on top, as JPEG |
 
 `path` and `img` take an `image_path` value from the CSV; `mask` and the `path` of `/api/mask` take a mask file's path
-(a `mask_path` value, or the PNG under `masks/` next to `images/`). The examples below ran against the demo; outputs are trimmed.
+(a `mask_path` value, or the PNG under `masks/` next to `images/`). A path must lie inside `data/`, `data_user/` or
+`image_sets/` (or, on your own stack, under the configured datalake or on an allowlisted image host); any other
+answers 400. The examples below ran against the demo; outputs are trimmed.
 
 ```bash
 API=https://precisionaiinc-magnidata.hf.space/api
@@ -255,7 +273,7 @@ precisionai.magnidata.api.app` will not work.
 ```bash
 cd precisionai/magnidata/api
 pip install -r requirements.txt
-python app.py          # default: host 0.0.0.0, port 5050 (override with API_PORT)
+python app.py          # default: host 127.0.0.1, port 5050 (override with API_HOST and API_PORT)
 ```
 
 `./start.sh` does the same, plus creating/activating a local `.venv` first.

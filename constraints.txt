@@ -17,6 +17,9 @@ pyiqa==0.1.16
 mlflow==3.18.0
 mlflow-skinny==3.18.0
 
+# Pillow 13 needs Python 3.11+; this pin is the newest release that installs on every supported Python (3.10+).
+pillow==12.3.0
+
 # Lint and type-check tooling: CI and the pre-commit hooks must run the versions developers run locally.
 ruff==0.17.4
 pyright==1.1.414

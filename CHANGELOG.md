@@ -53,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `constraints.txt` at the repository root holds the exact versions that several install paths share: torch,
-  torchvision, timm, pyiqa, MLflow, ruff and pyright. The trainer image, `requirements.txt`, `requirements-dev.txt` and
+- `constraints.txt` at the repository root holds the exact versions that several install paths share: Pillow,
+  torch, torchvision, timm, pyiqa, MLflow, ruff and pyright. The trainer image, `requirements.txt`, `requirements-dev.txt` and
   CI install under it, and `test_dependency_pins.py` fails when a copy it cannot feed (the `pyproject.toml` extras,
   the API's requirements file, the MLflow server image tag, the pre-commit ruff rev) names a different version.
 - The local MLflow server image is `v3.18.0`, the release the API, trainer and tests already use as a client; the API
@@ -84,6 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   override's CUDA) index, then the `training` extra's torch 2.14.1 pin replaced it with the default PyPI wheel and its
   CUDA 13 libraries, so the "CPU" image was 10.5 GB. Both installs now read their versions from `constraints.txt`; the
   CPU image is about 1.9 GB with `torch 2.14.1+cpu`.
+- `pip install -e ".[dev]" -c constraints.txt` installs Pillow 12.3.0, the version `requirements.txt` already used,
+  instead of the newest Pillow; pyright is clean with both Pillow 12.3.0 and Pillow 13.0.0.
 - The ruff pre-commit hook runs v0.17.4, the version `pyproject.toml` pins, instead of v0.17.1.
 - `/api/health` leaves the datalake's configured path out of its response in demo mode.
 - A missing file under `/.well-known/`, or a missing machine-readable file such as `robots.txt`, `sitemap.xml` or

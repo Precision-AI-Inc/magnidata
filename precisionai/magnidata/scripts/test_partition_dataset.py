@@ -259,3 +259,45 @@ def test_the_guide_documents_every_option_of_the_tool() -> None:
     for flag in tool.build_parser()._option_string_actions:
         if flag.startswith("--") and flag != "--help":
             assert flag in text, f"{flag} is not documented in the guide"
+
+
+# ── Which stack the CLI talks to ───────────────────────────────────────────────
+
+
+@pytest.fixture
+def no_stack_env(monkeypatch):
+    for name in ("MAGNIDATA_API_URL", "MAGNIDATA_API_PORT", "MAGNIDATA_PORTAL_URL", "MAGNIDATA_PORTAL_PORT"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_stack_url_defaults_to_the_standard_port(no_stack_env, tmp_path):
+    assert tool.stack_url("MAGNIDATA_API_URL", "MAGNIDATA_API_PORT", "5051", tmp_path / ".env") == (
+        "http://localhost:5051"
+    )
+
+
+def test_stack_url_reads_the_port_from_the_checkouts_env_file(no_stack_env, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("COMPOSE_PROJECT_NAME=second\nMAGNIDATA_API_PORT=6051\n")
+
+    assert tool.stack_url("MAGNIDATA_API_URL", "MAGNIDATA_API_PORT", "5051", env_file) == "http://localhost:6051"
+
+
+def test_stack_url_prefers_the_environment(no_stack_env, monkeypatch, tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("MAGNIDATA_API_PORT=6051\n")
+    monkeypatch.setenv("MAGNIDATA_API_PORT", "7051")
+    assert tool.stack_url("MAGNIDATA_API_URL", "MAGNIDATA_API_PORT", "5051", env_file) == "http://localhost:7051"
+
+    monkeypatch.setenv("MAGNIDATA_API_URL", "http://api.test:1")
+    assert tool.stack_url("MAGNIDATA_API_URL", "MAGNIDATA_API_PORT", "5051", env_file) == "http://api.test:1"
+
+
+def test_the_cli_defaults_follow_the_env_file_in_the_working_directory(no_stack_env, monkeypatch, tmp_path):
+    (tmp_path / ".env").write_text("MAGNIDATA_API_PORT=6051\nMAGNIDATA_PORTAL_PORT=6175\n")
+    monkeypatch.chdir(tmp_path)
+
+    args = tool.build_parser().parse_args([])
+
+    assert args.api == "http://localhost:6051"
+    assert args.portal == "http://localhost:6175"

@@ -58,7 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CI install under it, and `test_dependency_pins.py` fails when a copy it cannot feed (the `pyproject.toml` extras,
   the API's requirements file, the MLflow server image tag, the pre-commit ruff rev) names a different version.
 - The local MLflow server image is `v3.18.0`, the release the API, trainer and tests already use as a client; the API
-  image's `mlflow-skinny` moves from 3.11.1 to 3.18.0 to match. An existing `magnidata-mlflow` volume opens unchanged.
+  image's `mlflow-skinny` moves from 3.11.1 to 3.18.0 to match. The 3.18.0 server migrates a database created by
+  3.11.1 on its first start (checked with both images: the schema is upgraded and existing runs stay readable), so an
+  existing `magnidata-mlflow` volume keeps working without a manual `mlflow db upgrade`. The migration is one-way: the
+  3.11.1 server cannot open the upgraded database.
 - torchvision is pinned to 0.29.1, the build the PyTorch CPU and CUDA wheel indexes publish for torch 2.14.1 (0.29.2
   is on PyPI only).
 - `precisionai/magnidata/requirements.txt`, an out-of-date copy of the root `requirements.txt`, is removed; the docs,

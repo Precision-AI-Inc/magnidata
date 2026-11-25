@@ -72,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mask does not separate touching objects.
 - The feature extractor finds COCO labels and masks for images in subfolders of `images/`. It looks under the same
   subfolder of `labels/` or `masks/` first, then directly in `labels/` or `masks/`, and joins metadata from the dataset
-  folder above `images/`.
+  folder above `images/`. The dashboard's annotation overlay uses the same lookup.
 - The feature extractor's provenance file says whether features were computed on full-resolution images or on
   thumbnails, and records how many images came from each source. It used to say full resolution every time.
 - `class_entropy` is 0 for an image with one class, not -0.000001.

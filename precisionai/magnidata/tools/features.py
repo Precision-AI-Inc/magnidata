@@ -37,6 +37,7 @@ from PIL import Image
 
 from . import (
     coco_labels,
+    dataset_layout,
     image_source,
     instance_features,
     mask_labels,
@@ -130,45 +131,21 @@ def _round(v: bool | float | int | str) -> bool | float | int | str:
     return v
 
 
-IMAGES_DIRNAME = "images"
+def _sibling_file(image_path: str, folder: str, filename: str) -> str:
+    """Return the first existing sibling ``<folder>/<filename>`` for an image.
 
-
-def _dataset_layout(image_path: str) -> tuple[str, str]:
-    """Return (dataset_dir, subdir) for an image under ``<DATASET>/images/[<subdir>/]``.
-
-    The nearest ancestor folder named ``images`` marks the dataset root, so images in
-    subfolders keep their dataset. Without one, the image's grandparent is the dataset,
-    as for any ``<DATASET>/<folder>/<STEM>.png``.
+    When none exists the first candidate is returned, so callers report where the file
+    was expected.
     """
-    parts = os.path.dirname(image_path).split(os.sep)
-    for i in range(len(parts) - 1, -1, -1):
-        if parts[i] == IMAGES_DIRNAME:
-            return os.sep.join(parts[:i]), os.sep.join(parts[i + 1 :])
-    return os.path.dirname(os.path.dirname(image_path)), ""
-
-
-def _sibling_file(image_path: str, dataset_dir: str, folder: str, subdir: str, filename: str) -> str:
-    """Return the first existing ``<folder>/<filename>`` candidate for an image.
-
-    Tries ``<DATASET>/<folder>/<subdir>/<filename>`` (mirroring the image's subfolder),
-    then ``<DATASET>/<folder>/<filename>``, then ``<folder>`` beside the image's own
-    parent folder. When none exists the first candidate is returned, so callers report
-    where the file was expected.
-    """
-    grandparent = os.path.dirname(os.path.dirname(image_path))
-    candidates = [
-        os.path.join(dataset_dir, folder, subdir, filename),
-        os.path.join(dataset_dir, folder, filename),
-        os.path.join(grandparent, folder, filename),
-    ]
+    candidates = dataset_layout.sibling_candidates(image_path, folder, filename)
     return next((c for c in candidates if os.path.isfile(c)), candidates[0])
 
 
 def _derive_paths(image_path: str) -> tuple[str, str, str, str, str]:
-    dataset_dir, subdir = _dataset_layout(image_path)
+    dataset_dir, _ = dataset_layout.dataset_layout(image_path)
     stem, ext = os.path.splitext(os.path.basename(image_path))
-    label_path = _sibling_file(image_path, dataset_dir, "labels", subdir, stem + ".json")
-    mask_path = _sibling_file(image_path, dataset_dir, "masks", subdir, stem + ".png")
+    label_path = _sibling_file(image_path, "labels", stem + ".json")
+    mask_path = _sibling_file(image_path, "masks", stem + ".png")
     return dataset_dir, stem, ext, label_path, mask_path
 
 

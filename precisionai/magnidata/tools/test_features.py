@@ -295,6 +295,15 @@ def test_nested_images_fall_back_to_flat_label_and_metadata(tmp_path):
     assert row["gsd"] == 0.5  # metadata joined from the dataset root, not images/
 
 
+def test_nested_images_ignore_label_inside_images_tree(tmp_path):
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "images" / "siteA" / "s.png"), np.zeros((40, 40, 3), np.uint8))
+    _write_coco(str(ds / "images" / "labels" / "s.json"), 40, 40, [(1, _rect(0, 0, 20, 40))])
+    row, err = process_row(img)
+    assert err == "coco:label_not_found"
+    assert row["annotation_ratio"] == ""
+
+
 def test_non_images_folder_keeps_grandparent_label(tmp_path):
     ds = tmp_path / "ds1"
     img = _save_png(str(ds / "raw" / "s.png"), np.zeros((40, 40, 3), np.uint8))

@@ -224,7 +224,7 @@ MASK = "data_user/syn/masks/img_00.png"
         ("/api/image", "/api/image", 400),
         ("/api/image", "/api/image?path=data_user/missing.png", 404),
         ("/api/image", f"/api/image?path={IMAGE}&max_size=abc", 400),
-        ("/api/mask", "/api/mask?path=nope.png", 404),
+        ("/api/mask", "/api/mask?path=data_user/nope.png", 404),
         ("/api/embedding/projection", "/api/embedding/projection?source=data_user/nope.csv", 404),
         ("/api/embedding/clusters", f"/api/embedding/clusters?{SYN}&k=abc", 400),
         ("/api/mask", f"/api/mask?path={MASK}", 200),

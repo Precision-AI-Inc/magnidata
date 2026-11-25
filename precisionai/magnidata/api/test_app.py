@@ -1355,7 +1355,7 @@ def test_image_routes_answer_404_json_for_a_missing_file(app_client, tmp_path, m
     client, _ = app_client
     monkeypatch.chdir(tmp_path)
 
-    resp = client.get(route, query_string={"path": "nope.png"})
+    resp = client.get(route, query_string={"path": "data_user/nope.png"})
 
     assert resp.status_code == 404
     assert resp.get_json() == {"error": "file not found"}
@@ -1365,7 +1365,7 @@ def test_overlay_answers_404_json_for_a_missing_mask(app_client, masked_image):
     client, _ = app_client
     img, _ = masked_image
 
-    resp = client.get("/api/overlay", query_string={"img": img, "mask": "ds/masks/nope.png"})
+    resp = client.get("/api/overlay", query_string={"img": img, "mask": "data_user/ds/masks/nope.png"})
 
     assert resp.status_code == 404
     assert resp.get_json() == {"error": "file not found"}
@@ -1374,9 +1374,10 @@ def test_overlay_answers_404_json_for_a_missing_mask(app_client, masked_image):
 def test_image_routes_do_not_return_the_raw_error_for_an_unreadable_file(app_client, tmp_path, monkeypatch):
     client, _ = app_client
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "not-an-image.png").write_text("plain text")
+    (tmp_path / "data_user").mkdir(exist_ok=True)
+    (tmp_path / "data_user" / "not-an-image.png").write_text("plain text")
 
-    resp = client.get("/api/image", query_string={"path": "not-an-image.png"})
+    resp = client.get("/api/image", query_string={"path": "data_user/not-an-image.png"})
 
     assert resp.status_code == 500
     assert resp.get_json() == {"error": "could not read or decode the file"}

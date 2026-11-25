@@ -7,14 +7,18 @@ import csv
 import io
 import math
 import operator
+import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 
 from precisionai.magnidata.mcp_server.schemas import CellValue, ColumnSummary, RowFilter, ValueCount
 
 ROW_INDEX = "row_index"
 TOP_VALUES = 5
+# A zero-padded integer such as "007" is an identifier, not the number 7.
+_ZERO_PADDED = re.compile(r"^[+-]?0\d")
 
 _NUMERIC_OPS: dict[str, Callable[[float, float], bool]] = {
     "<": operator.lt,
@@ -30,6 +34,16 @@ class Table:
 
     columns: list[str]
     rows: list[dict[str, str]]
+
+    @cached_property
+    def numeric_columns(self) -> frozenset[str]:
+        """Return the columns whose every non-empty cell is numeric (see `is_numeric_text`)."""
+        return frozenset(
+            name
+            for name in self.columns
+            if any(row[name] != "" for row in self.rows)
+            and all(is_numeric_text(row[name]) for row in self.rows if row[name] != "")
+        )
 
 
 def parse_csv(text: str) -> Table:
@@ -60,11 +74,29 @@ def to_number(value: str) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def cell_value(value: str) -> CellValue:
-    """Return a cell as JSON-friendly data: None when empty, int or float when numeric, else the text."""
+def is_numeric_text(value: str) -> bool:
+    """Return whether `value` is a finite number written as one, not zero-padded text such as the id ``007``."""
+    return to_number(value) is not None and not _ZERO_PADDED.match(value.strip())
+
+
+def cell_value(value: str, numeric: bool = True) -> CellValue:
+    """Return a cell as JSON-friendly data: None when empty, int or float in a numeric column, else the text.
+
+    Parameters
+    ----------
+    value : str
+        The raw cell.
+    numeric : bool
+        Whether the cell's column is numeric; a text column keeps every cell as text, so ``007`` stays ``"007"``.
+
+    Returns
+    -------
+    CellValue
+        None, a number or the original text.
+    """
     if value == "":
         return None
-    number = to_number(value)
+    number = to_number(value) if numeric and is_numeric_text(value) else None
     if number is None:
         return value
     return int(number) if number.is_integer() and "." not in value and "e" not in value.lower() else number
@@ -73,7 +105,8 @@ def cell_value(value: str) -> CellValue:
 def describe_columns(table: Table) -> list[ColumnSummary]:
     """Summarise every column: numeric range and mean, or the most common text values.
 
-    A column is numeric when every non-empty cell parses as a finite number.
+    A column is numeric when every non-empty cell is a finite number that is not zero-padded (see
+    `is_numeric_text`).
 
     Parameters
     ----------
@@ -85,15 +118,17 @@ def describe_columns(table: Table) -> list[ColumnSummary]:
     list of ColumnSummary
         One entry per column, in file order.
     """
-    return [_describe_column(name, [row[name] for row in table.rows if row[name] != ""]) for name in table.columns]
+    return [
+        _describe_column(name, [row[name] for row in table.rows if row[name] != ""], name in table.numeric_columns)
+        for name in table.columns
+    ]
 
 
-def _describe_column(name: str, values: list[str]) -> ColumnSummary:
+def _describe_column(name: str, values: list[str], numeric: bool) -> ColumnSummary:
     if not values:
         return ColumnSummary(name=name, kind="empty", non_empty=0)
-    numbers = [to_number(value) for value in values]
-    if all(number is not None for number in numbers):
-        finite = [number for number in numbers if number is not None]
+    if numeric:
+        finite = [number for number in map(to_number, values) if number is not None]
         return ColumnSummary(
             name=name,
             kind="numeric",
@@ -196,9 +231,10 @@ def _sort_key(value: str) -> tuple[int, float, str]:
 
 
 def cells(table: Table, index: int, columns: Sequence[str]) -> dict[str, CellValue]:
-    """Return the `columns` of one row as `{column: value}`, converted by `cell_value`."""
+    """Return the `columns` of one row as `{column: value}`, converted by `cell_value` with the column's type."""
     row = table.rows[index]
-    return {name: cell_value(row[name]) for name in columns}
+    numeric = table.numeric_columns
+    return {name: cell_value(row[name], name in numeric) for name in columns}
 
 
 def row_values(table: Table, index: int, columns: Sequence[str]) -> dict[str, CellValue]:

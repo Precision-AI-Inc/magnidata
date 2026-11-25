@@ -246,10 +246,11 @@ def cache_max_bytes() -> int:
 def _decode_pair(sample: Sample, size: tuple[int, int]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Decode an image and colour mask once; return both resized to ``size`` and the mask's colour counts.
 
-    The image is resized bilinearly, the mask with nearest-neighbour so it keeps only exact
-    palette colours. JPEG images are decoded at reduced scale where that is enough.
+    ``size`` is ``(width, height)``, as `native_size` returns it and PIL expects; the arrays are
+    ``[height, width, 3]``. The image is resized bilinearly, the mask with nearest-neighbour so it
+    keeps only exact palette colours. JPEG images are decoded at reduced scale where that is enough.
     """
-    height, width = size
+    width, height = size
     with Image.open(sample.image_path) as im:
         if im.format == "JPEG":
             im.draft("RGB", (width, height))
@@ -262,7 +263,7 @@ def _decode_pair(sample: Sample, size: tuple[int, int]) -> tuple[np.ndarray, np.
 
 
 class ResizedCache:
-    """On-disk cache of images and masks resized to the training size.
+    """On-disk cache of images and masks resized to the training size, given as ``(width, height)``.
 
     Each sample is decoded from its full-resolution files once and stored as one uint8
     ``[H, W, 6]`` array (image channels, then colour mask) next to a small file of the mask's
@@ -304,6 +305,7 @@ class ResizedCache:
     def get(self, sample: Sample) -> tuple[np.ndarray, np.ndarray]:
         """Return the resized image and colour mask, decoding and caching them on a miss."""
         entry, _ = self._paths(sample)
+        width, height = self.size
         try:
             array = np.load(entry)
         except (OSError, ValueError):
@@ -311,6 +313,11 @@ class ResizedCache:
             array = np.load(entry)
         else:
             os.utime(entry)
+        if array.shape[:2] != (height, width):
+            # Entries written before sizes were read as (width, height) hold the transposed shape.
+            image, mask, _ = _decode_pair(sample, self.size)
+            array = np.concatenate([image, mask], axis=-1)
+            self._store(entry, array)
         return array[..., :3], array[..., 3:]
 
     def counts(self, sample: Sample) -> np.ndarray:
@@ -481,7 +488,7 @@ class SegmentationDataset(Dataset):
     split : str | None
         Keep only this split; all samples when None.
     image_size : int | tuple[int, int]
-        Output size, ``(height, width)`` or a square side.
+        Output size, ``(width, height)`` or a square side; tensors are ``[H, W]``.
     augment : bool
         Random horizontal flip, applied to the train split only.
     cache : ResizedCache | None

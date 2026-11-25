@@ -231,7 +231,7 @@ def test_link_rejects_bad_sources(client, mlflow_store, source):
 
 
 def test_link_unknown_run(client):
-    assert client.post(f"/api/runs/{'0' * 32}/link", json={"dataset_source": "x.csv"}).status_code == 404
+    assert client.post(f"/api/runs/{'0' * 32}/link", json={"dataset_source": "data_user/x.csv"}).status_code == 404
 
 
 def test_runs_search_is_cached(client, mlflow_store, monkeypatch):
@@ -464,6 +464,28 @@ def test_inference_request_requires_checkpoint_and_known_image(client, predicted
     assert client.post(f"/api/runs/{predicted_run}/inference", json={"image": "b.png"}).status_code == 409
     assert client.post(f"/api/runs/{predicted_run}/inference", json={"image": "missing.png"}).status_code == 404
     assert client.post(f"/api/runs/{predicted_run}/inference", json={"image": "../b.png"}).status_code == 400
+
+
+@pytest.mark.parametrize("source", ["db/notes.db", "confi.yaml", "stray.csv", "data_user/../stray.csv"])
+def test_link_refuses_a_source_outside_the_data_folders(client, mlflow_store, source):
+    run_id = seed_run(mlflow_store)
+
+    assert client.post(f"/api/runs/{run_id}/link", json={"dataset_source": source}).status_code == 400
+    assert contract.TAG_DATASET_SOURCE not in mlflow_store.get_run(run_id)["tags"]
+
+
+def test_run_dataset_reads_stay_inside_the_data_folders(client, predicted_run, mlflow_store, tmp_path):
+    root = tmp_path / "root"
+    (root / "stray.csv").write_text("image_path\ndata_user/ds/images/b.png\n")
+    (root / "stray.png").write_bytes(_png_bytes((1, 2, 3)))
+    (root / "data_user" / "leak.csv").write_text("image_path\nstray.png\n")
+
+    assert client.get(f"/api/runs/{predicted_run}/match?dataset=stray.csv").status_code == 404
+    for source, image in (("stray.csv", "b.png"), ("data_user/leak.csv", "stray.png")):
+        mlflow_store.set_tag(predicted_run, contract.TAG_DATASET_SOURCE, source)
+        experiments.clear_cache()
+        resp = client.post(f"/api/runs/{predicted_run}/inference", json={"image": image})
+        assert resp.status_code == 404, source
 
 
 def test_inference_request_is_queued_and_saved_result_becomes_ready(client, predicted_run, mlflow_store, tmp_path):

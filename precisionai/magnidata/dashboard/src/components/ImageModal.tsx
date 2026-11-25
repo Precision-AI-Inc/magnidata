@@ -7,6 +7,7 @@ import { api } from '../api'
 import type { CSVData, CSVRow, ColMeta } from '../types'
 import type { PartitionEntry } from '../hooks/usePartitions'
 import { imageNameOf } from '../hooks/usePartitions'
+import { previewTitle } from '../lib/previewTitle'
 import type { SampleHistory } from '../api'
 import { LineChart } from './experiments/LineChart'
 import { nearestEarlierPrediction, resolveEpoch } from '../lib/epochs'
@@ -82,7 +83,7 @@ export function ImageModal({ data, row: initialRow, allRows, onClose, partitionM
   // (which, for a remote-hosted dataset, can be tens of MB). "Full resolution" below
   // always points at the real imgPath regardless.
   const thumbPath = data.thumbnailPath ? String(row[data.thumbnailPath] ?? '') : ''
-  const stem      = data.stemCol   ? String(row[data.stemCol] ?? String(row._idx)) : String(row._idx)
+  const stem      = previewTitle(row, data)
 
   const w = Number(row['width']); const h = Number(row['height'])
   const dims = Number.isFinite(w) && Number.isFinite(h) && w && h ? `${w} × ${h}` : null

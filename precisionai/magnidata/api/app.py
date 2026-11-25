@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import threading
+import urllib.parse
 import uuid
 from collections.abc import Callable, Iterator
 from typing import Any, cast
@@ -66,12 +67,12 @@ import mlflow_store
 import projections
 
 from precisionai.magnidata.tools import coco_labels as coco_labels_mod
+from precisionai.magnidata.training import dataset_check
 
 db.init_db()
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = dataset_builder.MAX_REQUEST_BYTES
-CORS(app)
 app.register_blueprint(experiments.bp)
 
 # Background threshold: pixels whose R+G+B sum is below this are treated as
@@ -117,15 +118,29 @@ def _lfs_pointer_info(path: str) -> dict | None:
 
 
 def _data_path(relative_path: str) -> str:
-    """Resolve a data-relative path while preventing traversal and symlink escape."""
-    if not relative_path or os.path.isabs(relative_path):
+    """Resolve a DATA_ROOT-relative path inside one of the data folders, preventing traversal and symlink escape."""
+    path = dataset_check.resolve_data_path(DATA_ROOT, relative_path)
+    if path is None:
         raise ValueError("invalid data path")
-    root = os.path.realpath(DATA_ROOT)
-    path = os.path.realpath(os.path.join(root, relative_path))
-    # A startswith check on the resolved path (not commonpath) is what code scanning recognises as containment.
-    if not path.startswith(root.rstrip(os.sep) + os.sep):
-        raise ValueError("invalid data path")
-    return path
+    return str(path)
+
+
+def _image_path(path: str) -> str:
+    """Return the file or URL an image parameter names, refusing anything outside the data folders.
+
+    A relative path must lie in one of dataset_check.DATA_DIRS. An absolute path must lie under the configured
+    datalake (DATALAKE_ROOT), and a URL must name an allowlisted host (local_files.read_file checks
+    that). A demo deployment, open to anyone, takes neither: every demo image is under DATA_ROOT.
+    """
+    if local_files.is_remote_url(path):
+        if DEMO_MODE:
+            raise ValueError("invalid path")
+        return path
+    if os.path.isabs(path):
+        if DEMO_MODE or not local_files.in_datalake(path):
+            raise ValueError("invalid path")
+        return path
+    return _data_path(path)
 
 
 def _max_size_arg() -> int:
@@ -174,7 +189,7 @@ def health() -> ResponseReturnValue:
 DEMO_MODE = os.environ.get("MAGNIDATA_DEMO_MODE", "").strip().lower() in {"1", "true", "yes", "on"}
 DEMO_DISABLED_MESSAGE = "Disabled for the Demo"
 # (method, URL rule) pairs, so the id in a path does not matter. Each writes to the database or the
-# data folder, or starts a build, training or inference; the debug endpoint is unused by the dashboard.
+# data folder, or starts a build, training or inference. A HEAD request is checked as the GET it mirrors.
 _DEMO_REFUSED = frozenset(
     {
         ("POST", "/api/datasets/build"),
@@ -190,14 +205,15 @@ _DEMO_REFUSED = frozenset(
         ("POST", "/api/runs/<run_id>/cancel"),
         ("POST", "/api/runs/<run_id>/link"),
         ("POST", "/api/runs/<run_id>/inference"),
-        ("GET", "/api/mask/debug"),
     }
 )
-# The image endpoints open whichever file these parameters name. On an open server that must stay
-# inside DATA_ROOT, and a remote URL is never needed: every demo image is local.
-_DEMO_PATH_PARAMS = {
+# URL rules refused for every method. The debug endpoint is unused by the dashboard.
+_DEMO_REFUSED_RULES = frozenset({"/api/mask/debug"})
+# The image endpoints open whichever file these parameters name; _image_path decides which are allowed.
+_IMAGE_PATH_PARAMS = {
     "/api/image": ("path",),
     "/api/mask": ("path",),
+    "/api/mask/debug": ("path",),
     "/api/overlay": ("img", "mask"),
     "/api/annotation/mask": ("path",),
     "/api/annotation/overlay": ("path",),
@@ -205,6 +221,49 @@ _DEMO_PATH_PARAMS = {
 # The 3D view starts an analysis job per request, each in its own thread, and finished jobs are kept.
 DEMO_MAX_RUNNING_ANALYSES = 4
 DEMO_MAX_KEPT_ANALYSES = 50
+
+
+def _cors_origins() -> list[str]:
+    """Return the browser origins, other than the API's own, allowed to call the API.
+
+    MAGNIDATA_CORS_ORIGINS (comma-separated) overrides. By default only the portal may: its
+    MAGNIDATA_PORTAL_URL (http://localhost:5175 when unset) and the Vite dev server on
+    http://localhost:5174. Every other web page is kept out. A demo deployment, which refuses
+    every write, lets any page read it.
+    """
+    configured = os.environ.get("MAGNIDATA_CORS_ORIGINS", "").strip()
+    if configured:
+        return [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
+    if DEMO_MODE:
+        return ["*"]
+    portal = os.environ.get("MAGNIDATA_PORTAL_URL", "").strip().rstrip("/") or "http://localhost:5175"
+    return [portal, "http://localhost:5174"]
+
+
+CORS_ORIGINS = _cors_origins()
+CORS(app, origins=CORS_ORIGINS)
+
+
+def _host_name(host: str) -> str:
+    """Return the lower-case name in a Host value, without its port or IPv6 brackets."""
+    try:
+        return (urllib.parse.urlsplit("//" + host.strip()).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _allowed_hosts() -> frozenset[str]:
+    """Return the Host names the API answers to.
+
+    This machine (localhost, 127.0.0.1, ::1) and the compose service name the portal's nginx
+    reaches it by (api), on any port, plus the names in MAGNIDATA_ALLOWED_HOSTS (comma-separated),
+    for a stack published on another address with MAGNIDATA_BIND_ADDRESS.
+    """
+    configured = os.environ.get("MAGNIDATA_ALLOWED_HOSTS", "").split(",")
+    return frozenset({"localhost", "127.0.0.1", "::1", "api"} | {_host_name(h) for h in configured if h.strip()})
+
+
+ALLOWED_HOSTS = _allowed_hosts()
 
 
 @app.get("/api/config")
@@ -230,33 +289,67 @@ def get_openapi_document() -> ResponseReturnValue:
     return app.response_class(_openapi_document(), mimetype="application/json")
 
 
-def _demo_path_allowed(path: str) -> bool:
-    """Whether an image path names a file inside DATA_ROOT: no URL, no absolute path, no traversal."""
-    if local_files.is_remote_url(path):
-        return False
-    try:
-        _data_path(path)
-    except ValueError:
-        return False
-    return True
-
-
 if DEMO_MODE:
 
     @app.before_request
     def refuse_in_demo_mode() -> ResponseReturnValue | None:
         """Refuse what a demo deployment disables, before a handler or an upload is read."""
         rule = request.url_rule.rule if request.url_rule is not None else ""
-        if (request.method, rule) in _DEMO_REFUSED:
+        method = "GET" if request.method == "HEAD" else request.method
+        if rule in _DEMO_REFUSED_RULES or (method, rule) in _DEMO_REFUSED:
             return jsonify({"error": DEMO_DISABLED_MESSAGE}), 403
-        for name in _DEMO_PATH_PARAMS.get(rule, ()):
-            value = request.args.get(name, "").strip()
-            if value and not _demo_path_allowed(value):
-                return jsonify({"error": "invalid path"}), 400
         return None
 
     # There is no MLflow server here: answer its questions at once, instead of retrying a dead address on every poll.
     mlflow_store.set_store(mlflow_store.OfflineStore())
+
+
+@app.before_request
+def refuse_unknown_hosts() -> ResponseReturnValue | None:
+    """Refuse a request whose Host header the API does not answer to, for every method.
+
+    A page whose own name is re-pointed at 127.0.0.1 (DNS rebinding) reaches the API as its own
+    origin, so the CORS and same-host checks below would let it read and write; its Host header
+    still names that page's site. A demo deployment, served behind its own proxy, skips this.
+    """
+    if DEMO_MODE or _host_name(request.host) in ALLOWED_HOSTS:
+        return None
+    return jsonify({"error": "unknown host refused"}), 403
+
+
+@app.before_request
+def refuse_cross_site_writes() -> ResponseReturnValue | None:
+    """Refuse a request that could change data when a browser sends it from another site.
+
+    CORS only hides responses from other sites; a form post, such as a dataset build upload,
+    still reaches the handler without asking first. A browser names the page's origin on every
+    such request, so one that is neither the API's own host (the portal proxies /api on its own
+    origin) nor in CORS_ORIGINS is refused. Clients that are not browsers send no Origin. A demo
+    deployment refuses every write that changes shared data anyway, and sits behind a proxy.
+    """
+    if DEMO_MODE or request.method in {"GET", "HEAD", "OPTIONS"}:
+        return None
+    origin = request.headers.get("Origin")
+    if origin is None or "*" in CORS_ORIGINS or origin.rstrip("/") in CORS_ORIGINS:
+        return None
+    if urllib.parse.urlsplit(origin).netloc == request.host:
+        return None
+    return jsonify({"error": "cross-site request refused"}), 403
+
+
+@app.before_request
+def refuse_outside_data_dirs() -> ResponseReturnValue | None:
+    """Refuse an image request whose path parameter names a file outside the data folders, for every method."""
+    rule = request.url_rule.rule if request.url_rule is not None else ""
+    for name in _IMAGE_PATH_PARAMS.get(rule, ()):
+        value = request.args.get(name, "").strip()
+        if not value:
+            continue
+        try:
+            _image_path(value)
+        except ValueError:
+            return jsonify({"error": "invalid path"}), 400
+    return None
 
 
 # ── MLflow ─────────────────────────────────────────────────────────────────────
@@ -278,6 +371,7 @@ def get_image() -> ResponseReturnValue:
     if not path:
         return jsonify({"error": "path required"}), 400
     try:
+        path = _image_path(path)
         data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
         img = image_overlay.img_from_bytes(data, max_size)
         buf = io.BytesIO(image_overlay.to_jpeg(img))
@@ -302,6 +396,7 @@ def get_mask() -> ResponseReturnValue:
     if not path:
         return jsonify({"error": "path required"}), 400
     try:
+        path = _image_path(path)
         data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
         colored = image_overlay.mask_as_rgba(data, max_size)
         buf = io.BytesIO(image_overlay.to_png(colored))
@@ -328,6 +423,7 @@ def get_overlay() -> ResponseReturnValue:
     if not img_path or not mask_path:
         return jsonify({"error": "img and mask paths required"}), 400
     try:
+        img_path, mask_path = _image_path(img_path), _image_path(mask_path)
         img_data = local_files.read_thumbnail(img_path, max_size) or local_files.read_file(img_path)
         mask_data = local_files.read_thumbnail(mask_path, max_size) or local_files.read_file(mask_path)
 
@@ -347,7 +443,7 @@ def debug_mask() -> ResponseReturnValue:
     if not path:
         return jsonify({"error": "path required"}), 400
     try:
-        data = local_files.read_file(path)
+        data = local_files.read_file(_image_path(path))
         mask = Image.open(io.BytesIO(data))
         raw = np.array(mask)
         rgba = image_overlay.mask_as_rgba(data)
@@ -476,7 +572,7 @@ def get_annotation_mask() -> ResponseReturnValue:
     if os.path.isabs(path) or ".." in path:
         return jsonify({"error": "invalid path"}), 400
     try:
-        image_data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
+        image_data = local_files.read_thumbnail(path, max_size) or local_files.read_file(_image_path(path))
         img = image_overlay.img_from_bytes(image_data, max_size)
         mask = _load_annotation_mask(path, target_wh=img.size)
         if mask is None:
@@ -508,7 +604,7 @@ def get_annotation_overlay() -> ResponseReturnValue:
     if os.path.isabs(path) or ".." in path:
         return jsonify({"error": "invalid path"}), 400
     try:
-        image_data = local_files.read_thumbnail(path, max_size) or local_files.read_file(path)
+        image_data = local_files.read_thumbnail(path, max_size) or local_files.read_file(_image_path(path))
         base = image_overlay.img_from_bytes(image_data, max_size).convert("RGBA")
         mask = _load_annotation_mask(path, target_wh=base.size)
         if mask is None:
@@ -731,14 +827,16 @@ def create_dataset() -> ResponseReturnValue:
         app.logger.warning("Invalid create_dataset request: %s", exc)
         return jsonify({"error": "invalid dataset creation request"}), 400
 
-    parent_path = os.path.normpath(os.path.join(DATA_ROOT, spec.parent_source))
+    try:
+        parent_path = _data_path(spec.parent_source)
+        cloud_path = _data_path(spec.cloud_source) if spec.complement_top_k else None
+    except ValueError:
+        return jsonify({"error": "invalid dataset creation request"}), 400
     if not os.path.isfile(parent_path):
         return jsonify({"error": "parent dataset not found"}), 404
 
     parents = [spec.parent_source]
-    cloud_path = None
-    if spec.complement_top_k:
-        cloud_path = os.path.normpath(os.path.join(DATA_ROOT, spec.cloud_source))
+    if cloud_path is not None:
         if not os.path.isfile(cloud_path):
             return jsonify({"error": "cloud dataset not found"}), 404
         if spec.cloud_source != spec.parent_source:
@@ -785,9 +883,9 @@ def merge_datasets() -> ResponseReturnValue:
     """
     try:
         spec = dataset_curation.parse_merge_request(request.get_json(silent=True) or {})
+        paths = [_data_path(source) for source in spec.sources]
     except ValueError:
         return jsonify({"error": "invalid merge request"}), 400
-    paths = [os.path.normpath(os.path.join(DATA_ROOT, source)) for source in spec.sources]
     if not all(os.path.isfile(path) for path in paths):
         return jsonify({"error": "dataset not found"}), 404
     if any(_lfs_pointer_info(path) is not None for path in paths):
@@ -830,7 +928,11 @@ def set_dataset_lineage(ds_id: int) -> ResponseReturnValue:
         parents = dataset_curation.parse_parent_sources(request.get_json(silent=True) or {}, rec["source"])
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    if not all(os.path.isfile(os.path.normpath(os.path.join(DATA_ROOT, parent))) for parent in parents):
+    try:
+        parent_paths = [_data_path(parent) for parent in parents]
+    except ValueError:
+        return jsonify({"error": "invalid parent source"}), 400
+    if not all(os.path.isfile(path) for path in parent_paths):
         return jsonify({"error": "parent dataset not found"}), 404
     parent_map = db.dataset_parent_map()
     if any(rec["source"] in _ancestors(parent, parent_map) for parent in parents):
@@ -1125,7 +1227,9 @@ def list_embedding_variants() -> ResponseReturnValue:
     source = request.args.get("source", "").strip()
     if not source:
         return jsonify({"error": "source required"}), 400
-    if os.path.isabs(source) or ".." in source:
+    try:
+        _data_path(source)
+    except ValueError:
         return jsonify({"error": "invalid source path"}), 400
     stem = os.path.splitext(_resolve_emb_source(source) or source)[0]  # child → parent's variants
     base = os.path.basename(stem)  # datalake_4k
@@ -1744,13 +1848,19 @@ def _access_banner() -> str | None:
 
 
 def main() -> None:
-    """Run the Flask development server."""
+    """Run the Flask development server.
+
+    It listens on API_HOST, 127.0.0.1 unless set: the API has no authentication, so only this
+    machine may reach it. The Docker image sets 0.0.0.0, and Compose publishes the port on
+    127.0.0.1 of the host.
+    """
     port = int(os.environ.get("FLASK_PORT", os.environ.get("API_PORT", "5050")))
+    host = os.environ.get("API_HOST", "127.0.0.1").strip() or "127.0.0.1"
     debug = os.environ.get("API_DEBUG", "false").strip().lower() in {"1", "true", "yes", "on"}
     banner = _access_banner()
     if banner:
         print(banner, flush=True)
-    app.run(debug=debug, port=port, host="0.0.0.0")
+    app.run(debug=debug, port=port, host=host)
 
 
 if __name__ == "__main__":

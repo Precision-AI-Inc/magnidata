@@ -760,7 +760,7 @@ function AgriTune() {
       <Note title="What this does">
         <code>docker-compose.agritune.yml</code> passes the AgriTune checkout into the trainer image as a named build context and installs it there.
         It combines with the GPU file: list all three in <code>COMPOSE_FILE</code>, separated by colons.
-        If an AgriTune run fails at once with <em>AgriTune is required for this preset</em>, the trainer image was built without it: repeat the steps above.
+        If the Train dialog marks the AgriTune presets <em>(not installed)</em>, the trainer image was built without it: repeat the steps above.
       </Note>
       <h3>Connect the encoder</h3>
       <p>
@@ -855,7 +855,7 @@ function AgriTune() {
       <table className="guide-table">
         <thead><tr><th>You see</th><th>What to do</th></tr></thead>
         <tbody>
-          <tr><td>The run fails at once with <em>AgriTune is required for this preset</em></td><td>The trainer was built without AgriTune. Follow <em>Turn it on</em> and rebuild.</td></tr>
+          <tr><td>The AgriTune presets are disabled and marked <em>(not installed)</em>, or a run fails at once with <em>AgriTune is required for this preset</em></td><td>The trainer was built without AgriTune. Follow <em>Turn it on</em> and rebuild.</td></tr>
           <tr><td>AgriTune runs train on the CPU although the GPU file is enabled</td><td><code>.env</code> has more than one <code>COMPOSE_FILE</code> line and the last one wins. Keep a single line listing all three files, then rebuild.</td></tr>
           <tr><td>The trainer build says the <code>agritune</code> context is missing</td><td>You enabled the AgriTune file but <code>../agritune/pyproject.toml</code> does not exist. Clone it there, or remove <code>docker-compose.agritune.yml</code> from <code>COMPOSE_FILE</code>.</td></tr>
           <tr><td>The run fails while encoding</td><td>The run log names how many images failed. Check the key in <code>../agritune/.env</code>, that the trainer can reach the encoder URL, and the encoder&apos;s rate limits. Images already encoded stay in the store, so a new run continues where this one stopped.</td></tr>

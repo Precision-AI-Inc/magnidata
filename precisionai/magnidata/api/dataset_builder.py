@@ -305,7 +305,12 @@ def _slugify(name: str) -> str:
 
 
 def _stem_base(stem: str) -> str:
-    return os.path.join(DATA_ROOT, USER_DATA_REL, stem)
+    """Return the path every file named after `stem` starts with, confined to data_user/."""
+    root = os.path.normpath(os.path.join(DATA_ROOT, USER_DATA_REL))
+    base = os.path.normpath(os.path.join(root, stem))
+    if not base.startswith(root + os.sep):
+        raise ValueError(f"dataset stem escapes {USER_DATA_REL}/: {stem!r}")
+    return base
 
 
 def _stem_occupied(stem: str, registered: set[str]) -> bool:
@@ -378,11 +383,11 @@ def _remove_stem_files(
     kept_suffixes: list[str] = list(EMBEDDING_FILE_SUFFIXES) if in_use else []
     if keep_images or any(images_prefix in value for value in other_image_values):
         kept_suffixes.append(STEM_IMAGES_SUFFIX)
+    base = _stem_base(stem)
     manifest = f"{USER_DATA_REL}/{stem}{LEGACY_MANIFEST_SUFFIX}"
     if all(r["source"] != manifest for r in others):
         with contextlib.suppress(OSError):
-            os.remove(os.path.join(DATA_ROOT, manifest))
-    base = _stem_base(stem)
+            os.remove(base + LEGACY_MANIFEST_SUFFIX)
     for suffix in STEM_FILE_SUFFIXES:
         if suffix not in kept_suffixes:
             with contextlib.suppress(OSError):
@@ -410,7 +415,7 @@ def _referenced_stems(emb_source: str | None, image_values: list[str]) -> set[st
     stems = {match[1] for value in image_values if (match := pattern.search(value))}
     if emb_stem := _emb_stem(emb_source):
         stems.add(emb_stem)
-    return stems
+    return stems - {".", ".."}
 
 
 def remove_dataset_files(source: str, emb_source: str | None = None) -> list[str]:

@@ -65,6 +65,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README's quickstart clones over HTTPS, so it works without a GitHub SSH key.
 - `/api/dataset/embeddings/variants` no longer lists a dataset's projections sidecar (`<stem>_projections.json`) as a
   comparison model.
+- Datasets with colour mask PNGs and no COCO labels, such as AgriStress-500 and its tiles, get the coverage and class
+  columns (`annotation_ratio`, `annotated_px_count`, `fg_green_mean`, `bg_coverage`, `class_count`,
+  `smallest_class_ratio`, `class_entropy`, `mean_pairwise_color_dist`, `interclass_color_sim`). Each mask colour is a
+  class and near-black is background. The instance columns stay empty for these datasets, because a class-coloured
+  mask does not separate touching objects.
+- The feature extractor finds COCO labels and masks for images in subfolders of `images/`. It looks under the same
+  subfolder of `labels/` or `masks/` first, then directly in `labels/` or `masks/`, and joins metadata from the dataset
+  folder above `images/`.
+- The feature extractor's provenance file says whether features were computed on full-resolution images or on
+  thumbnails, and records how many images came from each source. It used to say full resolution every time.
+- `class_entropy` is 0 for an image with one class, not -0.000001.
 
 ## [0.1.1] - 2026-10-27
 

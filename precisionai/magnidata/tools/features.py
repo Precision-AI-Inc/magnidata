@@ -3,11 +3,14 @@
 
 """Batch feature-extraction tool — CSV (image_path) in -> dashboard-ready CSV out.
 
-For each image listed in the input CSV, derive its sibling COCO label and metadata
+For each image listed in the input CSV, derive its sibling COCO label, mask and metadata
 from the on-disk layout (``<DATASET>/images/<STEM>.png`` ->
-``<DATASET>/labels/<STEM>.json``, ``<DATASET>/metadata/images_metadata.csv``),
-compute the deterministic feature set, run NIMA, join metadata, and write one output
-row per image in the dashboard schema. A provenance sidecar is written alongside.
+``<DATASET>/labels/<STEM>.json``, ``<DATASET>/masks/<STEM>.png``,
+``<DATASET>/metadata/images_metadata.csv``; an image in a subfolder of ``images/`` looks
+for its label and mask under the same subfolder first), compute the deterministic
+feature set, run NIMA, join metadata, and write one output row per image in the
+dashboard schema. Coverage and class columns come from the COCO label, or from the
+colour mask when there is no label. A provenance sidecar is written alongside.
 
 Usage:
     python -m precisionai.magnidata.tools.features --input in.csv --output out.csv
@@ -24,6 +27,7 @@ import math
 import multiprocessing
 import os
 import sys
+from collections import Counter
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING, TypeVar
@@ -31,7 +35,16 @@ from typing import TYPE_CHECKING, TypeVar
 import numpy as np
 from PIL import Image
 
-from . import coco_labels, image_source, instance_features, metadata_join, pixel_features, provenance, quality_features
+from . import (
+    coco_labels,
+    image_source,
+    instance_features,
+    mask_labels,
+    metadata_join,
+    pixel_features,
+    provenance,
+    quality_features,
+)
 from .schema import CLUSTER, FEATURE_SCHEMA_VERSION, OUTPUT_COLUMNS, blank_row
 
 if TYPE_CHECKING:
@@ -69,6 +82,7 @@ NIMA_LO, NIMA_HI = 3.0, 6.5  # nima higher=better; poorness = (HI-nima)/(HI-LO)
 
 PARAMS = {
     "bg_threshold_sum": 30,
+    "mask_background_max_channel": mask_labels.BACKGROUND_MAX_CHANNEL,
     "class_map_offset": coco_labels.CLASS_MAP_OFFSET,
     "min_instance_px": instance_features.MIN_INSTANCE_PX,
     "luma_coeff": list(pixel_features.LUMA_COEFF),
@@ -116,12 +130,45 @@ def _round(v: bool | float | int | str) -> bool | float | int | str:
     return v
 
 
+IMAGES_DIRNAME = "images"
+
+
+def _dataset_layout(image_path: str) -> tuple[str, str]:
+    """Return (dataset_dir, subdir) for an image under ``<DATASET>/images/[<subdir>/]``.
+
+    The nearest ancestor folder named ``images`` marks the dataset root, so images in
+    subfolders keep their dataset. Without one, the image's grandparent is the dataset,
+    as for any ``<DATASET>/<folder>/<STEM>.png``.
+    """
+    parts = os.path.dirname(image_path).split(os.sep)
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i] == IMAGES_DIRNAME:
+            return os.sep.join(parts[:i]), os.sep.join(parts[i + 1 :])
+    return os.path.dirname(os.path.dirname(image_path)), ""
+
+
+def _sibling_file(image_path: str, dataset_dir: str, folder: str, subdir: str, filename: str) -> str:
+    """Return the first existing ``<folder>/<filename>`` candidate for an image.
+
+    Tries ``<DATASET>/<folder>/<subdir>/<filename>`` (mirroring the image's subfolder),
+    then ``<DATASET>/<folder>/<filename>``, then ``<folder>`` beside the image's own
+    parent folder. When none exists the first candidate is returned, so callers report
+    where the file was expected.
+    """
+    grandparent = os.path.dirname(os.path.dirname(image_path))
+    candidates = [
+        os.path.join(dataset_dir, folder, subdir, filename),
+        os.path.join(dataset_dir, folder, filename),
+        os.path.join(grandparent, folder, filename),
+    ]
+    return next((c for c in candidates if os.path.isfile(c)), candidates[0])
+
+
 def _derive_paths(image_path: str) -> tuple[str, str, str, str, str]:
-    images_dir = os.path.dirname(image_path)
-    dataset_dir = os.path.dirname(images_dir)
+    dataset_dir, subdir = _dataset_layout(image_path)
     stem, ext = os.path.splitext(os.path.basename(image_path))
-    label_path = os.path.join(dataset_dir, "labels", stem + ".json")
-    mask_path = os.path.join(dataset_dir, "masks", stem + ".png")
+    label_path = _sibling_file(image_path, dataset_dir, "labels", subdir, stem + ".json")
+    mask_path = _sibling_file(image_path, dataset_dir, "masks", subdir, stem + ".png")
     return dataset_dir, stem, ext, label_path, mask_path
 
 
@@ -204,23 +251,46 @@ def _apply_rgb_features(
     return rgb, luma, errors
 
 
-def _apply_coco_features(row: dict, rgb: np.ndarray, luma: np.ndarray | None, label_path: str) -> list[str]:
-    """Populate coverage/instance/look-alike-colour columns from the sibling COCO label file."""
+def _apply_class_map_features(row: dict, rgb: np.ndarray, luma: np.ndarray | None, class_map: np.ndarray) -> None:
+    """Populate coverage columns and refine the shadow proxy from a class map."""
+    fg = coco_labels.foreground_from_class_map(class_map)
+    bg = coco_labels.background_from_class_map(class_map)
+    row.update(pixel_features.coverage(fg, rgb))
+    row["bg_coverage"] = float(bg.sum()) / float(bg.size) if bg.size else 0.0
+    # refine illumination shadow proxy to the actual foreground (only if the
+    # RGB block above actually got far enough to compute luma)
+    if luma is not None:
+        row.update(pixel_features.illumination(luma, fg))
+
+
+def _apply_mask_features(row: dict, rgb: np.ndarray, luma: np.ndarray | None, mask_path: str) -> list[str]:
+    """Populate coverage and class columns from the sibling colour mask PNG."""
+    try:
+        class_map = mask_labels.load_class_map(mask_path, target_wh=(rgb.shape[1], rgb.shape[0]))
+        _apply_class_map_features(row, rgb, luma, class_map)
+        row.update(instance_features.class_metrics(rgb, class_map))
+    except Exception as exc:
+        return [f"mask:{exc}"]
+    return []
+
+
+def _apply_coco_features(
+    row: dict, rgb: np.ndarray, luma: np.ndarray | None, label_path: str, mask_path: str
+) -> list[str]:
+    """Populate coverage/instance/look-alike-colour columns from the sibling COCO label file.
+
+    Without a COCO label, a sibling colour mask supplies the coverage and class columns.
+    """
     if not os.path.isfile(label_path):
+        if os.path.isfile(mask_path):
+            return _apply_mask_features(row, rgb, luma, mask_path)
         return ["coco:label_not_found"]
     try:
         labels = coco_labels.parse(label_path)
         # Rasterize at the loaded image's resolution (handles thumbnails too).
         class_map = coco_labels.rasterize_class_map(labels, target_wh=(rgb.shape[1], rgb.shape[0]))
-        fg = coco_labels.foreground_from_class_map(class_map)
-        bg = coco_labels.background_from_class_map(class_map)
-        row.update(pixel_features.coverage(fg, rgb))
+        _apply_class_map_features(row, rgb, luma, class_map)
         row.update(instance_features.instance_metrics(labels, rgb, class_map))
-        row["bg_coverage"] = float(bg.sum()) / float(bg.size) if bg.size else 0.0
-        # refine illumination shadow proxy to the actual foreground (only if the
-        # RGB block above actually got far enough to compute luma)
-        if luma is not None:
-            row.update(pixel_features.illumination(luma, fg))
     except Exception as exc:
         return [f"coco:{exc}"]
     return []
@@ -232,6 +302,12 @@ def process_row(image_path: str, scorer: NimaScorer | None = None, image_mode: s
     ``error_str`` is empty on success. It is no longer an output column (the curated
     schema dropped it) — run() aggregates errors into an end-of-run stderr summary.
     """
+    row, error, _source = _compute_row(image_path, scorer, image_mode)
+    return row, error
+
+
+def _compute_row(image_path: str, scorer: NimaScorer | None, image_mode: str) -> tuple[dict, str, str]:
+    """Compute one output row; also return the image source read, which is not an output column."""
     row = blank_row()
     dataset_dir, stem, ext, label_path, mask_path = _derive_paths(image_path)
     row["image_path"] = image_path
@@ -252,7 +328,7 @@ def process_row(image_path: str, scorer: NimaScorer | None = None, image_mode: s
     errors.extend(rgb_errors)
 
     if rgb is not None:
-        errors.extend(_apply_coco_features(row, rgb, luma, label_path))
+        errors.extend(_apply_coco_features(row, rgb, luma, label_path, mask_path))
 
     # ── Metadata join ─────────────────────────────────────────────────────────────
     try:
@@ -266,18 +342,20 @@ def process_row(image_path: str, scorer: NimaScorer | None = None, image_mode: s
         row["complexity_score"], row["category"], _basis = _complexity(row)
 
     out = {k: _round(row.get(k, "")) for k in OUTPUT_COLUMNS}
-    return out, "; ".join(errors)
+    return out, "; ".join(errors), source
 
 
-def _process_rows(paths: list[str], scorer: NimaScorer | None, image_mode: str, workers: int) -> list[tuple[dict, str]]:
+def _process_rows(
+    paths: list[str], scorer: NimaScorer | None, image_mode: str, workers: int
+) -> list[tuple[dict, str, str]]:
     """Compute rows for every path in input order, across processes when that is safe."""
     if workers > 1 and scorer is None and len(paths) > 1:
         # spawn, not fork: the API server calls this from a multi-threaded process, where fork can deadlock.
         context = multiprocessing.get_context("spawn")
         with ProcessPoolExecutor(max_workers=min(workers, len(paths)), mp_context=context) as pool:
-            results = pool.map(process_row, paths, [None] * len(paths), [image_mode] * len(paths), chunksize=1)
+            results = pool.map(_compute_row, paths, [None] * len(paths), [image_mode] * len(paths), chunksize=1)
             return list(_progress(results, len(paths)))
-    return [process_row(path, scorer, image_mode) for path in _progress(paths, len(paths))]
+    return [_compute_row(path, scorer, image_mode) for path in _progress(paths, len(paths))]
 
 
 def run(
@@ -342,7 +420,9 @@ def run(
     computed = _process_rows(paths, scorer, image_mode, workers)
 
     out_rows, errored = [], []
-    for r, image_path, (row, err) in zip(rows, paths, computed, strict=True):
+    sources: Counter[str] = Counter()
+    for r, image_path, (row, err, source) in zip(rows, paths, computed, strict=True):
+        sources[source] += 1
         for c in cluster_cols:  # passthrough cluster labels (verbatim)
             row[c] = r.get(c) or ""
         out_rows.append(row)
@@ -361,11 +441,17 @@ def run(
         if len(errored) > 20:
             print(f"  … and {len(errored) - 20} more", file=sys.stderr)
 
-    params = dict(PARAMS, image_mode=image_mode)
+    image_sources = dict(sorted(sources.items()))
+    params = dict(PARAMS, image_mode=image_mode, image_sources=image_sources)
     if scorer is not None:
         params.update(scorer.proc_params())
     prov = provenance.build(
-        input_csv, output_csv, params, FEATURE_SCHEMA_VERSION, weight_paths=scorer.weight_paths() if scorer else []
+        input_csv,
+        output_csv,
+        params,
+        FEATURE_SCHEMA_VERSION,
+        weight_paths=scorer.weight_paths() if scorer else [],
+        determinism_notes=[provenance.image_source_note(image_sources), *provenance.DEFAULT_DETERMINISM_NOTES],
     )
     provenance.write(prov, output_csv + ".provenance.json")
 

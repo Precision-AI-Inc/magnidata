@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from . import coco_labels, image_source, pixel_features, quality_features
+from . import coco_labels, image_source, mask_labels, pixel_features, quality_features
 from .features import process_row, run
 from .metadata_join import camera_angle_category
 from .schema import OUTPUT_COLUMNS
@@ -251,3 +251,150 @@ def test_parallel_run_matches_serial_run(tmp_path):
     run(str(source), str(parallel), skip_nima=True, workers=3)
 
     assert serial.read_text() == parallel.read_text()
+
+
+def _write_coco(path, w, h, annotations):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    coco = {
+        "images": [{"id": 1, "file_name": "x.png", "height": h, "width": w}],
+        "annotations": [
+            {"id": i + 1, "image_id": 1, "category_id": c, "segmentation": [seg]}
+            for i, (c, seg) in enumerate(annotations)
+        ],
+        "categories": CATS,
+    }
+    with open(path, "w") as f:
+        json.dump(coco, f)
+
+
+def _save_png(path, rgb):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    Image.fromarray(rgb, "RGB").save(path)
+    return path
+
+
+def test_nested_images_find_mirrored_label(tmp_path):
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "images" / "siteA" / "row2" / "s.png"), np.zeros((40, 40, 3), np.uint8))
+    _write_coco(str(ds / "labels" / "siteA" / "row2" / "s.json"), 40, 40, [(1, _rect(0, 0, 20, 40))])
+    row, err = process_row(img)
+    assert err == ""
+    assert row["annotation_ratio"] == pytest.approx(0.5, abs=0.05)
+    assert row["instance_count"] == 1
+
+
+def test_nested_images_fall_back_to_flat_label_and_metadata(tmp_path):
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "images" / "siteA" / "s.png"), np.zeros((40, 40, 3), np.uint8))
+    _write_coco(str(ds / "labels" / "s.json"), 40, 40, [(1, _rect(0, 0, 40, 10))])
+    os.makedirs(ds / "metadata")
+    (ds / "metadata" / "images_metadata.csv").write_text("id,gsd\ns,0.5\n")
+    row, err = process_row(img)
+    assert err == ""
+    assert row["annotation_ratio"] == pytest.approx(0.25, abs=0.05)
+    assert row["gsd"] == 0.5  # metadata joined from the dataset root, not images/
+
+
+def test_non_images_folder_keeps_grandparent_label(tmp_path):
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "raw" / "s.png"), np.zeros((40, 40, 3), np.uint8))
+    _write_coco(str(ds / "labels" / "s.json"), 40, 40, [(1, _rect(0, 0, 20, 40))])
+    row, err = process_row(img)
+    assert err == ""
+    assert row["annotation_ratio"] == pytest.approx(0.5, abs=0.05)
+
+
+def _two_class_mask(h, w):
+    """Left half class A (green), top-right quarter class B (yellow), rest near-black."""
+    mask = np.full((h, w, 3), 5, np.uint8)  # near-black, not pure black: still background
+    mask[:, : w // 2] = (49, 140, 52)
+    mask[: h // 2, w // 2 :] = (154, 178, 54)
+    return mask
+
+
+def test_mask_only_dataset_gets_coverage_and_class_columns(tmp_path):
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "images" / "s.png"), np.full((40, 40, 3), 120, np.uint8))
+    _save_png(str(ds / "masks" / "s.png"), _two_class_mask(40, 40))
+    row, err = process_row(img)
+    assert err == ""
+    assert row["annotation_ratio"] == pytest.approx(0.75)
+    assert row["annotated_px_count"] == 1200
+    assert row["bg_coverage"] == pytest.approx(0.25)
+    assert row["fg_green_mean"] == pytest.approx(120.0)
+    assert row["class_count"] == 2
+    assert row["smallest_class_ratio"] == pytest.approx(1 / 3, abs=1e-5)
+    assert row["class_entropy"] == pytest.approx(0.918296, abs=1e-4)
+    assert row["mean_pairwise_color_dist"] == 0.0  # both classes cover the same grey pixels
+    assert row["interclass_color_sim"] == 1.0
+    assert row["instance_count"] == ""  # a class-coloured mask has no instances
+
+
+def test_mask_in_nested_folder_is_resized_to_the_image(tmp_path):
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "images" / "siteA" / "s.png"), np.zeros((20, 20, 3), np.uint8))
+    _save_png(str(ds / "masks" / "siteA" / "s.png"), _two_class_mask(80, 80))  # e.g. image read as a thumbnail
+    row, err = process_row(img)
+    assert err == ""
+    assert row["annotated_px_count"] == 300
+    assert row["annotation_ratio"] == pytest.approx(0.75)
+    assert row["class_count"] == 2
+
+
+def test_coco_label_wins_over_mask(tmp_path):
+    img = make_dataset(tmp_path, "s", np.zeros((40, 40, 3), np.uint8), [(1, _rect(0, 0, 20, 40))], CATS)
+    _save_png(str(tmp_path / "ds1" / "masks" / "s.png"), _two_class_mask(40, 40))
+    row = pr(img)
+    assert row["annotation_ratio"] == pytest.approx(0.5, abs=0.05)
+    assert row["class_count"] == 1
+    assert row["class_entropy"] == 0.0  # a single class has no mix, never a negative entropy
+    assert row["instance_count"] == 1
+
+
+def test_unreadable_mask_is_reported(tmp_path):
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "images" / "s.png"), np.zeros((20, 20, 3), np.uint8))
+    os.makedirs(ds / "masks")
+    (ds / "masks" / "s.png").write_bytes(b"not a png")
+    row, err = process_row(img)
+    assert err.startswith("mask:")
+    assert row["annotation_ratio"] == ""
+    assert row["width"] == 20
+
+
+def test_mask_class_map_is_deterministic(tmp_path):
+    path = _save_png(str(tmp_path / "m.png"), _two_class_mask(10, 10))
+    class_map = mask_labels.load_class_map(path)
+    bg = coco_labels.BACKGROUND_CATEGORY_ID + coco_labels.CLASS_MAP_OFFSET
+    assert class_map[9, 9] == bg
+    assert class_map[0, 0] == bg + 1  # (49, 140, 52) packs below (154, 178, 54)
+    assert class_map[0, 9] == bg + 2
+    assert mask_labels.load_class_map(path, target_wh=(5, 5)).shape == (5, 5)
+
+
+def _provenance_of(tmp_path, image_mode):
+    img = make_dataset(tmp_path, "s", np.zeros((20, 20, 3), np.uint8), [(1, _rect(0, 0, 10, 20))], CATS)
+    source = tmp_path / "input.csv"
+    source.write_text(f"image_path\n{img}\n")
+    out = tmp_path / "out.csv"
+    run(str(source), str(out), skip_nima=True, image_mode=image_mode)
+    with open(str(out) + ".provenance.json") as f:
+        return json.load(f)
+
+
+def test_provenance_records_full_resolution_source(tmp_path):
+    prov = _provenance_of(tmp_path, "fullres")
+    assert prov["params"]["image_sources"] == {"fullres": 1}
+    assert prov["determinism_notes"][0] == "Features computed on full-resolution images (no resize/thumbnail)."
+
+
+def test_provenance_records_thumbnail_source(tmp_path, monkeypatch):
+    thumbs = tmp_path / "th720"
+    monkeypatch.setattr(image_source, "DATALAKE_ROOT", str(tmp_path))
+    monkeypatch.setattr(image_source, "THUMB_ROOTS", [("thumb720", str(thumbs))])
+    _save_png(str(thumbs / "ds1" / "images" / "s.png"), np.zeros((10, 10, 3), np.uint8))
+    prov = _provenance_of(tmp_path, "thumbnail")
+    assert prov["params"]["image_sources"] == {"thumb720": 1}
+    note = prov["determinism_notes"][0]
+    assert "1 720 px thumbnail" in note
+    assert "full-resolution images (no resize" not in " ".join(prov["determinism_notes"])

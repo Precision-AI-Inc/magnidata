@@ -42,8 +42,6 @@ try:
 except ImportError:
     tqdm = None
 
-Image.MAX_IMAGE_PIXELS = None  # these are legitimately large images
-
 ROUND_DECIMALS = 6
 T = TypeVar("T")
 

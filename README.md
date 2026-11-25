@@ -56,7 +56,9 @@ docker compose up --build
 ```
 
 The stack has no authentication, so it listens on `127.0.0.1` only: other machines cannot reach it, and the API
-answers cross-origin browser requests only from the portal. The ports, the address they are published on, the
+answers cross-origin browser requests only from the portal. It also answers only requests addressed to `localhost`,
+`127.0.0.1` or `[::1]`; publish it on another address with `MAGNIDATA_BIND_ADDRESS` and list the name you reach it
+by in `MAGNIDATA_ALLOWED_HOSTS`. The ports, the address they are published on, the
 Compose project name and the user the containers run as are read from a git-ignored `.env` next to
 `docker-compose.yml`; [`.env.example`](.env.example) lists each one with its default. A second checkout on the same
 machine sets its own `COMPOSE_PROJECT_NAME` and ports there to run beside the first. The `api` and `trainer`

@@ -30,7 +30,12 @@ def deployment(tmp_path, monkeypatch):
     """A normal deployment whose DATA_ROOT holds a dataset, the notes database and confi.yaml."""
     root = tmp_path / "root"
     app_module = load_app(
-        root, monkeypatch, MAGNIDATA_DEMO_MODE=None, MAGNIDATA_PORTAL_URL=None, MAGNIDATA_CORS_ORIGINS=None
+        root,
+        monkeypatch,
+        MAGNIDATA_DEMO_MODE=None,
+        MAGNIDATA_PORTAL_URL=None,
+        MAGNIDATA_CORS_ORIGINS=None,
+        MAGNIDATA_ALLOWED_HOSTS=None,
     )
     (root / "data_user" / "ds.csv").write_text("image_path\ndata_user/ds/images/a.png\n")
     _write_png(root / "data_user" / "ds" / "images" / "a.png")
@@ -116,6 +121,51 @@ def test_a_demo_deployment_lets_any_page_read_it(tmp_path, monkeypatch):
         response = client.get("/api/health", headers={"Origin": EVIL})
 
     assert response.headers.get("Access-Control-Allow-Origin") in {"*", EVIL}
+
+
+# ── Host header ────────────────────────────────────────────────────────────────
+
+REBOUND = "http://evil.example:5175"
+
+
+def test_a_rebound_page_cannot_write_as_its_own_origin(deployment):
+    client, _, _ = deployment
+
+    response = client.delete("/api/datasets/7", base_url=REBOUND, headers={"Origin": REBOUND})
+
+    assert response.status_code == 403
+    assert response.get_json() == {"error": "unknown host refused"}
+
+
+def test_a_read_addressed_to_another_host_is_refused(deployment):
+    client, _, _ = deployment
+
+    assert client.get("/api/health", base_url=REBOUND).status_code == 403
+
+
+@pytest.mark.parametrize(
+    "base_url", ["http://localhost:5051", "http://127.0.0.1:5051", "http://[::1]:5051", "http://api:5050", "http://api"]
+)
+def test_this_machine_and_the_compose_service_name_are_answered(deployment, base_url):
+    client, _, _ = deployment
+
+    assert client.get("/api/health", base_url=base_url).status_code == 200
+
+
+def test_configured_hosts_are_answered(tmp_path, monkeypatch):
+    app_module = load_app(
+        tmp_path, monkeypatch, MAGNIDATA_DEMO_MODE=None, MAGNIDATA_ALLOWED_HOSTS=" lab-box.local:5175, 10.0.0.5"
+    )
+    with app_module.app.test_client() as client:
+        assert client.get("/api/health", base_url="http://lab-box.local:5051").status_code == 200
+        assert client.get("/api/health", base_url="http://10.0.0.5:5175").status_code == 200
+        assert client.get("/api/health", base_url=REBOUND).status_code == 403
+
+
+def test_a_demo_deployment_answers_its_public_host(tmp_path, monkeypatch):
+    app_module = load_app(tmp_path, monkeypatch, MAGNIDATA_DEMO_MODE="1", MAGNIDATA_ALLOWED_HOSTS=None)
+    with app_module.app.test_client() as client:
+        assert client.get("/api/health", base_url="https://someone-magnidata.hf.space").status_code == 200
 
 
 # ── Dataset paths ──────────────────────────────────────────────────────────────

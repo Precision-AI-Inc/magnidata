@@ -84,8 +84,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A request that could change data, sent by a browser from any other site, is refused with 403 even when it needs no
   CORS preflight, such as a form upload to `/api/datasets/build`. A demo deployment still allows any origin. The
   compose nginx forwards the `Host` header with its port, so the portal's own requests are recognised.
+- The API refuses, with 403, a request whose `Host` header is not `localhost`, `127.0.0.1`, `[::1]` or the compose
+  service name `api` (on any port), or a name listed in `MAGNIDATA_ALLOWED_HOSTS`. A web page whose own name was
+  re-pointed at this machine (DNS rebinding) passed the same-host check and could read and change data. Demo mode
+  skips the check.
 - Every path a request names is confined to `data/`, `data_user/` and `image_sets/` under the data root:
-  `/api/dataset/csv` and the other `source` parameters, and the image endpoints' `path`, `img` and `mask`. Before,
+  `/api/dataset/csv` and the other `source` parameters, the image endpoints' `path`, `img` and `mask`, and a run's
+  `dataset_source` when it is linked, matched, trained on or used for inference. Before,
   `/api/dataset/csv?source=db/notes.db` returned the notes database, `source=confi.yaml` the catalog, and
   `/api/image?path=` opened any absolute path in the container. An image endpoint still takes an absolute path under
   the configured datalake (`DATALAKE_ROOT`) or a URL on an allowlisted host, except in demo mode.

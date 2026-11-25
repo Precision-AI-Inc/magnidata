@@ -49,9 +49,6 @@ DATA_ROOT = os.environ.get("DATA_ROOT", ".")
 USER_DATA_REL = "data_user"
 USER_DATA_DIR = os.path.join(DATA_ROOT, USER_DATA_REL)
 os.makedirs(USER_DATA_DIR, exist_ok=True)
-# The folders under DATA_ROOT that hold datasets and images. A path a request names must point into
-# one of them: the rest of DATA_ROOT holds the notes database, confi.yaml and the API's own code.
-DATA_DIRS = ("data", USER_DATA_REL, "image_sets")
 
 # dataset_builder must be imported before precisionai.magnidata.tools below — importing it
 # inserts the precisionai package root onto sys.path (see its own _find_package_root),
@@ -68,6 +65,7 @@ import mlflow_store
 import projections
 
 from precisionai.magnidata.tools import coco_labels as coco_labels_mod
+from precisionai.magnidata.training import dataset_check
 
 db.init_db()
 
@@ -118,23 +116,17 @@ def _lfs_pointer_info(path: str) -> dict | None:
 
 
 def _data_path(relative_path: str) -> str:
-    """Resolve a DATA_ROOT-relative path inside one of DATA_DIRS, preventing traversal and symlink escape."""
-    if not relative_path or os.path.isabs(relative_path):
+    """Resolve a DATA_ROOT-relative path inside one of the data folders, preventing traversal and symlink escape."""
+    path = dataset_check.resolve_data_path(DATA_ROOT, relative_path)
+    if path is None:
         raise ValueError("invalid data path")
-    root = os.path.realpath(DATA_ROOT)
-    path = os.path.realpath(os.path.join(root, relative_path))
-    for name in DATA_DIRS:
-        base = os.path.realpath(os.path.join(root, name))
-        # A startswith check on the resolved path (not commonpath) is what code scanning recognises as containment.
-        if path.startswith(base.rstrip(os.sep) + os.sep):
-            return path
-    raise ValueError("invalid data path")
+    return str(path)
 
 
 def _image_path(path: str) -> str:
     """Return the file or URL an image parameter names, refusing anything outside the data folders.
 
-    A relative path must lie in one of DATA_DIRS. An absolute path must lie under the configured
+    A relative path must lie in one of dataset_check.DATA_DIRS. An absolute path must lie under the configured
     datalake (DATALAKE_ROOT), and a URL must name an allowlisted host (local_files.read_file checks
     that). A demo deployment, open to anyone, takes neither: every demo image is under DATA_ROOT.
     """
@@ -225,6 +217,28 @@ CORS_ORIGINS = _cors_origins()
 CORS(app, origins=CORS_ORIGINS)
 
 
+def _host_name(host: str) -> str:
+    """Return the lower-case name in a Host value, without its port or IPv6 brackets."""
+    try:
+        return (urllib.parse.urlsplit("//" + host.strip()).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _allowed_hosts() -> frozenset[str]:
+    """Return the Host names the API answers to.
+
+    This machine (localhost, 127.0.0.1, ::1) and the compose service name the portal's nginx
+    reaches it by (api), on any port, plus the names in MAGNIDATA_ALLOWED_HOSTS (comma-separated),
+    for a stack published on another address with MAGNIDATA_BIND_ADDRESS.
+    """
+    configured = os.environ.get("MAGNIDATA_ALLOWED_HOSTS", "").split(",")
+    return frozenset({"localhost", "127.0.0.1", "::1", "api"} | {_host_name(h) for h in configured if h.strip()})
+
+
+ALLOWED_HOSTS = _allowed_hosts()
+
+
 @app.get("/api/config")
 def get_config() -> ResponseReturnValue:
     """Return the deployment settings the dashboard adapts to."""
@@ -261,6 +275,19 @@ if DEMO_MODE:
 
     # There is no MLflow server here: answer its questions at once, instead of retrying a dead address on every poll.
     mlflow_store.set_store(mlflow_store.OfflineStore())
+
+
+@app.before_request
+def refuse_unknown_hosts() -> ResponseReturnValue | None:
+    """Refuse a request whose Host header the API does not answer to, for every method.
+
+    A page whose own name is re-pointed at 127.0.0.1 (DNS rebinding) reaches the API as its own
+    origin, so the CORS and same-host checks below would let it read and write; its Host header
+    still names that page's site. A demo deployment, served behind its own proxy, skips this.
+    """
+    if DEMO_MODE or _host_name(request.host) in ALLOWED_HOSTS:
+        return None
+    return jsonify({"error": "unknown host refused"}), 403
 
 
 @app.before_request

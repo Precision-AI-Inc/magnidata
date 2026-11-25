@@ -51,6 +51,8 @@ services:
       MAGNIDATA_PORTAL_URL: "http://localhost:${MAGNIDATA_PORTAL_PORT:-5175}"
       MAGNIDATA_API_URL: "http://localhost:${MAGNIDATA_API_PORT:-5051}"
       MAGNIDATA_CORS_ORIGINS: ${MAGNIDATA_CORS_ORIGINS:-}
+      # Host names the API answers to besides localhost, 127.0.0.1, ::1 and api (comma-separated).
+      MAGNIDATA_ALLOWED_HOSTS: ${MAGNIDATA_ALLOWED_HOSTS:-}
       # The host user the server runs as (docker/run-as-host-user.sh); empty means the owner of data/.
       MAGNIDATA_UID: ${MAGNIDATA_UID:-}
       MAGNIDATA_GID: ${MAGNIDATA_GID:-}

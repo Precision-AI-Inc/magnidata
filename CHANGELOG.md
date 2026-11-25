@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The README links the technical report (`docs/paper/magnidata-technical-report.pdf`) right after its opening summary,
+  with its title and one sentence on what it covers, and a *Technical report* badge next to the others.
 - `magnidata` is ready to publish to PyPI. The package declares console scripts `magnidata-features`,
   `magnidata-embeddings`, `magnidata-train` and `magnidata-attach` (the `python -m` forms still work); its PyPI page
   text is `README.pypi.md`, which says what the installed package does and does not run and uses absolute links; and

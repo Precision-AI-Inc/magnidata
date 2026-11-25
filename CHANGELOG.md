@@ -80,7 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same name while the build runs gets a new name instead of being overwritten and then deleted by the build. A name
   is only reused once nothing is left under it.
 - Deleting a dataset removes everything stored under its name (embeddings, projections, staged images, provenance and
-  the feature manifest older builds left beside the CSV), whatever its parents are. Before, a dataset whose parents
+  the feature manifest older builds left beside the CSV), whatever its parents are. Embeddings and images that
+  another dataset still uses, such as a selection saved from it, are kept and logged, and removed once the last
+  dataset using them is deleted. Before, a dataset whose parents
   were set after it was built, such as a partition part, left its images, embeddings and `_input.csv` behind, where
   they could attach to the next dataset with that name. Builds from a server folder no longer write that manifest
   beside the dataset at all.

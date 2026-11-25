@@ -362,45 +362,19 @@ def _reserve_demo_stem(stem: str) -> None:
         pass
 
 
-def _references_images(csv_path: str, images_prefix: str) -> bool:
+def _image_values(csv_path: str) -> list[str]:
     try:
         with open(csv_path, newline="") as f:
-            return any(
-                images_prefix in (row.get(column) or "") for row in csv.DictReader(f) for column in IMAGE_PATH_COLUMNS
-            )
+            return [row.get(column) or "" for row in csv.DictReader(f) for column in IMAGE_PATH_COLUMNS]
     except (OSError, UnicodeDecodeError, csv.Error):
-        return False
+        return []
 
 
-def remove_dataset_files(source: str) -> list[str]:
-    """Delete what a dataset keeps under data_user/: its CSV and the files and folders named after its stem.
-
-    Stems are only handed out while nothing exists under them (see `reserve_stem`), so
-    these files belong to this dataset however it was made and whatever its lineage says
-    now. Its embeddings (``<stem>.json``, its provenance and projections) are kept while
-    another registered dataset still takes its embeddings from this one, and its images
-    folder is kept while another registered dataset's rows still point into it. A leftover
-    ``<stem>_input.csv`` manifest is removed too, unless it is another registered dataset's CSV.
-
-    Parameters
-    ----------
-    source : str
-        The dataset's CSV path relative to DATA_ROOT; must be directly under data_user/.
-        The dataset must already be unregistered.
-
-    Returns
-    -------
-    list of str
-        Paths relative to DATA_ROOT that were kept because other datasets still use them.
-    """
-    folder, filename = os.path.split(source)
-    stem = filename.removesuffix(".csv")
-    if folder != USER_DATA_REL or stem == filename or stem in ("", ".", ".."):
-        raise ValueError(f"not a dataset CSV directly under {USER_DATA_REL}/: {source!r}")
-    others = db.list_created_datasets()
-    images_rel = f"{USER_DATA_REL}/{stem}{STEM_IMAGES_SUFFIX}"
+def _remove_stem_files(stem: str, others: list[dict], other_image_values: list[str]) -> list[str]:
+    source = f"{USER_DATA_REL}/{stem}.csv"
+    images_prefix = f"{USER_DATA_REL}/{stem}{STEM_IMAGES_SUFFIX}/"
     kept_suffixes = list(EMBEDDING_FILE_SUFFIXES) if any(r["emb_source"] == source for r in others) else []
-    if any(_references_images(os.path.join(DATA_ROOT, r["source"]), images_rel + "/") for r in others):
+    if any(images_prefix in value for value in other_image_values):
         kept_suffixes.append(STEM_IMAGES_SUFFIX)
     manifest = f"{USER_DATA_REL}/{stem}{LEGACY_MANIFEST_SUFFIX}"
     if all(r["source"] != manifest for r in others):
@@ -414,6 +388,59 @@ def remove_dataset_files(source: str) -> list[str]:
     if STEM_IMAGES_SUFFIX not in kept_suffixes:
         shutil.rmtree(base + STEM_IMAGES_SUFFIX, ignore_errors=True)
     return [f"{USER_DATA_REL}/{stem}{suffix}" for suffix in kept_suffixes if os.path.lexists(base + suffix)]
+
+
+def _referenced_stems(emb_source: str | None, image_values: list[str]) -> set[str]:
+    pattern = re.compile(rf"(?:^|/){USER_DATA_REL}/([^/]+){STEM_IMAGES_SUFFIX}/")
+    stems = {match[1] for value in image_values if (match := pattern.search(value))}
+    if emb_source:
+        folder, filename = os.path.split(emb_source)
+        if folder == USER_DATA_REL and filename.endswith(".csv"):
+            stems.add(filename.removesuffix(".csv"))
+    return stems
+
+
+def remove_dataset_files(source: str, emb_source: str | None = None) -> list[str]:
+    """Delete what a dataset keeps under data_user/: its CSV and the files and folders named after its stem.
+
+    Stems are only handed out while nothing exists under them (see `reserve_stem`), so
+    these files belong to this dataset however it was made and whatever its lineage says
+    now. Its embeddings (``<stem>.json``, its provenance and projections) are kept while
+    another registered dataset still takes its embeddings from this one, and its images
+    folder is kept while another registered dataset's rows still point into it. A leftover
+    ``<stem>_input.csv`` manifest is removed too, unless it is another registered dataset's CSV.
+
+    Files kept that way when an earlier dataset was deleted are removed here once this was
+    the last dataset using them: the embeddings of `emb_source` and the images folders this
+    dataset's rows point into, for each such stem that no longer has a dataset CSV.
+
+    Parameters
+    ----------
+    source : str
+        The dataset's CSV path relative to DATA_ROOT; must be directly under data_user/.
+        The dataset must already be unregistered.
+    emb_source : str, optional
+        The dataset path whose embeddings this dataset used.
+
+    Returns
+    -------
+    list of str
+        Paths relative to DATA_ROOT that were kept because other datasets still use them.
+    """
+    folder, filename = os.path.split(source)
+    stem = filename.removesuffix(".csv")
+    if folder != USER_DATA_REL or stem == filename or stem in ("", ".", ".."):
+        raise ValueError(f"not a dataset CSV directly under {USER_DATA_REL}/: {source!r}")
+    others = db.list_created_datasets()
+    registered = {r["source"] for r in others}
+    other_image_values = [v for r in others for v in _image_values(os.path.join(DATA_ROOT, r["source"]))]
+    referenced = _referenced_stems(emb_source, _image_values(os.path.join(DATA_ROOT, source)))
+    kept = _remove_stem_files(stem, others, other_image_values)
+    for orphan in sorted(referenced - {stem}):
+        orphan_csv = f"{USER_DATA_REL}/{orphan}.csv"
+        if orphan_csv not in registered and not os.path.lexists(os.path.join(DATA_ROOT, orphan_csv)):
+            kept += _remove_stem_files(orphan, others, other_image_values)
+    return kept
 
 
 def _count_csv_rows(path: str) -> int:

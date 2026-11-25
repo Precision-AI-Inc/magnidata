@@ -860,7 +860,7 @@ def remove_dataset(ds_id: int) -> ResponseReturnValue:
         return jsonify({"error": "dataset not found"}), 404
     src = rec["source"]
     with contextlib.suppress(ValueError):  # a source outside data_user/ has no files of ours to remove
-        kept = dataset_builder.remove_dataset_files(src)
+        kept = dataset_builder.remove_dataset_files(src, rec["emb_source"])
         if kept:
             app.logger.info("Deleted dataset %s; kept %s, still used by other datasets", src, ", ".join(kept))
     # Drop any cached compute results for this source

@@ -988,6 +988,61 @@ def test_remove_dataset_files_removes_images_no_other_dataset_points_into(tmp_pa
     assert sorted(p.name for p in user_data.iterdir()) == ["other.csv"]
 
 
+def _built_dataset(user_data, stem):
+    for name in (f"{stem}.csv", f"{stem}.json", f"{stem}_projections.json"):
+        (user_data / name).write_text("x")
+    (user_data / f"{stem}_images" / "images").mkdir(parents=True)
+    (user_data / f"{stem}_images" / "images" / "a.png").write_text("x")
+    return db.create_dataset_record(stem, "", f"data_user/{stem}.csv", None, f"data_user/{stem}.csv", 1)
+
+
+def _delete(rec):
+    db.delete_created_dataset(rec["id"])
+    return dataset_builder.remove_dataset_files(rec["source"], rec["emb_source"])
+
+
+def test_deleting_the_last_selection_removes_files_kept_for_it(tmp_path):
+    user_data = tmp_path / "data_user"
+    root = _built_dataset(user_data, "r")
+    (user_data / "s.csv").write_text("image_path,cluster\ndata_user/r_images/images/a.png,0\n")
+    selection = db.create_dataset_record("S", "", "data_user/s.csv", root["source"], root["source"], 1)
+
+    assert _delete(root) == ["data_user/r.json", "data_user/r_projections.json", "data_user/r_images"]
+    assert _delete(selection) == []
+
+    assert list(user_data.iterdir()) == []
+    assert dataset_builder.reserve_stem("r") == "r"
+
+
+def test_deleting_the_last_merge_removes_every_images_folder_kept_for_it(tmp_path):
+    user_data = tmp_path / "data_user"
+    first, second = _built_dataset(user_data, "r1"), _built_dataset(user_data, "r2")
+    (user_data / "m.csv").write_text(
+        "image_path,cluster\ndata_user/r1_images/images/a.png,0\ndata_user/r2_images/images/a.png,0\n"
+    )
+    merge = db.create_dataset_record("M", "", "data_user/m.csv", first["source"], None, 2)
+
+    assert _delete(first) == ["data_user/r1_images"]
+    assert _delete(second) == ["data_user/r2_images"]
+    assert _delete(merge) == []
+
+    assert list(user_data.iterdir()) == []
+
+
+def test_deleting_a_selection_leaves_files_another_selection_still_uses(tmp_path):
+    user_data = tmp_path / "data_user"
+    root = _built_dataset(user_data, "r")
+    rows = "image_path,cluster\ndata_user/r_images/images/a.png,0\n"
+    (user_data / "s1.csv").write_text(rows)
+    (user_data / "s2.csv").write_text(rows)
+    s1 = db.create_dataset_record("S1", "", "data_user/s1.csv", root["source"], root["source"], 1)
+    db.create_dataset_record("S2", "", "data_user/s2.csv", root["source"], root["source"], 1)
+    _delete(root)
+
+    assert _delete(s1) == ["data_user/r.json", "data_user/r_projections.json", "data_user/r_images"]
+    assert (user_data / "r_images" / "images" / "a.png").is_file()
+
+
 @pytest.mark.parametrize("source", ["data/a.csv", "data_user/../a.csv", "data_user/sub/a.csv", "data_user/a.json"])
 def test_remove_dataset_files_refuses_anything_but_a_data_user_csv(source):
     with pytest.raises(ValueError, match="not a dataset CSV"):

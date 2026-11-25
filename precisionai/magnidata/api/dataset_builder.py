@@ -375,7 +375,7 @@ def _remove_stem_files(
 ) -> list[str]:
     images_prefix = f"{USER_DATA_REL}/{stem}{STEM_IMAGES_SUFFIX}/"
     in_use = any(_emb_stem(r["emb_source"]) == stem for r in others)
-    kept_suffixes = list(EMBEDDING_FILE_SUFFIXES) if in_use else []
+    kept_suffixes: list[str] = list(EMBEDDING_FILE_SUFFIXES) if in_use else []
     if keep_images or any(images_prefix in value for value in other_image_values):
         kept_suffixes.append(STEM_IMAGES_SUFFIX)
     manifest = f"{USER_DATA_REL}/{stem}{LEGACY_MANIFEST_SUFFIX}"

@@ -133,17 +133,6 @@ def test_served_document_is_the_file(app_module):
     assert resp.get_json() == SPEC
 
 
-def test_a_deployment_without_the_document_answers_json_503(app_module, tmp_path, monkeypatch):
-    # The Space image is built by its own copy of the Dockerfile, which can leave openapi.yaml out.
-    monkeypatch.setattr(app_module, "OPENAPI_PATH", str(tmp_path / "missing" / "openapi.yaml"))
-    app_module._openapi_document.cache_clear()
-    resp = app_module.app.test_client().get("/api/openapi.json")
-    assert resp.status_code == 503
-    assert resp.mimetype == "application/json"
-    assert "OpenAPI document" in resp.get_json()["error"]
-    _assert_documented("/api/openapi.json", resp)
-
-
 def _assert_documented(template: str, resp: TestResponse) -> None:
     """Fail unless ``resp`` is a status, media type and (for JSON) body that ``template`` documents."""
     assert template in SPEC["paths"], template

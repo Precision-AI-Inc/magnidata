@@ -106,13 +106,6 @@ paths:
           content:
             application/json:
               schema: {type: object}
-        "503":
-          description: This deployment was built without the document.
-          content:
-            application/json:
-              schema: {$ref: "#/components/schemas/Error"}
-              example:
-                error: the OpenAPI document is not included in this deployment
   /api/mlflow/status:
     get:
       tags: [experiments]

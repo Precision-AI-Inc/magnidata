@@ -259,13 +259,7 @@ def _openapi_document() -> str:
 @app.get("/api/openapi.json")
 def get_openapi_document() -> ResponseReturnValue:
     """Return the OpenAPI 3.1 document describing the API's read endpoints."""
-    try:
-        document = _openapi_document()
-    except FileNotFoundError:
-        # An image built without openapi.yaml (the Space repo keeps its own copy of the Dockerfile, which can lag
-        # behind this one) must still answer in JSON rather than with an HTML 500.
-        return jsonify({"error": "the OpenAPI document is not included in this deployment"}), 503
-    return app.response_class(document, mimetype="application/json")
+    return app.response_class(_openapi_document(), mimetype="application/json")
 
 
 if DEMO_MODE:

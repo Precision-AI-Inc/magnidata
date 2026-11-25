@@ -73,11 +73,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `GET /api/openapi.json` answers a JSON 503 (`{"error": ...}`, documented in `openapi.yaml`) instead of an HTML
-  500 when the image was built without `openapi.yaml`. The public demo did this: the Space repository keeps its own
-  copy of `deploy/huggingface/Dockerfile`, and that copy predates the line that ships the document. Re-upload
-  `deploy/huggingface/Dockerfile` to the Space (see `deploy/huggingface/MAINTAINING.md`) before rebuilding it so the
-  demo serves the document itself.
 - The image preview is titled with the row's file name when the dataset has no stem column (built datasets have
   none), instead of the zero-based row index such as "0"; with no image column either it reads "Row N".
 - The Explorer's 3D view no longer uses the deprecated `THREE.Clock`, so Three.js stops logging a deprecation

@@ -6,6 +6,7 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE.md)
 [![Hugging Face Space](https://img.shields.io/badge/Hugging%20Face-Live%20demo-FFD21E?logo=huggingface&logoColor=black)](https://huggingface.co/spaces/precisionaiinc/magnidata)
+[![Technical report](https://img.shields.io/badge/Technical%20report-PDF-B31B1B)](docs/paper/magnidata-technical-report.pdf)
 
 ---
 
@@ -13,6 +14,11 @@ Precision AI Open Source Data Visualization Tool for exploring image datasets: a
 deterministic feature-extraction pipeline, a Flask API, and a React/Three.js dashboard
 for browsing images, segmentation masks, and embeddings — including a live 3D
 PCA/t-SNE/cluster view over a dataset's embedding space.
+
+**Technical report:** [*MagniData: Opening the Black Box After Every Epoch*](docs/paper/magnidata-technical-report.pdf)
+(PDF, five pages) relates the content of a dataset to the learning behaviour of a model: per-image training signals
+recorded at every epoch sit in a common space with photometric, geometric and embedding features, and the report runs
+four models on the same 875 tiles of an agricultural segmentation dataset and compares them tile by tile.
 
 **Try it without installing anything:** the [live demo on Hugging Face](https://huggingface.co/spaces/precisionaiinc/magnidata)
 has COCO128 and AgriStress-500 already loaded. Its HTTP API answers read-only requests at

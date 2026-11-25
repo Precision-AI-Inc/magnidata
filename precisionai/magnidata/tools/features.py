@@ -307,7 +307,10 @@ def _compute_row(image_path: str, scorer: NimaScorer | None, image_mode: str) ->
 
     # ── Metadata join ─────────────────────────────────────────────────────────────
     try:
-        meta, _matched = metadata_join.lookup(dataset_dir, stem)
+        meta, matched = metadata_join.lookup(dataset_dir, stem)
+        legacy_dir = dataset_layout.legacy_dataset_dir(image_path)
+        if not matched and legacy_dir is not None:
+            meta, _ = metadata_join.lookup(legacy_dir, stem)
         row.update(meta)
     except Exception as exc:
         errors.append(f"meta:{exc}")

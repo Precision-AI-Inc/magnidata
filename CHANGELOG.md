@@ -95,11 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Datasets with colour mask PNGs and no COCO labels, such as AgriStress-500 and its tiles, get the coverage and class
   columns (`annotation_ratio`, `annotated_px_count`, `fg_green_mean`, `bg_coverage`, `class_count`,
   `smallest_class_ratio`, `class_entropy`, `mean_pairwise_color_dist`, `interclass_color_sim`). Each mask colour is a
-  class and near-black is background. The instance columns stay empty for these datasets, because a class-coloured
-  mask does not separate touching objects.
+  class and near-black is background; in a single-channel (greyscale) mask each non-zero value is a class id and 0 is
+  background. The instance columns stay empty for these datasets, because a class-coloured mask does not separate
+  touching objects. A mask with more than 32 classes, background included (the trainer's limit), is reported as a
+  `mask:` error and its columns stay blank: such a mask usually has anti-aliased, resized or JPEG-compressed edges.
 - The feature extractor finds COCO labels and masks for images in subfolders of `images/`. It looks under the same
   subfolder of `labels/` or `masks/` first, then directly in `labels/` or `masks/`, and joins metadata from the dataset
-  folder above `images/`. The dashboard's annotation overlay uses the same lookup.
+  folder above `images/`. The dashboard's annotation overlay uses the same lookup. An image whose own folder is not
+  under its dataset's `images/` (for example `/srv/images/<dataset>/raw/x.png`) still finds its labels, masks and
+  metadata in its grandparent folder, as before.
 - The feature extractor's provenance file says whether features were computed on full-resolution images or on
   thumbnails, and records how many images came from each source. It used to say full resolution every time.
 - `class_entropy` is 0 for an image with one class, not -0.000001.

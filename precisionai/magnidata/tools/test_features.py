@@ -313,6 +313,18 @@ def test_non_images_folder_keeps_grandparent_label(tmp_path):
     assert row["annotation_ratio"] == pytest.approx(0.5, abs=0.05)
 
 
+def test_images_folder_far_up_the_path_keeps_grandparent_label_and_metadata(tmp_path):
+    ds = tmp_path / "images" / "ds1"
+    img = _save_png(str(ds / "raw" / "s.png"), np.zeros((40, 40, 3), np.uint8))
+    _write_coco(str(ds / "labels" / "s.json"), 40, 40, [(1, _rect(0, 0, 20, 40))])
+    os.makedirs(ds / "metadata")
+    (ds / "metadata" / "images_metadata.csv").write_text("id,gsd\ns,0.5\n")
+    row, err = process_row(img)
+    assert err == ""
+    assert row["annotation_ratio"] == pytest.approx(0.5, abs=0.05)
+    assert row["gsd"] == 0.5
+
+
 def _two_class_mask(h, w):
     """Left half class A (green), top-right quarter class B (yellow), rest near-black."""
     mask = np.full((h, w, 3), 5, np.uint8)  # near-black, not pure black: still background
@@ -379,6 +391,37 @@ def test_mask_class_map_is_deterministic(tmp_path):
     assert class_map[0, 0] == bg + 1  # (49, 140, 52) packs below (154, 178, 54)
     assert class_map[0, 9] == bg + 2
     assert mask_labels.load_class_map(path, target_wh=(5, 5)).shape == (5, 5)
+
+
+def _save_grey(path, values):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    Image.fromarray(values).save(path)
+    return path
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.uint16])
+def test_single_channel_mask_is_read_as_class_ids(tmp_path, dtype):
+    ids = np.zeros((40, 40), dtype)
+    ids[:, 10:20], ids[:, 20:30], ids[:, 30:] = 1, 2, 3
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "images" / "s.png"), np.full((40, 40, 3), 120, np.uint8))
+    _save_grey(str(ds / "masks" / "s.png"), ids)
+    row, err = process_row(img)
+    assert err == ""
+    assert row["annotation_ratio"] == pytest.approx(0.75)
+    assert row["class_count"] == 3
+
+
+def test_mask_with_too_many_colours_is_reported(tmp_path):
+    noisy = np.zeros((40, 40, 3), np.uint8)
+    noisy[..., 0] = 100 + np.arange(40, dtype=np.uint8)  # 40 distinct colours, e.g. anti-aliased edges
+    ds = tmp_path / "ds1"
+    img = _save_png(str(ds / "images" / "s.png"), np.zeros((40, 40, 3), np.uint8))
+    _save_png(str(ds / "masks" / "s.png"), noisy)
+    row, err = process_row(img)
+    assert err.startswith("mask:too many mask colours: 41 classes")
+    assert row["class_count"] == ""
+    assert row["annotation_ratio"] == ""
 
 
 def _provenance_of(tmp_path, image_mode):

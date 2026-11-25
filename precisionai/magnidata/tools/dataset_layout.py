@@ -40,12 +40,37 @@ def dataset_layout(image_path: str) -> tuple[str, str]:
     return os.path.dirname(os.path.dirname(image_path)), ""
 
 
+def legacy_dataset_dir(image_path: str) -> str | None:
+    """Return the image's grandparent when that is another place its dataset may be, else None.
+
+    Before subfolders of ``images/`` were supported the grandparent was always the dataset.
+    An ``images`` folder far up the path (``/srv/images/<DATASET>/raw/<STEM>.png``) is not
+    the dataset's own, so the grandparent stays a place to look. It is skipped when it is
+    the ``images`` folder itself: files inside the images tree are not labels.
+
+    Parameters
+    ----------
+    image_path : str
+        Path to the image, local or a URL path.
+
+    Returns
+    -------
+    str or None
+        The grandparent directory, or None when `dataset_layout` already returns it or it
+        is the ``images`` folder.
+    """
+    grandparent = os.path.dirname(os.path.dirname(image_path))
+    if grandparent == dataset_layout(image_path)[0] or os.path.basename(grandparent) == IMAGES_DIRNAME:
+        return None
+    return grandparent
+
+
 def sibling_candidates(image_path: str, folder: str, filename: str) -> list[str]:
     """Return where ``<folder>/<filename>`` may live for an image, in lookup order.
 
     Tries ``<DATASET>/<folder>/<subdir>/<filename>`` (mirroring the image's subfolder),
-    then ``<DATASET>/<folder>/<filename>``. The two coincide when there is no subfolder,
-    in which case only one candidate is returned.
+    then ``<DATASET>/<folder>/<filename>``, then the same file under the image's
+    grandparent (see `legacy_dataset_dir`). Duplicates are dropped.
 
     Parameters
     ----------
@@ -66,4 +91,7 @@ def sibling_candidates(image_path: str, folder: str, filename: str) -> list[str]
         os.path.join(dataset_dir, folder, subdir, filename),
         os.path.join(dataset_dir, folder, filename),
     ]
+    legacy = legacy_dataset_dir(image_path)
+    if legacy is not None:
+        candidates.append(os.path.join(legacy, folder, filename))
     return list(dict.fromkeys(candidates))

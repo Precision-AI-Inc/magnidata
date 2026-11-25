@@ -321,6 +321,11 @@ def test_native_resolution_trains_at_the_images_own_size(mlflow_tracking, synthe
     assert checkpoint["input_size"] == [width, height]
     assert client.get_run(run_id).data.params["input_resolution"] == "native"
     assert (synthetic_dataset.root / "data_user" / ".train_cache" / f"{width}x{height}").is_dir()
+    predictions = _artifacts(client, run_id, "magnidata/predictions/epoch_0001")
+    assert predictions
+    for path in predictions:
+        with Image.open(client.download_artifacts(run_id, path, str(tmp_path))) as prediction:
+            assert prediction.size == (width, height)
 
 
 def test_native_resolution_resizes_images_of_another_size(mlflow_tracking, synthetic_dataset, tmp_path):

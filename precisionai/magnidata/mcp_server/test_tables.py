@@ -153,3 +153,29 @@ def test_row_values_carry_the_row_index(table: tables.Table):
         "note": "Blurry edge",
     }
     assert tables.cells(table, 1, ["blur"]) == {"blur": 3.25}
+
+
+def test_text_columns_keep_numeric_looking_cells_as_text():
+    table = tables.parse_csv("id,code,width\n007,A1,640\n012,42,480\n")
+    assert table.numeric_columns == frozenset({"width"})
+    assert tables.row_values(table, 0, ["id", "code", "width"]) == {
+        "row_index": 0,
+        "id": "007",
+        "code": "A1",
+        "width": 640,
+    }
+    assert tables.cells(table, 1, ["code"]) == {"code": "42"}
+    kinds = {summary.name: summary.kind for summary in tables.describe_columns(table)}
+    assert kinds == {"id": "text", "code": "text", "width": "numeric"}
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"), [("007", False), ("-01", False), ("0", True), ("0.5", True), ("10", True), ("x", False)]
+)
+def test_is_numeric_text_rejects_zero_padded_ids(raw: str, expected: bool):
+    assert tables.is_numeric_text(raw) is expected
+
+
+def test_cell_value_keeps_text_in_a_text_column():
+    assert tables.cell_value("42", numeric=False) == "42"
+    assert tables.cell_value("007") == "007"

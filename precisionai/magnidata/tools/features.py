@@ -44,8 +44,6 @@ try:
 except ImportError:
     tqdm = None
 
-Image.MAX_IMAGE_PIXELS = None  # these are legitimately large images
-
 logger = logging.getLogger(__name__)
 
 ROUND_DECIMALS = 6

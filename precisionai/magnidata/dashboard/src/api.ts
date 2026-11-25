@@ -279,7 +279,8 @@ export interface TrainingPresets {
   loss_terms: string[]
   /** AgriTune's Advanced settings, in display order. */
   advanced: import('./lib/advanced').AdvancedSetting[]
-  backend: { available: boolean; reason: string | null; worker_heartbeat: number | null }
+  /** `engines`: what the live trainer worker can run; null or absent when it has not said. */
+  backend: { available: boolean; reason: string | null; worker_heartbeat: number | null; engines?: string[] | null }
   mlflow: MlflowStatus
 }
 

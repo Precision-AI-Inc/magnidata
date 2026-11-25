@@ -30,3 +30,26 @@ jobs:
 
       - name: Coverage summary
         run: python -m coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
+
+  # The trainer and worker tests skip without torch, which the job above does not install, so they run here.
+  training:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install CPU torch and dependencies
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.1 torchvision==0.29.2
+          pip install -e ".[dev,training]"
+
+      - name: Run torch-dependent tests
+        run: >-
+          python -m pytest precisionai/magnidata/training/ precisionai/magnidata/api/test_e2e_smoke.py -q --tb=short --no-header --no-cov -rs

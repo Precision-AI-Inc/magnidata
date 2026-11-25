@@ -106,7 +106,7 @@ dev = [
     "pre-commit>=3.7",
     # Pinned to the rev in .pre-commit-config.yaml — a different ruff version
     # reports a different rule set, so an unpinned local run would disagree with CI.
-    "ruff==0.17.4",
+    "ruff==0.17.5",
     # CI pins pyright through constraints.txt.
     "pyright>=1.1",
     "genbadge[coverage]>=1.1",

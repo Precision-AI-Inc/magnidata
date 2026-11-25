@@ -21,5 +21,5 @@ mlflow-skinny==3.18.0
 pillow==12.3.0
 
 # Lint and type-check tooling: CI and the pre-commit hooks must run the versions developers run locally.
-ruff==0.17.4
+ruff==0.17.5
 pyright==1.1.414

@@ -370,11 +370,13 @@ def _image_values(csv_path: str) -> list[str]:
         return []
 
 
-def _remove_stem_files(stem: str, others: list[dict], other_image_values: list[str]) -> list[str]:
+def _remove_stem_files(
+    stem: str, others: list[dict], other_image_values: list[str], keep_images: bool = False
+) -> list[str]:
     source = f"{USER_DATA_REL}/{stem}.csv"
     images_prefix = f"{USER_DATA_REL}/{stem}{STEM_IMAGES_SUFFIX}/"
     kept_suffixes = list(EMBEDDING_FILE_SUFFIXES) if any(r["emb_source"] == source for r in others) else []
-    if any(images_prefix in value for value in other_image_values):
+    if keep_images or any(images_prefix in value for value in other_image_values):
         kept_suffixes.append(STEM_IMAGES_SUFFIX)
     manifest = f"{USER_DATA_REL}/{stem}{LEGACY_MANIFEST_SUFFIX}"
     if all(r["source"] != manifest for r in others):
@@ -482,12 +484,11 @@ def _dataset_meta(rec: dict) -> dict:
 
 
 def _cleanup_partial(stem: str, keep_images: bool = False) -> None:
-    base = _stem_base(stem)
-    for suffix in STEM_FILE_SUFFIXES:
-        with contextlib.suppress(OSError):
-            os.remove(base + suffix)
-    if not keep_images:
-        shutil.rmtree(base + STEM_IMAGES_SUFFIX, ignore_errors=True)
+    others = db.list_created_datasets()
+    image_values = (
+        [] if keep_images else [v for r in others for v in _image_values(os.path.join(DATA_ROOT, r["source"]))]
+    )
+    _remove_stem_files(stem, others, image_values, keep_images)
 
 
 def _start_worker(job_id: str, target: Callable[[], None]) -> None:

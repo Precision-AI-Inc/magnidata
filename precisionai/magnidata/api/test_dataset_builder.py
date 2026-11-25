@@ -1029,6 +1029,26 @@ def test_deleting_the_last_merge_removes_every_images_folder_kept_for_it(tmp_pat
     assert list(user_data.iterdir()) == []
 
 
+def test_failed_demo_rebuild_keeps_files_a_selection_still_uses(monkeypatch, tmp_path):
+    user_data = tmp_path / "data_user"
+    demo = _built_dataset(user_data, "coco128")
+    (user_data / "s.csv").write_text("image_path,cluster\ndata_user/coco128_images/images/a.png,0\n")
+    db.create_dataset_record("S", "", "data_user/s.csv", demo["source"], demo["source"], 1)
+    _delete(demo)
+
+    def failing_download(url, dest, force=False):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(dataset_builder.coco128, "download", failing_download)
+    assert _wait_for_job(dataset_builder.start_demo_build("coco128"))["status"] == "error"
+    _wait_for_build_slot()
+
+    assert (user_data / "coco128.json").is_file()
+    assert (user_data / "coco128_projections.json").is_file()
+    assert (user_data / "coco128_images" / "images" / "a.png").is_file()
+    assert not (user_data / "coco128.csv").exists()
+
+
 def test_deleting_a_selection_leaves_files_another_selection_still_uses(tmp_path):
     user_data = tmp_path / "data_user"
     root = _built_dataset(user_data, "r")

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
 from PIL import Image
 
 from precisionai.magnidata.training import contract
@@ -45,6 +46,19 @@ PNG_MODES = frozenset({"1", "L", "LA", "I", "I;16", "I;16B", "P", "RGB", "RGBA"}
 COMPLETE = "complete"
 RESUMABLE = "resumable"
 CONFLICT = "conflict"
+
+
+def stack_url(url_var: str, port_var: str, default_port: str, env_file: Path = Path(".env")) -> str:
+    """Return the host URL of a Docker Compose service, on the port this checkout's stack publishes.
+
+    ``url_var`` in the environment wins. Otherwise the port is ``port_var`` from the environment,
+    then from ``env_file`` (the .env Compose reads), then ``default_port``, so another checkout's
+    stack on the same machine is never the one reached by default.
+    """
+    if os.environ.get(url_var):
+        return os.environ[url_var]
+    port = os.environ.get(port_var) or dotenv_values(env_file).get(port_var) or default_port
+    return f"http://localhost:{port}"
 
 
 @dataclass(frozen=True)
@@ -332,10 +346,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit-images", type=int, default=None, help="only tile a seeded sample of N source images")
     parser.add_argument("--seed", type=int, default=0, help="seed for sampling and splitting")
     parser.add_argument(
-        "--api", default=os.environ.get("MAGNIDATA_API_URL", "http://localhost:5051"), help="API base URL"
+        "--api",
+        default=stack_url("MAGNIDATA_API_URL", "MAGNIDATA_API_PORT", "5051"),
+        help="API base URL (default: localhost on MAGNIDATA_API_PORT from the environment or .env, else 5051)",
     )
     parser.add_argument(
-        "--portal", default=os.environ.get("MAGNIDATA_PORTAL_URL", "http://localhost:5175"), help="portal URL"
+        "--portal",
+        default=stack_url("MAGNIDATA_PORTAL_URL", "MAGNIDATA_PORTAL_PORT", "5175"),
+        help="portal URL (default: localhost on MAGNIDATA_PORTAL_PORT from the environment or .env, else 5175)",
     )
     parser.add_argument(
         "--no-register", action="store_true", help="only write the tiles; do not build or register datasets"

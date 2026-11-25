@@ -6,6 +6,7 @@
 Run:  python -m pytest precisionai/magnidata/api/test_training_launch.py -q
 """
 
+import json
 import os
 import time
 
@@ -510,3 +511,65 @@ def test_agritune_loss_weights_follow_the_chosen_objective(client, mlflow_store)
     assert run["params"]["weight_bce"] == "2.0"
     assert run["params"]["weight_dice"] == "0.5"
     assert run["tags"][contract.TAG_LOSS_TERMS] == "bce,dice"
+
+
+def _heartbeat_with_engines(root, engines):
+    path = root / "data_user" / ".trainer_heartbeat"
+    path.write_text(json.dumps({"worker": "trainer:1:abcd", "engines": engines}))
+
+
+def test_presets_endpoint_reports_the_live_workers_engines(client, root):
+    assert client.get("/api/training/presets").get_json()["backend"]["engines"] is None
+    _heartbeat(root)
+    assert client.get("/api/training/presets").get_json()["backend"]["engines"] is None
+    _heartbeat_with_engines(root, ["reference"])
+    assert client.get("/api/training/presets").get_json()["backend"]["engines"] == ["reference"]
+    stamp = time.time() - 60
+    os.utime(root / "data_user" / ".trainer_heartbeat", (stamp, stamp))
+    assert client.get("/api/training/presets").get_json()["backend"]["engines"] is None
+
+
+@pytest.mark.parametrize("body", ["not json", "[1, 2]", '{"engines": "reference"}', '{"engines": [1]}'])
+def test_unreadable_engine_report_means_unknown(tmp_path, body):
+    path = tmp_path / "heartbeat"
+    path.write_text(body)
+    assert trainer_backend.reported_engines(path) is None
+
+
+def test_launch_of_a_preset_whose_engine_is_missing_is_refused(client, root, mlflow_store):
+    _heartbeat_with_engines(root, ["reference"])
+    agritune = {"dataset_source": "data_user/syn.csv", "preset": "agritune_mlp_probe", "params": {"epochs": 2}}
+    response = client.post("/api/training/runs", json=agritune)
+    assert response.status_code == 400
+    assert "does not have the agritune engine installed (installed: reference)" in response.get_json()["error"]
+    assert client.post("/api/training/runs", json=VALID).status_code == 201
+
+    _heartbeat_with_engines(root, ["reference", "agritune"])
+    mlflow_store.set_terminated(client.get("/api/runs?dataset=data_user/syn.csv").get_json()["runs"][0]["run_id"])
+    assert client.post("/api/training/runs", json=agritune).status_code == 201
+
+
+def test_launch_records_the_configured_user(client, mlflow_store, monkeypatch):
+    monkeypatch.setenv("MAGNIDATA_RUN_USER", "ada")
+    run_id = client.post("/api/training/runs", json=VALID).get_json()["run_id"]
+    assert mlflow_store.get_run(run_id)["user"] == "ada"
+    assert client.get("/api/runs?dataset=data_user/syn.csv").get_json()["runs"][0]["user"] == "ada"
+
+
+def test_launch_user_falls_back_to_the_api_account(monkeypatch):
+    monkeypatch.delenv("MAGNIDATA_RUN_USER", raising=False)
+    monkeypatch.setattr(trainer_backend.getpass, "getuser", lambda: "svc")
+    assert trainer_backend.launch_user() == "svc"
+
+    def no_account():
+        raise OSError("no passwd entry")
+
+    monkeypatch.setattr(trainer_backend.getpass, "getuser", no_account)
+    assert trainer_backend.launch_user() == "magnidata"
+
+
+def test_unknown_user_is_reported_as_none(mlflow_store, client):
+    experiment_id = mlflow_store.get_or_create_experiment("magnidata/syn")
+    run = mlflow_store.create_run(experiment_id, tags={contract.TAG_DATASET_SOURCE: "data_user/syn.csv"})
+    assert run["user"] == "unknown"
+    assert experiments.run_summary(run)["user"] is None

@@ -1577,4 +1577,10 @@ components:
             worker_heartbeat:
               type: [number, "null"]
               description: Seconds since the trainer worker last reported in.
+            engines:
+              type: [array, "null"]
+              items: {type: string}
+              description: >-
+                Training engines the live worker can run (`reference`, plus `agritune` when AgriTune is installed);
+                null when no live worker has said. Launching a preset of a missing engine answers 400.
         mlflow: {$ref: "#/components/schemas/MlflowStatus"}

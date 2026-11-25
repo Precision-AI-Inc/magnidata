@@ -3,7 +3,8 @@
 All routes are under `/api` on the API's base URL: `http://localhost:5051` for the compose stack,
 `http://localhost:5050` for `python app.py`, and `https://precisionaiinc-magnidata.hf.space` for the read-only
 public demo. Responses are JSON unless noted. Errors are `{"error": "<message>"}` with a 4xx or 5xx status.
-There is no authentication. CORS is open.
+There is no authentication. The demo allows any CORS origin; the compose stack allows only its portal, and listens
+on 127.0.0.1 only. Paths (`source`, `path`, `img`, `mask`) must lie inside `data/`, `data_user/` or `image_sets/`.
 
 `source` is always a dataset CSV path relative to the server's data root, as returned by `GET /api/datasets`.
 Image paths (`path`, `img`, `mask`) are the values in a dataset's `image_path` and `mask_path` columns.

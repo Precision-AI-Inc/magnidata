@@ -39,6 +39,12 @@ def _remote_host_allowed(url: str) -> bool:
     return (urllib.parse.urlparse(url).hostname or "") in ALLOWED_REMOTE_HOSTS
 
 
+def in_datalake(path: str) -> bool:
+    """Return whether an absolute path resolves to a file under DATALAKE_ROOT, symlinks followed."""
+    root = os.path.realpath(DATALAKE_ROOT)
+    return os.path.realpath(path).startswith(root.rstrip(os.sep) + os.sep)
+
+
 def _thumb_candidates(path: str, thumb_root: str) -> Iterator[str]:
     """Thumbnail path candidates for a datalake image.
 

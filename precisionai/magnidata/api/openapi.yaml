@@ -22,7 +22,7 @@ info:
     with COCO128 (`data_user/coco128.csv`) and AgriStress-500 (`data_user/agristress500.csv`)
     loaded. It needs no authentication and allows any CORS origin. In demo mode:
 
-    - write, build and training endpoints answer 403, and so does `GET /api/mask/debug`;
+    - write, build and training endpoints answer 403, and so does `/api/mask/debug` (any method);
     - image paths must be relative paths inside the data folder (no URLs, no absolute paths);
     - there is no MLflow server, so the experiment and run endpoints answer 503.
 
@@ -1001,7 +1001,7 @@ components:
       required: true
       description: >-
         Dataset CSV path relative to the data root, as listed by `GET /api/datasets`
-        (its `source` field).
+        (its `source` field). It must lie inside `data/`, `data_user/` or `image_sets/`.
       schema: {type: string}
       example: data_user/coco128.csv
     Variant:
@@ -1016,9 +1016,10 @@ components:
       in: query
       required: true
       description: >-
-        Image path as stored in the dataset CSV's image column. In demo mode it must be a
-        relative path inside the data folder; otherwise a local path or an `https://` URL on
-        an allowlisted host also works.
+        Image path as stored in the dataset CSV's image column: a path relative to the data
+        root inside `data/`, `data_user/` or `image_sets/`. Outside demo mode an absolute path
+        under the configured datalake, or an `https://` URL on an allowlisted host, also works.
+        Any other path answers 400.
       schema: {type: string}
       example: data_user/coco128_images/images/000000000009.jpg
     RelativeImagePath:

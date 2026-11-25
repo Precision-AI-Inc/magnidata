@@ -32,6 +32,7 @@ def root(tmp_path, monkeypatch):
     (folder / "masks" / "a.png").write_bytes(b"x")
     (tmp_path / "data_user" / "syn.csv").write_text("image_path\ndata_user/syn/images/a.png\n")
     (tmp_path / "data_user" / "plain.csv").write_text("image_path\ndata_user/plain/images/a.png\n")
+    (tmp_path / "stray.csv").write_text("image_path\ndata_user/syn/images/a.png\n")
     return tmp_path
 
 
@@ -355,6 +356,7 @@ def test_parameter_violations_name_the_field(client, params, field):
         ({"dataset_source": "data_user/plain.csv"}, "no segmentation masks"),
         ({"dataset_source": "data_user/missing.csv"}, "dataset not found"),
         ({"dataset_source": "../etc/passwd"}, "dataset not found"),
+        ({"dataset_source": "stray.csv"}, "dataset not found"),
         ({"dataset_source": ""}, "dataset_source"),
         ({"parent_run_id": "nope"}, "parent_run_id"),
         ({"parent_run_id": "0" * 32}, "parent_run_id: run not found"),

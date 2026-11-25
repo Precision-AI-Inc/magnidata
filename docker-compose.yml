@@ -9,8 +9,12 @@
 # mounted straight from the repo root so the large CSVs and embeddings
 # (Git LFS, if you add any under ./data) are not duplicated into the release folder.
 # Pin the Compose project name so containers/volumes are magnidata-* regardless of
-# what the checkout directory happens to be called.
+# what the checkout directory happens to be called. A second checkout on the same machine sets
+# COMPOSE_PROJECT_NAME (and its own ports) in its git-ignored .env; see .env.example.
 name: magnidata
+
+# Nothing here has authentication, so every port is published on 127.0.0.1 only: other machines
+# on the network cannot reach the stack. MAGNIDATA_BIND_ADDRESS in .env changes that.
 
 services:
 
@@ -19,7 +23,7 @@ services:
       context: .
       dockerfile: Dockerfile.api
     ports:
-      - "5051:5050"
+      - "${MAGNIDATA_BIND_ADDRESS:-127.0.0.1}:${MAGNIDATA_API_PORT:-5051}:5050"
     volumes:
       - ./data:/app/data:ro                                   # CSVs + embeddings (read-only)
       - ./image_sets:/app/image_sets:ro                       # local staged images for recipe datasets
@@ -37,15 +41,21 @@ services:
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       # Browser-facing MLflow URL, used for deep links from the dashboard.
-      MAGNIDATA_MLFLOW_UI_URL: http://localhost:5052
+      MAGNIDATA_MLFLOW_UI_URL: http://localhost:${MAGNIDATA_MLFLOW_PORT:-5052}
       CONFIG_PATH: /app/confi.yaml
       DATA_ROOT: /app
       DB_PATH: /app/db/notes.db
       API_PORT: "5050"
-      # Host-facing URLs the API prints in its startup banner — keep in sync with the
-      # published ports (api 5051, web 5175) if you remap them.
-      MAGNIDATA_PORTAL_URL: "http://localhost:5175"
-      MAGNIDATA_API_URL: "http://localhost:5051"
+      # Host-facing URLs the API prints in its startup banner. The portal URL is also the
+      # origin the API accepts cross-origin browser requests from (MAGNIDATA_CORS_ORIGINS overrides).
+      MAGNIDATA_PORTAL_URL: "http://localhost:${MAGNIDATA_PORTAL_PORT:-5175}"
+      MAGNIDATA_API_URL: "http://localhost:${MAGNIDATA_API_PORT:-5051}"
+      MAGNIDATA_CORS_ORIGINS: ${MAGNIDATA_CORS_ORIGINS:-}
+      # Host names the API answers to besides localhost, 127.0.0.1, ::1 and api (comma-separated).
+      MAGNIDATA_ALLOWED_HOSTS: ${MAGNIDATA_ALLOWED_HOSTS:-}
+      # The host user the server runs as (docker/run-as-host-user.sh); empty means the owner of data/.
+      MAGNIDATA_UID: ${MAGNIDATA_UID:-}
+      MAGNIDATA_GID: ${MAGNIDATA_GID:-}
       # BYOD upload cap for images + annotations. nginx.conf is set slightly above this
       # so Flask returns JSON validation errors for over-limit requests.
       DATASET_BUILD_MAX_TOTAL_BYTES: "17179869184"
@@ -56,18 +66,20 @@ services:
     # env_file:
     #   - ./precisionai/magnidata/api/.env
 
-  # Local experiment tracking: the system of record for training runs. No auth — it is
-  # meant for the developer's machine only. Host-side tools (e.g. a pai-seed run on the
-  # host) log to it with MLFLOW_TRACKING_URI=http://localhost:5052.
+  # Local experiment tracking: the system of record for training runs, and the trainer's job
+  # queue. No auth — it is meant for the developer's machine only. Host-side tools (e.g. a pai-seed
+  # run on the host) log to it with MLFLOW_TRACKING_URI=http://localhost:5052. It answers only the
+  # Host names it is reached by: mlflow:5000 from the other containers, localhost and 127.0.0.1 from
+  # the host. Add yours to MAGNIDATA_MLFLOW_ALLOWED_HOSTS if you publish it on another address.
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.11.1
     command: >
       mlflow server --host 0.0.0.0 --port 5000
       --backend-store-uri sqlite:////mlflow/mlflow.db
       --artifacts-destination /mlflow/artifacts --serve-artifacts
-      --allowed-hosts "*"
+      --allowed-hosts "${MAGNIDATA_MLFLOW_ALLOWED_HOSTS:-mlflow:5000,localhost:*,127.0.0.1:*}"
     ports:
-      - "5052:5000"
+      - "${MAGNIDATA_BIND_ADDRESS:-127.0.0.1}:${MAGNIDATA_MLFLOW_PORT:-5052}:5000"
     volumes:
       - magnidata-mlflow:/mlflow
     restart: unless-stopped
@@ -97,6 +109,8 @@ services:
     environment:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       DATA_ROOT: /app
+      MAGNIDATA_UID: ${MAGNIDATA_UID:-}
+      MAGNIDATA_GID: ${MAGNIDATA_GID:-}
     volumes:
       - ./data:/app/data:ro
       - ./image_sets:/app/image_sets:ro
@@ -107,7 +121,7 @@ services:
       context: ./precisionai/magnidata/dashboard
       dockerfile: ../../../Dockerfile.dashboard
     ports:
-      - "5175:80"
+      - "${MAGNIDATA_BIND_ADDRESS:-127.0.0.1}:${MAGNIDATA_PORTAL_PORT:-5175}:80"
     depends_on:
       - api
 

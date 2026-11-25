@@ -28,7 +28,7 @@ from mlflow_store import MlflowNotFoundError, MlflowUnavailableError
 from werkzeug.exceptions import BadRequest, Conflict
 
 from precisionai.magnidata.training import contract
-from precisionai.magnidata.training.dataset_check import has_masks, resolve_under
+from precisionai.magnidata.training.dataset_check import has_masks, resolve_data_path
 
 bp = Blueprint("experiments", __name__)
 
@@ -380,8 +380,9 @@ def link_run(run_id: str) -> ResponseReturnValue:
     source = (request.get_json(silent=True) or {}).get("dataset_source")
     if not isinstance(source, str) or not source or len(source) > 500:
         raise _bad("dataset_source is required")
-    if source.startswith("/") or "\\" in source or ".." in source.split("/") or "://" in source:
-        raise _bad("dataset_source must be a relative path inside the data root")
+    root = os.environ.get("DATA_ROOT", ".")
+    if "\\" in source or ".." in source.split("/") or resolve_data_path(root, source) is None:
+        raise _bad("dataset_source must be a relative path inside data/, data_user/ or image_sets/")
     store = mlflow_store.get_store()
     store.get_run(_run_id(run_id))
     store.set_tag(run_id, contract.TAG_DATASET_SOURCE, source)
@@ -451,7 +452,7 @@ def run_columns(run_id: str) -> ResponseReturnValue:
 
 
 def _dataset_names(source: str) -> set[str]:
-    path = resolve_under(os.environ.get("DATA_ROOT", "."), source)
+    path = resolve_data_path(os.environ.get("DATA_ROOT", "."), source)
     if path is None or not path.is_file():
         raise MlflowNotFoundError(f"dataset not found: {source}")
     with open(path, newline="") as fh:
@@ -505,7 +506,7 @@ def training_presets_view() -> ResponseReturnValue:
 
 def _check_dataset(source: str) -> None:
     root = os.environ.get("DATA_ROOT", ".")
-    path = resolve_under(root, source)
+    path = resolve_data_path(root, source)
     if path is None or not path.is_file():
         raise _bad("dataset_source: dataset not found")
     if not has_masks(path, root):
@@ -599,14 +600,14 @@ def _dataset_image_path(run: dict[str, Any], image_name: str) -> Path:
     if not source:
         raise _bad("run is not linked to a dataset")
     root = os.environ.get("DATA_ROOT", ".")
-    csv_path = resolve_under(root, source)
+    csv_path = resolve_data_path(root, source)
     if csv_path is None or not csv_path.is_file():
         raise MlflowNotFoundError(f"dataset not found: {source}")
     with open(csv_path, newline="") as fh:
         reader = csv.DictReader(fh)
         column = contract.image_path_column(reader.fieldnames or [])
         rel = next((r[column] for r in reader if column and contract.image_key(r[column]) == image_name), None)
-    image = resolve_under(root, rel) if rel else None
+    image = resolve_data_path(root, rel) if rel else None
     if image is None or not image.is_file():
         raise MlflowNotFoundError(f"image {image_name} not found in {source}")
     return image

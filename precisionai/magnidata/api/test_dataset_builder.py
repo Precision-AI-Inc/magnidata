@@ -547,6 +547,36 @@ def test_start_agristress_build_cleans_up_on_listing_failure(monkeypatch):
     assert not os.path.isdir(f"data_user/{dataset_builder.AGRISTRESS_STEM}_images")
 
 
+class _BrokenResponse(_FakeResponse):
+    def read(self, size=-1):
+        if self._pos:
+            raise ConnectionResetError("connection reset")
+        return super().read(4)
+
+
+def test_failed_agristress_rebuild_keeps_embeddings_a_selection_still_uses(monkeypatch, tmp_path):
+    _fake_urlopen_agristress(monkeypatch)
+    fake_urlopen = dataset_builder.urllib.request.urlopen
+
+    def urlopen_with_broken_embeddings(url, timeout=None):
+        if url == dataset_builder.AGRISTRESS_EMBEDDINGS_URL:
+            return _BrokenResponse(b'{"embeddings": {"x.png": [0.5]}}')
+        return fake_urlopen(url, timeout=timeout)
+
+    monkeypatch.setattr(dataset_builder.urllib.request, "urlopen", urlopen_with_broken_embeddings)
+    _patch_features(monkeypatch, _fake_features_run)
+    kept = tmp_path / "data_user" / "agristress500.json"
+    kept.write_text('{"embeddings": {"kept.png": [1.0]}}')
+    (tmp_path / "data_user" / "s.csv").write_text("image_path,cluster\n")
+    db.create_dataset_record("S", "", "data_user/s.csv", None, "data_user/agristress500.csv", 0)
+
+    assert _wait_for_job(dataset_builder.start_demo_build("agristress500"))["status"] == "error"
+    _wait_for_build_slot()
+
+    assert kept.read_text() == '{"embeddings": {"kept.png": [1.0]}}'
+    assert not (tmp_path / "data_user" / "agristress500.json.part").exists()
+
+
 # ── Local image_sets build ────────────────────────────────────────────────────
 
 

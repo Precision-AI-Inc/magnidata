@@ -1003,7 +1003,9 @@ def _run_demo_build(job_id: str) -> None:
 
         _update_job(job_id, status="staging", percent=90, message="Attaching precomputed embeddings…")
         embeddings_json = data_dir / f"{stem}.json"
-        shutil.copyfile(COCO128_EMBEDDINGS_ASSET, embeddings_json)
+        embeddings_tmp = embeddings_json.with_name(embeddings_json.name + ".part")
+        shutil.copyfile(COCO128_EMBEDDINGS_ASSET, embeddings_tmp)
+        embeddings_tmp.replace(embeddings_json)
         _check_embeddings_match_csv(feature_csv, embeddings_json)
 
         feature_csv_rel = f"{USER_DATA_REL}/{stem}.csv"
@@ -1091,8 +1093,12 @@ def _agristress_file_pairs() -> list[tuple[str, str, str]]:
 def _fetch_to_file(url: str, dest: Path) -> None:
     """Stream a URL to ``dest`` via a temp file, so an interrupted download is never mistaken for a finished one."""
     tmp = dest.with_name(dest.name + ".part")
-    with _urlopen(url, timeout=60) as resp, open(tmp, "wb") as f:
-        shutil.copyfileobj(resp, f, length=1024 * 1024)
+    try:
+        with _urlopen(url, timeout=60) as resp, open(tmp, "wb") as f:
+            shutil.copyfileobj(resp, f, length=1024 * 1024)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     tmp.replace(dest)
 
 
@@ -1209,11 +1215,7 @@ def _run_agristress_build(job_id: str) -> None:
 
         _update_job(job_id, status="staging", percent=90, message="Downloading SEED embeddings…")
         emb_rel = f"{USER_DATA_REL}/{stem}.json"
-        with (
-            _urlopen(AGRISTRESS_EMBEDDINGS_URL, timeout=60) as resp,
-            open(os.path.join(DATA_ROOT, emb_rel), "wb") as f,
-        ):
-            f.write(resp.read())
+        _fetch_to_file(AGRISTRESS_EMBEDDINGS_URL, Path(DATA_ROOT) / emb_rel)
 
         _precompute_projections(job_id, feature_csv_rel, emb_rel)
 

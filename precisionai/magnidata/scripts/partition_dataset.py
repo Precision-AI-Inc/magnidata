@@ -18,7 +18,6 @@ import json
 import os
 import random
 import re
-import shutil
 import sys
 import time
 import urllib.error
@@ -41,7 +40,6 @@ MANIFEST_FIELDS: list[str] = ["tile_name", "source_image", "x", "y", "width", "h
 POLL_SECONDS = 2.0
 # Image modes Pillow can write to PNG; anything else (CMYK, YCbCr, LAB, float) is converted first.
 PNG_MODES = frozenset({"1", "L", "LA", "I", "I;16", "I;16B", "P", "RGB", "RGBA"})
-REBUILD_HINT = "re-run with the options that wrote them, or pass --rebuild to delete those tiles and tile again"
 
 # Outcomes of comparing a part folder on disk with the tiles planned for it.
 COMPLETE = "complete"
@@ -237,16 +235,6 @@ def part_state(folder: Path, rows: list[dict[str, str]], masked: set[str]) -> st
     return RESUMABLE
 
 
-def clear_part(folder: Path) -> None:
-    """Delete the tiles and manifest this tool writes in ``folder``, and the folder itself if that empties it."""
-    for name in ("images", "masks"):
-        if (folder / name).is_dir():
-            shutil.rmtree(folder / name)
-    (folder / MANIFEST_NAME).unlink(missing_ok=True)
-    with contextlib.suppress(OSError):
-        folder.rmdir()
-
-
 class ApiError(RuntimeError):
     """The MagniData API rejected a request or could not be reached."""
 
@@ -352,12 +340,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-register", action="store_true", help="only write the tiles; do not build or register datasets"
     )
-    parser.add_argument(
-        "--rebuild",
-        action="store_true",
-        help="delete part folders that hold tiles from a run with other options and tile them again "
-        "(refused while those parts are registered, unless --no-register)",
-    )
     parser.add_argument("--dry-run", action="store_true", help="print the plan and exit without writing anything")
     return parser
 
@@ -402,41 +384,22 @@ def stale_folders(
     return stale
 
 
-def clear_stale(args: argparse.Namespace, stale: list[Path]) -> None:
-    """Delete ``stale`` part folders for ``--rebuild``, refusing while a dataset is registered from one."""
-    if not args.no_register:
-        registered = {dataset["source"]: dataset for dataset in ApiClient(args.api).datasets()}
-        names = [
-            registered[source]["name"]
-            for source in (f"data_user/{slugify(folder.name)}.csv" for folder in stale)
-            if source in registered
-        ]
-        if names:
-            raise ValueError(
-                f"--rebuild would replace the tiles of registered datasets ({', '.join(names)}); "
-                "delete them in the portal first, then run this again"
-            )
-    for folder in stale:
-        print(f"  {folder}: deleting tiles from an earlier run with other options", flush=True)
-        clear_part(folder)
-
-
 def tile_parts(
     args: argparse.Namespace, plan: list[dict[str, list[tuple[int, int]]]], images: list[SourceImage]
 ) -> None:
     """Write every part's tiles, skipping parts that are already complete.
 
-    Part folders holding tiles of a different plan are never written into: without ``--rebuild`` the run stops
-    before writing anything, and with it they are deleted first.
+    Part folders holding tiles of a different plan are never written into: the run stops before writing anything
+    and names the folders to delete.
     """
     stale = stale_folders(args, plan, images)
-    if stale and not args.rebuild:
+    if stale:
         listing = ", ".join(str(folder) for folder in stale)
         raise ValueError(
-            f"these part folders hold tiles from an earlier run with other options: {listing}; {REBUILD_HINT}"
+            f"these part folders hold tiles from an earlier run with other options: {listing}; "
+            "re-run with the options that wrote them, or delete those folders (and any datasets registered "
+            "from them) and run this again"
         )
-    if stale:
-        clear_stale(args, stale)
     by_name = {image.name: image for image in images}
     masked = {image.name for image in images if image.mask}
     for index, part in enumerate(plan, start=1):

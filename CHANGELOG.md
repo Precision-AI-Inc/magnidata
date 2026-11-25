@@ -68,14 +68,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The COCO128 download, in `prepare_coco128_dashboard` and in the portal's one-click demo, checks the archive's SHA-256,
   gives up after 60 seconds without data, and writes to a `.part` file that becomes the cached zip only when it is
   complete. A cached zip that fails the check is downloaded again instead of failing every later build, and extraction
-  goes through a temporary folder so an interrupted one is never reused. New options `--download-sha256` (for a
-  custom `--download-url`) and `--download-timeout`.
+  goes through a temporary folder so an interrupted one is never reused.
 - `partition_dataset` compares each part folder with the tiles it plans to write. A re-run with another seed, split,
   part count, tile size, sample or source stops before writing anything instead of reporting "already tiled" over the
-  old split or adding new tiles beside old ones, so a source image can no longer end up in two parts. The new
-  `--rebuild` flag deletes those folders and tiles again, and refuses while the old parts are still registered. CMYK
-  and other modes PNG cannot store are converted instead of crashing the run, and two source images with the same
-  file name are refused, since their tiles would overwrite each other.
+  old split or adding new tiles beside old ones, so a source image can no longer end up in two parts; the error
+  names the part folders to delete before tiling again. CMYK and other modes PNG cannot store are converted instead
+  of crashing the run. Deliberate behavior change: a source CSV with two different images that share a file stem
+  (for example `a.jpg` in two folders, or `a.jpg` beside `a.png`) now fails instead of tiling, since tile names are
+  built from the stem and their tiles would overwrite each other and could land in different parts.
 - The User Guide's partition chapter shows the output and cards a real run produces: 1,753 tiles (875 + 878), and a
   third card, Cloud Dataset, drawn as a second parent of each part, with the lineage screenshot recaptured from a real
   run to match. The first training run's CPU time now reads around ten minutes rather than a few. `scripts/capture-guide.mjs` finds Playwright's Chromium on linux arm64 and

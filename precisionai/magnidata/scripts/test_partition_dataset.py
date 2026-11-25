@@ -6,6 +6,7 @@
 import csv
 import json
 import re
+import shutil
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -283,20 +284,26 @@ def test_rerun_with_another_seed_refuses_and_leaves_the_tiles(
 
     assert _run(data_root, tmp_path, "--no-register", "--seed", _seed_with_another_split()) == 1
 
-    assert "--rebuild" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert str(tmp_path / "image_sets" / "demo-part1") in err
+    assert str(tmp_path / "image_sets" / "demo-part2") in err
     assert _tiles_by_source(tmp_path / "image_sets") == before
 
 
-def test_rebuild_replaces_old_tiles_without_mixing_sources(data_root: Path, tmp_path: Path) -> None:
+def test_deleting_the_listed_folders_lets_another_seed_tile_without_mixing_sources(
+    data_root: Path, tmp_path: Path
+) -> None:
     _run(data_root, tmp_path, "--no-register")
     seed = _seed_with_another_split()
+    for folder in (tmp_path / "image_sets").iterdir():
+        shutil.rmtree(folder)
 
-    assert _run(data_root, tmp_path, "--no-register", "--seed", seed, "--rebuild") == 0
+    assert _run(data_root, tmp_path, "--no-register", "--seed", seed) == 0
 
     parts = _tiles_by_source(tmp_path / "image_sets")
     assert parts["demo-part1"].isdisjoint(parts["demo-part2"])
     assert all(len(sources) == 1 for sources in parts.values())
-    assert _run(data_root, tmp_path, "--no-register", "--seed", seed) == 0  # the rebuilt plan is now complete
+    assert _run(data_root, tmp_path, "--no-register", "--seed", seed) == 0  # the new plan is now complete
 
 
 def test_fewer_parts_counts_the_leftover_part_as_stale(
@@ -306,25 +313,15 @@ def test_fewer_parts_counts_the_leftover_part_as_stale(
     capsys.readouterr()
 
     assert _run(data_root, tmp_path, "--no-register", "--parts", "1") == 1
-    assert "demo-part2" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert str(tmp_path / "image_sets" / "demo-part1") in err
+    assert str(tmp_path / "image_sets" / "demo-part2") in err
 
-    assert _run(data_root, tmp_path, "--no-register", "--parts", "1", "--rebuild") == 0
+    for name in ("demo-part1", "demo-part2"):
+        shutil.rmtree(tmp_path / "image_sets" / name)
+    assert _run(data_root, tmp_path, "--no-register", "--parts", "1") == 0
     assert sorted(path.name for path in (tmp_path / "image_sets").iterdir()) == ["demo-part1"]
     assert len(list((tmp_path / "image_sets" / "demo-part1" / "images").iterdir())) == 4
-
-
-def test_rebuild_refuses_while_the_old_part_is_registered(
-    data_root: Path, tmp_path: Path, api_url: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    _run(data_root, tmp_path, "--no-register")
-    before = _tiles_by_source(tmp_path / "image_sets")
-    _Api.datasets = [{"id": 7, "source": "data_user/demo-part1.csv", "name": "Demo part 1"}]
-    capsys.readouterr()
-
-    assert _run(data_root, tmp_path, "--api", api_url, "--seed", _seed_with_another_split(), "--rebuild") == 1
-
-    assert "Demo part 1" in capsys.readouterr().err
-    assert _tiles_by_source(tmp_path / "image_sets") == before
 
 
 def test_missing_source_and_bad_arguments_fail_cleanly(

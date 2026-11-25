@@ -196,7 +196,6 @@ Done. Open http://localhost:5175 to see the sub-datasets under data_user/agristr
           <tr><td><code>--seed</code></td><td>0</td><td>Seed for sampling and splitting</td></tr>
           <tr><td><code>--name</code></td><td><code>AgriStress-500 tiles</code></td><td>Name prefix; parts are called &quot;&lt;name&gt; part N&quot;</td></tr>
           <tr><td><code>--dry-run</code></td><td>off</td><td>Print the plan and exit</td></tr>
-          <tr><td><code>--rebuild</code></td><td>off</td><td>Delete part folders tiled with other options and tile them again</td></tr>
           <tr><td><code>--no-register</code></td><td>off</td><td>Only write the tiles</td></tr>
           <tr><td><code>--data-root</code></td><td><code>precisionai/magnidata</code></td><td>Host folder that holds <code>data_user/</code> (what the API sees as its data root)</td></tr>
           <tr><td><code>--image-sets</code></td><td><code>image_sets</code></td><td>Host folder the tiles are written to (mounted into the API as <code>image_sets/</code>)</td></tr>
@@ -207,8 +206,8 @@ Done. Open http://localhost:5175 to see the sub-datasets under data_user/agristr
         Running the same command again skips parts that are already tiled and registered, so you can resume after
         an interruption. If you change an option that changes the split (<code>--seed</code>, <code>--split-by</code>,
         <code> --parts</code>, <code>--tile</code>, <code>--limit-images</code> or the source), the tool stops before writing
-        anything instead of mixing new tiles with old ones. Add <code>--rebuild</code> to delete the old tiles and tile again;
-        if the old parts are already registered, delete them in the Workspace first. Use <code>--help</code> to see every
+        anything instead of mixing new tiles with old ones, and lists the part folders that hold the old tiles. Delete
+        those folders, and the old part datasets in the Workspace if they were registered, then run it again. Use <code>--help</code> to see every
         option:<Cmd id="partitionHelp" />
       </Note>
       <Note title="Going bigger">

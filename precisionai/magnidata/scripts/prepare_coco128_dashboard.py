@@ -1162,17 +1162,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--description", default="Ultralytics COCO128 prepared for MagniData")
     ap.add_argument("--download-url", default=COCO128_URL, help="COCO128 zip URL")
     ap.add_argument("--cache-dir", default="image_sets/_downloads", help="download/extract cache under the repo root")
-    ap.add_argument(
-        "--download-sha256",
-        default=None,
-        help="expected SHA-256 of the zip (default: the published checksum when --download-url is the default)",
-    )
-    ap.add_argument(
-        "--download-timeout",
-        type=float,
-        default=DOWNLOAD_TIMEOUT,
-        help="seconds the download may stall before it is abandoned",
-    )
     ap.add_argument("--force-download", action="store_true", help="redownload the zip even if it is cached")
     ap.add_argument("--force-extract", action="store_true", help="re-extract the cached zip")
     ap.add_argument(
@@ -1221,10 +1210,7 @@ def main(argv: list[str] | None = None) -> None:
     zip_path = cache_dir / Path(urllib.parse.urlparse(args.download_url).path).name
     extract_dir = cache_dir / "extracted"
 
-    sha256 = args.download_sha256 or known_sha256(args.download_url)
-    fetched = download(
-        args.download_url, zip_path, force=args.force_download, sha256=sha256, timeout=args.download_timeout
-    )
+    fetched = download(args.download_url, zip_path, force=args.force_download, sha256=known_sha256(args.download_url))
     coco_root = extract(zip_path, extract_dir, force=args.force_extract or fetched)
     log(f"COCO128 root: {coco_root.relative_to(root)}")
 

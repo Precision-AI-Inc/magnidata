@@ -39,6 +39,13 @@ DEFAULT_NAME = "AgriStress-500 tiles"
 MANIFEST_NAME = "tile_manifest.csv"
 MANIFEST_FIELDS: list[str] = ["tile_name", "source_image", "x", "y", "width", "height"]
 POLL_SECONDS = 2.0
+# Image modes Pillow can write to PNG; anything else (CMYK, YCbCr, LAB, float) is converted first.
+PNG_MODES = frozenset({"1", "L", "LA", "I", "I;16", "I;16B", "P", "RGB", "RGBA"})
+
+# Outcomes of comparing a part folder on disk with the tiles planned for it.
+COMPLETE = "complete"
+RESUMABLE = "resumable"
+CONFLICT = "conflict"
 
 
 def stack_url(url_var: str, port_var: str, default_port: str, env_file: Path = Path(".env")) -> str:
@@ -117,7 +124,11 @@ def part_folder(prefix: str, index: int) -> str:
 
 
 def read_source(csv_path: Path, data_root: Path, tile: int, limit: int | None, seed: int) -> list[SourceImage]:
-    """Read the source CSV and describe the images (and masks) that yield at least one full tile."""
+    """Read the source CSV and describe the images (and masks) that yield at least one full tile.
+
+    Tile file names are built from the source file's stem, so two different source images with the same stem
+    would overwrite each other's tiles and could land in two parts; that is refused with a ``ValueError``.
+    """
     with open(csv_path, newline="") as handle:
         reader = csv.DictReader(handle)
         column = contract.image_path_column(reader.fieldnames or [])
@@ -127,11 +138,17 @@ def read_source(csv_path: Path, data_root: Path, tile: int, limit: int | None, s
     if limit is not None and limit < len(rows):
         rows = sorted(random.Random(seed).sample(rows, limit), key=lambda row: row[column])
     images: list[SourceImage] = []
+    stems: dict[str, Path] = {}
     for row in rows:
         relative = row[column]
         path = resolve_under(data_root, relative)
         if path is None or not path.is_file():
             continue
+        if path.stem in stems:
+            if stems[path.stem] == path:
+                continue
+            raise ValueError(f"source images {stems[path.stem]} and {path} share the name {path.stem!r}; rename one")
+        stems[path.stem] = path
         with Image.open(path) as opened:
             width, height = opened.size
         mask = find_mask(relative, data_root, row)
@@ -141,18 +158,49 @@ def read_source(csv_path: Path, data_root: Path, tile: int, limit: int | None, s
     return images
 
 
+def manifest_rows(
+    assignments: dict[str, list[tuple[int, int]]], images: dict[str, SourceImage], tile: int
+) -> list[dict[str, str]]:
+    """Return the ``tile_manifest.csv`` rows, as read back from the file, for one part's planned tiles."""
+    rows: list[dict[str, str]] = []
+    for name in sorted(assignments):
+        stem = images[name].image.stem
+        for x, y in assignments[name]:
+            rows.append(
+                {
+                    "tile_name": tile_name(stem, x, y),
+                    "source_image": name,
+                    "x": str(x),
+                    "y": str(y),
+                    "width": str(tile),
+                    "height": str(tile),
+                }
+            )
+    return rows
+
+
+def png_ready(image: Image.Image) -> Image.Image:
+    """Return ``image`` unchanged if PNG can store its mode, otherwise converted to RGB (or RGBA with alpha)."""
+    if image.mode in PNG_MODES:
+        return image
+    return image.convert("RGBA" if "A" in image.getbands() else "RGB")
+
+
 def write_part(
     folder: Path, assignments: dict[str, list[tuple[int, int]]], images: dict[str, SourceImage], tile: int
 ) -> int:
-    """Write the tiles of one part under ``folder`` (``images/``, ``masks/`` and a manifest) and return the count."""
+    """Write the tiles of one part under ``folder`` (``images/``, ``masks/`` and a manifest) and return the count.
+
+    The manifest is written last, so a folder without one is an interrupted write.
+    """
     (folder / "images").mkdir(parents=True, exist_ok=True)
     (folder / "masks").mkdir(exist_ok=True)
-    rows: list[dict[str, Any]] = []
     for name in sorted(assignments):
         source = images[name]
         stem = source.image.stem
-        with Image.open(source.image) as image:
-            mask_image = Image.open(source.mask) if source.mask else None
+        with Image.open(source.image) as opened:
+            image = png_ready(opened)
+            mask_image = png_ready(Image.open(source.mask)) if source.mask else None
             try:
                 if mask_image is not None and mask_image.size != image.size:
                     mask_image = mask_image.resize(image.size, Image.Resampling.NEAREST)
@@ -162,10 +210,10 @@ def write_part(
                     image.crop(box).save(folder / "images" / out)
                     if mask_image is not None:
                         mask_image.crop(box).save(folder / "masks" / out)
-                    rows.append({"tile_name": out, "source_image": name, "x": x, "y": y, "width": tile, "height": tile})
             finally:
                 if mask_image is not None:
                     mask_image.close()
+    rows = manifest_rows(assignments, images, tile)
     with open(folder / MANIFEST_NAME, "w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=MANIFEST_FIELDS)
         writer.writeheader()
@@ -173,15 +221,32 @@ def write_part(
     return len(rows)
 
 
-def part_is_complete(folder: Path, expected: int) -> bool:
-    """Return True when ``folder`` already holds a manifest and image files for exactly ``expected`` tiles."""
+def _file_names(folder: Path) -> set[str]:
+    return {path.name for path in folder.iterdir() if path.is_file()} if folder.is_dir() else set()
+
+
+def part_state(folder: Path, rows: list[dict[str, str]], masked: set[str]) -> str:
+    """Compare a part folder on disk with the manifest ``rows`` planned for it.
+
+    Returns :data:`COMPLETE` when the folder holds exactly the planned tiles, :data:`RESUMABLE` when it holds
+    nothing that is not planned (empty, missing, or an interrupted write of the same plan), and :data:`CONFLICT`
+    when it holds tiles of a different plan, for example from a run with another seed, split, tile size or sample.
+    ``masked`` names the source images that have a mask, whose tiles therefore have one too.
+    """
+    tiles = {row["tile_name"] for row in rows}
+    masks = {row["tile_name"] for row in rows if row["source_image"] in masked}
+    images_on_disk = _file_names(folder / "images")
+    masks_on_disk = _file_names(folder / "masks")
     manifest = folder / MANIFEST_NAME
-    if not manifest.is_file():
-        return False
-    with open(manifest, newline="") as handle:
-        listed = sum(1 for _ in csv.DictReader(handle))
-    images = folder / "images"
-    return listed == expected and images.is_dir() and sum(1 for _ in images.glob("*.png")) == expected
+    listed: list[dict[str, str]] | None = None
+    if manifest.is_file():
+        with open(manifest, newline="") as handle:
+            listed = list(csv.DictReader(handle))
+    if (listed is not None and listed != rows) or not (images_on_disk <= tiles and masks_on_disk <= masks):
+        return CONFLICT
+    if listed is not None and images_on_disk == tiles and masks_on_disk == masks:
+        return COMPLETE
+    return RESUMABLE
 
 
 class ApiError(RuntimeError):
@@ -315,18 +380,53 @@ def plan_parts(
     return plan
 
 
+def stale_folders(
+    args: argparse.Namespace, plan: list[dict[str, list[tuple[int, int]]]], images: list[SourceImage]
+) -> list[Path]:
+    """Return the part folders that hold tiles of a different plan, including parts beyond ``--parts``.
+
+    Writing into such a folder would mix the old tiles with the new ones, and an old part left beside the new ones
+    can share source images with them, so these folders must be cleared before tiling.
+    """
+    by_name = {image.name: image for image in images}
+    masked = {image.name for image in images if image.mask}
+    stale = []
+    for index, part in enumerate(plan, start=1):
+        folder = args.image_sets / part_folder(args.name, index)
+        if part_state(folder, manifest_rows(part, by_name, args.tile), masked) == CONFLICT:
+            stale.append(folder)
+    index = len(plan) + 1
+    while (args.image_sets / part_folder(args.name, index)).exists():
+        stale.append(args.image_sets / part_folder(args.name, index))
+        index += 1
+    return stale
+
+
 def tile_parts(
     args: argparse.Namespace, plan: list[dict[str, list[tuple[int, int]]]], images: list[SourceImage]
 ) -> None:
-    """Write every part's tiles, skipping parts that are already complete."""
+    """Write every part's tiles, skipping parts that are already complete.
+
+    Part folders holding tiles of a different plan are never written into: the run stops before writing anything
+    and names the folders to delete.
+    """
+    stale = stale_folders(args, plan, images)
+    if stale:
+        listing = ", ".join(str(folder) for folder in stale)
+        raise ValueError(
+            f"these part folders hold tiles from an earlier run with other options: {listing}; "
+            "re-run with the options that wrote them, or delete those folders (and any datasets registered "
+            "from them) and run this again"
+        )
     by_name = {image.name: image for image in images}
+    masked = {image.name for image in images if image.mask}
     for index, part in enumerate(plan, start=1):
         folder = args.image_sets / part_folder(args.name, index)
-        expected = sum(len(points) for points in part.values())
-        if part_is_complete(folder, expected):
+        rows = manifest_rows(part, by_name, args.tile)
+        if part_state(folder, rows, masked) == COMPLETE:
             print(f"  part {index}: {folder} already tiled, skipping")
             continue
-        print(f"  part {index}: writing {expected} tiles to {folder}", flush=True)
+        print(f"  part {index}: writing {len(rows)} tiles to {folder}", flush=True)
         write_part(folder, part, by_name, args.tile)
 
 

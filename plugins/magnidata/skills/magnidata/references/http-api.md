@@ -41,7 +41,9 @@ URL-encode both.
 | `GET /api/embedding/projection` | `source`, `method` = `pca` (default), `tsne` or `lle`, optional `variant` | `{"positions": [[x, y, z], ...]}` in CSV row order. Cached per dataset and method. |
 | `GET /api/embedding/clusters` | `source`, `k` (1–50, default 20), optional `variant` | `{"labels": [int, ...]}` in CSV row order: spherical (cosine) k-means on the full vectors. |
 | `GET /api/embedding/compare` | `source`, `variant` (required) | `{nbr, w, origIdx}`: for each image in the comparison embeddings, its nearest neighbours there, mapped to row indices of the base layout. Used to overlay a second model's point cloud. |
-| `POST /api/embedding/analysis` | JSON `{source, variant?, k?, reduction?}` | `202 {"job_id"}`. Background projection plus clusters; poll `GET /api/embedding/analysis/<job_id>`. The demo answers `429` when four are already running. Prefer the two cached `GET` routes above. |
+| `POST /api/embedding/analysis` | JSON `{source, variant?, k?, reduction?}` | `202 {"job_id"}`. Background projection plus clusters; poll `GET /api/embedding/analysis/<job_id>`. Prefer the two cached `GET` routes above. |
+
+The demo allows four analyses to compute at once, counting background jobs and uncached `projection` and `clusters` requests together, and answers `429` past that; retry after a moment. Cached results are always served.
 
 ## Images
 

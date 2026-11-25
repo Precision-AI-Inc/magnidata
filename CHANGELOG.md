@@ -92,6 +92,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README's quickstart clones over HTTPS, so it works without a GitHub SSH key.
 - `/api/dataset/embeddings/variants` no longer lists a dataset's projections sidecar (`<stem>_projections.json`) as a
   comparison model.
+- The API's embedding caches no longer grow without limit. They are keyed on the dataset's resolved path, so
+  `data/d.csv`, `./data/d.csv`, `data//d.csv` and a symlink to the file share one cached matrix, projection and
+  clustering, and each cache forgets its least recently used entries past a fixed size (four embedding matrices, 128
+  other results). Deleting a dataset drops its cached results under any spelling of its path.
+- In demo mode, uncached `GET /api/embedding/projection` and `GET /api/embedding/clusters` requests count toward the
+  limit of four analyses computing at once, together with `POST /api/embedding/analysis` jobs, and answer 429 past it.
+  Before, only the POST route was limited, and the GET routes ran t-SNE and k-means with no cap.
+- Bad query values get a JSON 4xx instead of an HTML or raw-error 500. A `max_size` that is not a positive integer is a
+  400 on `/api/image`, `/api/mask`, `/api/overlay`, `/api/annotation/mask` and `/api/annotation/overlay`; a missing file
+  on those routes (and `/api/mask/debug`) is a 404 `file not found`, a disallowed one a 403, and an unreadable one a
+  500 with a fixed message instead of the Python error text. `/api/embedding/projection` answers 404 JSON for a
+  dataset that does not exist, as `/api/embedding/clusters` already did, and `/api/embedding/clusters` rejects a
+  non-integer `k` with 400 instead of quietly using 20.
 - The trainer worker no longer abandons a training process when an MLflow call fails while it watches one. A failed
   cancel check or log upload is logged and tried again, and if watching fails for any other reason the training
   process is stopped first, so the worker can never start a second run beside one it lost track of.

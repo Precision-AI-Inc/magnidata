@@ -178,11 +178,11 @@ Settings that matter for the Space, all in the Dockerfile's `ENV`:
   shared by all visitors or start work: dataset builds (including the demo downloads), creating, merging, re-parenting
   and deleting datasets, notes, partition commits, training, and cancelling, linking or running inference on a run. It
   also keeps the image endpoints' `path` parameters inside the data folder (400 otherwise, which closes an
-  arbitrary-file-read on an open server), refuses the unused mask debug endpoint, and caps the 3D view's background
-  analyses at 4 running and 50 kept. `GET /api/config` tells the portal to show the matching controls (Add dataset,
-  Upload CSV, View experiments, the Experiments section, Train, delete, merge, save as dataset, create partitions)
-  disabled with a "Disabled for the Demo" tooltip, and to link its footer to the GitHub repository. Unset, nothing
-  changes.
+  arbitrary-file-read on an open server), refuses the unused mask debug endpoint, and caps the 3D view's analyses at 4
+  computing at once (background jobs and uncached projection and cluster requests together) and 50 jobs kept.
+  `GET /api/config` tells the portal to show the matching controls (Add dataset, Upload CSV, View experiments, the
+  Experiments section, Train, delete, merge, save as dataset, create partitions) disabled with a "Disabled for the
+  Demo" tooltip, and to link its footer to the GitHub repository. Unset, nothing changes.
 - `MAGNIDATA_STATIC_DIR=/app/dashboard`: the API serves the built dashboard, since there is no nginx.
 - `MLFLOW_HTTP_REQUEST_MAX_RETRIES=0` and a 3 s timeout: there is no MLflow server, so a request to it must fail at once.
   In demo mode the API also swaps in an offline MLflow store that answers without trying (and without logging), and the

@@ -1,20 +1,27 @@
 # Copyright 2026 Precision AI
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the COCO128 staging + pipeline wiring. No network — coco_root is a
-tiny synthetic fixture, and features/embeddings.run are monkeypatched to fast fakes so
-no torch/timm/pyiqa is required.
+"""Unit tests for the COCO128 download, staging + pipeline wiring. No internet access — the
+download tests use a local HTTP server, coco_root is a tiny synthetic fixture, and
+features/embeddings.run are monkeypatched to fast fakes so no torch/timm/pyiqa is required.
 
 Run:  python -m pytest precisionai/magnidata/scripts/test_prepare_coco128_dashboard.py -q
 """
 
 import argparse
+import contextlib
 import csv
+import hashlib
+import http.server
 import json
 import sys
+import threading
+import time
 import types
+import zipfile
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from precisionai.magnidata.training.dataset_check import has_masks
@@ -261,3 +268,149 @@ def test_run_pipeline_custom_data_dir(tmp_path, monkeypatch):
 
     assert feature_csv == custom_data_dir / "coco128_test.csv"
     assert embeddings_json == custom_data_dir / "coco128_test.json"
+
+
+# ── Download + extraction ─────────────────────────────────────────────────────
+
+
+def _make_zip(path):
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("coco128/images/train2017/img0.jpg", b"jpeg bytes")
+        zf.writestr("coco128/labels/train2017/img0.txt", SQUARE_POLYGON_LABEL)
+    return path.read_bytes()
+
+
+@contextlib.contextmanager
+def _serve(body, declared_length=None, stall=0.0):
+    """Serve ``body`` at any path on localhost; yield the base URL and a request counter."""
+    hits = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.send_header("Content-Length", str(declared_length if declared_length is not None else len(body)))
+            self.end_headers()
+            if stall:
+                time.sleep(stall)
+            with contextlib.suppress(OSError):
+                self.wfile.write(body)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/coco128-seg.zip", hits
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_download_replaces_a_truncated_cached_zip(tmp_path):
+    body = _make_zip(tmp_path / "good.zip")
+    sha = hashlib.sha256(body).hexdigest()
+    dest = tmp_path / "cache" / "coco128-seg.zip"
+    dest.parent.mkdir()
+    dest.write_bytes(body[: len(body) // 2])
+    with _serve(body) as (url, hits):
+        assert mod.download(url, dest, sha256=sha) is True
+    assert dest.read_bytes() == body
+    assert len(hits) == 1
+    assert not dest.with_name(dest.name + ".part").exists()
+
+
+def test_download_without_checksum_still_rejects_a_truncated_cached_zip(tmp_path):
+    body = _make_zip(tmp_path / "good.zip")
+    dest = tmp_path / "coco128-seg.zip"
+    dest.write_bytes(body[:-10])
+    with _serve(body) as (url, hits):
+        assert mod.download(url, dest) is True
+    assert dest.read_bytes() == body
+    assert len(hits) == 1
+
+
+def test_download_reuses_an_intact_cached_zip_without_a_request(tmp_path):
+    body = _make_zip(tmp_path / "good.zip")
+    dest = tmp_path / "coco128-seg.zip"
+    dest.write_bytes(body)
+    with _serve(body) as (url, hits):
+        assert mod.download(url, dest, sha256=hashlib.sha256(body).hexdigest()) is False
+    assert hits == []
+
+
+def test_download_force_fetches_even_when_cached(tmp_path):
+    body = _make_zip(tmp_path / "good.zip")
+    dest = tmp_path / "coco128-seg.zip"
+    dest.write_bytes(body)
+    with _serve(body) as (url, hits):
+        assert mod.download(url, dest, force=True) is True
+    assert len(hits) == 1
+
+
+def test_download_with_wrong_checksum_keeps_nothing(tmp_path):
+    body = _make_zip(tmp_path / "good.zip")
+    dest = tmp_path / "coco128-seg.zip"
+    with _serve(body) as (url, _hits), pytest.raises(OSError, match="does not match the expected SHA-256"):
+        mod.download(url, dest, sha256="0" * 64)
+    assert not dest.exists()
+    assert not dest.with_name(dest.name + ".part").exists()
+
+
+def test_download_that_ends_early_keeps_nothing(tmp_path):
+    body = _make_zip(tmp_path / "good.zip")
+    dest = tmp_path / "coco128-seg.zip"
+    with _serve(body, declared_length=len(body) + 100) as (url, _hits), pytest.raises(OSError, match="stopped after"):
+        mod.download(url, dest)
+    assert not dest.exists()
+    assert not dest.with_name(dest.name + ".part").exists()
+
+
+def test_download_that_stalls_times_out(tmp_path):
+    body = _make_zip(tmp_path / "good.zip")
+    dest = tmp_path / "coco128-seg.zip"
+    with _serve(body, stall=2.0) as (url, _hits), pytest.raises(OSError, match="timed out"):
+        mod.download(url, dest, timeout=0.3)
+    assert not dest.exists()
+
+
+def test_known_sha256_only_applies_to_the_default_url():
+    assert mod.known_sha256(mod.COCO128_URL) == mod.COCO128_SHA256
+    assert mod.known_sha256("https://example.com/other.zip") is None
+
+
+def test_extract_ignores_an_interrupted_extraction(tmp_path):
+    zip_path = tmp_path / "coco128-seg.zip"
+    _make_zip(zip_path)
+    extract_dir = tmp_path / "extracted"
+    leftover = tmp_path / "extracted.partial" / "coco128" / "images" / "train2017"
+    leftover.mkdir(parents=True)
+    coco_root = mod.extract(zip_path, extract_dir)
+    assert coco_root == extract_dir / "coco128"
+    assert (coco_root / "labels" / "train2017" / "img0.txt").is_file()
+    assert not (tmp_path / "extracted.partial").exists()
+
+
+def test_extract_reuses_a_complete_extraction_unless_forced(tmp_path):
+    zip_path = tmp_path / "coco128-seg.zip"
+    _make_zip(zip_path)
+    extract_dir = tmp_path / "extracted"
+    coco_root = mod.extract(zip_path, extract_dir)
+    marker = coco_root / "marker"
+    marker.write_text("kept")
+    assert mod.extract(zip_path, extract_dir) == coco_root
+    assert marker.exists()
+    assert mod.extract(zip_path, extract_dir, force=True) == coco_root
+    assert not marker.exists()
+
+
+def test_extract_without_a_coco_tree_leaves_no_folder(tmp_path):
+    zip_path = tmp_path / "other.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("readme.txt", "nothing here")
+    with pytest.raises(FileNotFoundError, match="could not find extracted coco128"):
+        mod.extract(zip_path, tmp_path / "extracted")
+    assert not (tmp_path / "extracted").exists()
+    assert not (tmp_path / "extracted.partial").exists()

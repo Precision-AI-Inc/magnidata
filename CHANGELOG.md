@@ -65,6 +65,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README's quickstart clones over HTTPS, so it works without a GitHub SSH key.
 - `/api/dataset/embeddings/variants` no longer lists a dataset's projections sidecar (`<stem>_projections.json`) as a
   comparison model.
+- The COCO128 download, in `prepare_coco128_dashboard` and in the portal's one-click demo, checks the archive's SHA-256,
+  gives up after 60 seconds without data, and writes to a `.part` file that becomes the cached zip only when it is
+  complete. A cached zip that fails the check is downloaded again instead of failing every later build, and extraction
+  goes through a temporary folder so an interrupted one is never reused. New options `--download-sha256` (for a
+  custom `--download-url`) and `--download-timeout`.
+- `partition_dataset` compares each part folder with the tiles it plans to write. A re-run with another seed, split,
+  part count, tile size, sample or source stops before writing anything instead of reporting "already tiled" over the
+  old split or adding new tiles beside old ones, so a source image can no longer end up in two parts. The new
+  `--rebuild` flag deletes those folders and tiles again, and refuses while the old parts are still registered. CMYK
+  and other modes PNG cannot store are converted instead of crashing the run, and two source images with the same
+  file name are refused, since their tiles would overwrite each other.
+- The User Guide's partition chapter shows the output and cards a real run produces: 1,753 tiles (875 + 878), and a
+  third card, Cloud Dataset, drawn as a second parent of each part. The first training run's CPU time now reads
+  around ten minutes rather than a few. `scripts/capture-guide.mjs` finds Playwright's Chromium on linux arm64 and
+  macOS as well as linux x64.
 
 ## [0.1.1] - 2026-10-27
 

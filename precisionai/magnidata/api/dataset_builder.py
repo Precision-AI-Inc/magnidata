@@ -716,8 +716,9 @@ def _run_demo_build(job_id: str) -> None:
         zip_name = Path(urllib.parse.urlparse(coco128.COCO128_URL).path).name
         zip_path = cache_dir / zip_name
         extract_dir = cache_dir / "extracted"
-        coco128.download(coco128.COCO128_URL, zip_path)
-        coco_root = coco128.extract(zip_path, extract_dir)
+        # A cached zip that fails the checksum (an interrupted earlier build) is fetched again.
+        fetched = coco128.download(coco128.COCO128_URL, zip_path, sha256=coco128.COCO128_SHA256)
+        coco_root = coco128.extract(zip_path, extract_dir, force=fetched)
 
         _update_job(job_id, status="staging", percent=25, message="Staging COCO128 images…")
         args = argparse.Namespace(

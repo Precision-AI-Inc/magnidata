@@ -114,12 +114,52 @@ def test_write_part_crops_images_and_masks_and_writes_a_manifest(data_root: Path
     with open(folder / "tile_manifest.csv", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert [row["x"] for row in rows] == ["0", "256"]
-    assert tool.part_is_complete(folder, 2)
-    assert not tool.part_is_complete(folder, 3)
+    planned = tool.manifest_rows({"a.png": [(0, 0), (256, 0)]}, by_name, 256)
+    assert rows == planned
+    assert tool.part_state(folder, planned, {"a.png"}) == tool.COMPLETE
+    assert tool.part_state(folder, planned[:1], {"a.png"}) == tool.CONFLICT
+
+
+def test_part_state_resumes_an_interrupted_write_of_the_same_plan(data_root: Path, tmp_path: Path) -> None:
+    images = tool.read_source(data_root / "data_user" / "src.csv", data_root, 256, None, 0)
+    by_name = {image.name: image for image in images}
+    folder = tmp_path / "part"
+    planned = tool.manifest_rows({"a.png": [(0, 0), (256, 0)]}, by_name, 256)
+    assert tool.part_state(folder, planned, {"a.png"}) == tool.RESUMABLE
+
+    tool.write_part(folder, {"a.png": [(0, 0)]}, by_name, 256)
+    (folder / "tile_manifest.csv").unlink()  # the manifest is written last, so this is an interrupted write
+
+    assert tool.part_state(folder, planned, {"a.png"}) == tool.RESUMABLE
+    (folder / "images" / "b_x00000_y00000.png").write_bytes(b"")
+    assert tool.part_state(folder, planned, {"a.png"}) == tool.CONFLICT
+
+
+def test_write_part_converts_cmyk_sources(tmp_path: Path) -> None:
+    source = tmp_path / "cmyk.jpg"
+    Image.new("CMYK", (256, 256), (0, 255, 255, 0)).save(source)
+    image = tool.SourceImage("cmyk.jpg", source, None, 256, 256, 1)
+
+    assert tool.write_part(tmp_path / "part", {"cmyk.jpg": [(0, 0)]}, {"cmyk.jpg": image}, 256) == 1
+
+    with Image.open(tmp_path / "part" / "images" / "cmyk_x00000_y00000.png") as tile:
+        assert tile.mode == "RGB"
+
+
+def test_read_source_refuses_two_images_with_the_same_name(data_root: Path) -> None:
+    other = data_root / "data_user" / "src" / "other"
+    other.mkdir()
+    Image.new("RGB", (256, 256)).save(other / "a.jpg")
+    with open(data_root / "data_user" / "src.csv", "a", newline="") as handle:
+        csv.writer(handle).writerow(["data_user/src/other/a.jpg", 0, 0])
+
+    with pytest.raises(ValueError, match="share the name 'a'"):
+        tool.read_source(data_root / "data_user" / "src.csv", data_root, 256, None, 0)
 
 
 class _Api(BaseHTTPRequestHandler):
     calls: ClassVar[list[tuple[str, str, bytes]]] = []
+    datasets: ClassVar[list[dict[str, object]]] = []
 
     def _reply(self, payload: object, code: int = 200) -> None:
         body = json.dumps(payload).encode()
@@ -130,8 +170,10 @@ class _Api(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         _Api.calls.append(("GET", self.path, b""))
-        if self.path == "/api/datasets/build/local-folders" or self.path == "/api/datasets":
+        if self.path == "/api/datasets/build/local-folders":
             self._reply([])
+        elif self.path == "/api/datasets":
+            self._reply(_Api.datasets)
         elif self.path.startswith("/api/datasets/build/job"):
             index = self.path.rsplit("job", 1)[1]
             record = {"id": int(index), "source": f"data_user/part{index}.csv", "name": f"part {index}"}
@@ -157,6 +199,7 @@ class _Api(BaseHTTPRequestHandler):
 @pytest.fixture
 def api_url() -> Iterator[str]:
     _Api.calls = []
+    _Api.datasets = []
     server = HTTPServer(("127.0.0.1", 0), _Api)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -215,6 +258,73 @@ def test_rerun_skips_parts_that_are_already_tiled(
     assert _run(data_root, tmp_path, "--no-register") == 0
 
     assert capsys.readouterr().out.count("already tiled, skipping") == 2
+
+
+def _tiles_by_source(image_sets: Path) -> dict[str, set[str]]:
+    """Map each part folder to the source images its tiles came from, read from the tile files themselves."""
+    return {
+        folder.name: {path.name.split("_x")[0] for path in (folder / "images").iterdir()}
+        for folder in sorted(image_sets.iterdir())
+    }
+
+
+def _seed_with_another_split() -> str:
+    images = [tool.SourceImage(f"{name}.png", Path(f"{name}.png"), None, 512, 256, 2) for name in ("a", "b")]
+    baseline = tool.plan_parts(images, 2, "image", 0, 256)
+    return next(str(seed) for seed in range(1, 100) if tool.plan_parts(images, 2, "image", seed, 256) != baseline)
+
+
+def test_rerun_with_another_seed_refuses_and_leaves_the_tiles(
+    data_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(data_root, tmp_path, "--no-register")
+    before = _tiles_by_source(tmp_path / "image_sets")
+    capsys.readouterr()
+
+    assert _run(data_root, tmp_path, "--no-register", "--seed", _seed_with_another_split()) == 1
+
+    assert "--rebuild" in capsys.readouterr().err
+    assert _tiles_by_source(tmp_path / "image_sets") == before
+
+
+def test_rebuild_replaces_old_tiles_without_mixing_sources(data_root: Path, tmp_path: Path) -> None:
+    _run(data_root, tmp_path, "--no-register")
+    seed = _seed_with_another_split()
+
+    assert _run(data_root, tmp_path, "--no-register", "--seed", seed, "--rebuild") == 0
+
+    parts = _tiles_by_source(tmp_path / "image_sets")
+    assert parts["demo-part1"].isdisjoint(parts["demo-part2"])
+    assert all(len(sources) == 1 for sources in parts.values())
+    assert _run(data_root, tmp_path, "--no-register", "--seed", seed) == 0  # the rebuilt plan is now complete
+
+
+def test_fewer_parts_counts_the_leftover_part_as_stale(
+    data_root: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(data_root, tmp_path, "--no-register")
+    capsys.readouterr()
+
+    assert _run(data_root, tmp_path, "--no-register", "--parts", "1") == 1
+    assert "demo-part2" in capsys.readouterr().err
+
+    assert _run(data_root, tmp_path, "--no-register", "--parts", "1", "--rebuild") == 0
+    assert sorted(path.name for path in (tmp_path / "image_sets").iterdir()) == ["demo-part1"]
+    assert len(list((tmp_path / "image_sets" / "demo-part1" / "images").iterdir())) == 4
+
+
+def test_rebuild_refuses_while_the_old_part_is_registered(
+    data_root: Path, tmp_path: Path, api_url: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _run(data_root, tmp_path, "--no-register")
+    before = _tiles_by_source(tmp_path / "image_sets")
+    _Api.datasets = [{"id": 7, "source": "data_user/demo-part1.csv", "name": "Demo part 1"}]
+    capsys.readouterr()
+
+    assert _run(data_root, tmp_path, "--api", api_url, "--seed", _seed_with_another_split(), "--rebuild") == 1
+
+    assert "Demo part 1" in capsys.readouterr().err
+    assert _tiles_by_source(tmp_path / "image_sets") == before
 
 
 def test_missing_source_and_bad_arguments_fail_cleanly(

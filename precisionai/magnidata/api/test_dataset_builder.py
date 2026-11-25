@@ -283,9 +283,11 @@ def test_start_demo_build_rejects_disabled_demo_key(monkeypatch):
 
 
 def _patch_fake_coco128_pipeline(monkeypatch, tmp_path):
-    def fake_download(url, dest, force=False):
+    def fake_download(url, dest, force=False, sha256=None):
+        assert sha256 == dataset_builder.coco128.COCO128_SHA256
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"fake-zip")
+        return True
 
     def fake_extract(zip_path, extract_dir, force=False):
         coco_root = extract_dir / "coco128"

@@ -176,8 +176,8 @@ def test_dataset_items(synthetic_dataset):
     samples, _ = data.resolve_samples(ds.csv, ds.root)
     palette = data.build_palette([s.mask_path for s in samples])
     splits = data.make_split([s.image_name for s in samples], 0.25, seed=0)
-    train = data.SegmentationDataset(samples, palette, splits, "train", image_size=(16, 20), augment=True)
-    val = data.SegmentationDataset(samples, palette, splits, "val", image_size=(16, 20))
+    train = data.SegmentationDataset(samples, palette, splits, "train", image_size=(20, 16), augment=True)
+    val = data.SegmentationDataset(samples, palette, splits, "val", image_size=(20, 16))
     assert len(train) + len(val) == 8
     assert {s.image_name for s in train.samples}.isdisjoint(s.image_name for s in val.samples)
 
@@ -239,6 +239,38 @@ def test_cached_dataset_equals_uncached(synthetic_dataset, tmp_path):
     for i in range(len(plain)):
         assert torch.equal(plain[i]["pixel_values"], cached[i]["pixel_values"])
         assert torch.equal(plain[i]["labels"], cached[i]["labels"])
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_native_size_keeps_a_non_square_images_geometry(synthetic_dataset, tmp_path, cached):
+    samples = _samples(synthetic_dataset)
+    palette = data.build_palette([s.mask_path for s in samples])
+    size, _ = data.native_size(samples)
+    height, width = synthetic_dataset.size
+    assert width != height
+    cache = data.ResizedCache(tmp_path, size) if cached else None
+
+    item = data.SegmentationDataset(samples, palette, {}, None, size, cache=cache)[0]
+
+    assert item["pixel_values"].shape == (3, height, width)
+    assert item["labels"].shape == (height, width)
+    original = np.asarray(Image.open(samples[0].mask_path).convert("RGB"))
+    assert torch.equal(item["labels"], torch.from_numpy(data.decode_mask(original, palette)))
+
+
+def test_cache_redecodes_an_entry_stored_transposed(synthetic_dataset, tmp_path):
+    sample = _samples(synthetic_dataset)[0]
+    height, width = synthetic_dataset.size
+    cache = data.ResizedCache(tmp_path, (width, height))
+    cache.ensure(sample)
+    entry = cache.directory / f"{cache.key(sample)}.npy"
+    np.save(entry, np.zeros((width, height, 6), dtype=np.uint8))
+
+    image, mask = cache.get(sample)
+
+    assert image.shape == (height, width, 3)
+    assert np.array_equal(mask, np.asarray(Image.open(sample.mask_path).convert("RGB")))
+    assert np.load(entry).shape == (height, width, 6)
 
 
 def test_changed_source_invalidates_entry(synthetic_dataset, tmp_path):

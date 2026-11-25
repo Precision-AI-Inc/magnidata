@@ -52,6 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and linked from the README. `test_openapi.py` fails when a GET route is added or removed without the document, and
   checks real responses, and the document's examples, against its schemas. Both Dockerfiles copy the file next to
   `app.py`.
+- A `training` CI job installs CPU torch and runs the trainer, data, loss and worker tests (and
+  `api/test_e2e_smoke.py`), which skip in the main unit-test matrix because it does not install torch.
 
 ### Changed
 
@@ -78,6 +80,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The MCP server keeps a text column's cells as text: a numeric-looking cell such as the id `007` comes back as
   `"007"`, not `7`. A column is numeric only when every non-empty cell is a number that is not zero-padded, and
   `describe_dataset` reports such id columns as text.
+- Training with *Input resolution: Original size* no longer swaps width and height. The trainer resized every
+  image and mask to the transposed shape, so a 640x480 dataset trained on stretched 480x640 images and saved 480x640
+  predictions, while on-demand inference used the right geometry. `SegmentationDataset` and `ResizedCache` now take
+  `(width, height)` like `native_size` and the checkpoint's `input_size`; cached entries stored transposed are decoded
+  again on first use.
 - `/api/health` leaves the datalake's configured path out of its response in demo mode.
 - A missing file under `/.well-known/`, or a missing machine-readable file such as `robots.txt`, `sitemap.xml` or
   `openapi.json`, is a 404 instead of the dashboard's `index.html` with a 200. This applies both when the API serves the

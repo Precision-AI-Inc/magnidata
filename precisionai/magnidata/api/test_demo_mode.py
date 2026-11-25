@@ -295,15 +295,41 @@ def test_demo_mode_leaves_a_missing_path_parameter_to_the_handler(open_deploymen
     assert response.get_json() == {"error": "path required"}
 
 
-def test_a_normal_deployment_still_reads_an_image_by_absolute_path(tmp_path, monkeypatch):
+def test_a_normal_deployment_reads_an_image_by_absolute_path_inside_the_datalake(tmp_path, monkeypatch):
     root = tmp_path / "root"
     app_module = load_app(root, monkeypatch, MAGNIDATA_DEMO_MODE=None)
+    monkeypatch.setattr(app_module.local_files, "DATALAKE_ROOT", str(tmp_path / "lake"))
+    _write_png(tmp_path / "lake" / "a.png")
     _write_png(tmp_path / "outside.png")
 
     with app_module.app.test_client() as client:
-        response = client.get("/api/image", query_string={"path": str(tmp_path / "outside.png")})
+        inside = client.get("/api/image", query_string={"path": str(tmp_path / "lake" / "a.png")})
+        outside = client.get("/api/image", query_string={"path": str(tmp_path / "outside.png")})
 
-    assert response.status_code == 200
+    assert inside.status_code == 200
+    assert outside.status_code == 400
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_demo_mode_refuses_the_debug_route_for_every_read_method(demo_client, monkeypatch, method):
+    client, app_module = demo_client
+
+    def must_not_read(_path):
+        raise AssertionError("the debug handler ran")
+
+    monkeypatch.setattr(app_module.local_files, "read_file", must_not_read)
+
+    response = client.open("/api/mask/debug", method=method, query_string={"path": "data_user/ds/masks/a.png"})
+
+    assert response.status_code == 403
+
+
+@pytest.mark.parametrize(("method", "url"), [(m, u) for m, u in REFUSED if m == "GET"])
+def test_demo_mode_refuses_a_head_request_as_it_refuses_the_get(demo_client, method, url):
+    client, _ = demo_client
+
+    assert client.open(url, method=method).status_code == 403
+    assert client.head(url).status_code == 403
 
 
 # ── The 3D view's analysis jobs ──────────────────────────────────────────────────

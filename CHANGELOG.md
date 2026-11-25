@@ -55,6 +55,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The training modules' missing-dependency errors say `pip install 'magnidata[training]'`, the extra that provides
   torch, torchvision and MLflow, instead of an editable-install command.
+- The compose stack publishes the portal, API and MLflow on `127.0.0.1` only, and `python app.py` listens on
+  `127.0.0.1` unless `API_HOST` says otherwise. Set `MAGNIDATA_BIND_ADDRESS` in the git-ignored `.env` to publish on
+  another address. The Compose project name (`COMPOSE_PROJECT_NAME`) and ports (`MAGNIDATA_PORTAL_PORT`,
+  `MAGNIDATA_API_PORT`, `MAGNIDATA_MLFLOW_PORT`) are read from `.env` too, with the same defaults as before, so a
+  second checkout can run its own stack beside the first. The new `.env.example` lists every setting.
+- The `api` and `trainer` containers run as the owner of the checkout's `data/` folder (or `MAGNIDATA_UID` and
+  `MAGNIDATA_GID`), not as root, so the files they write under `data_user/` can be deleted without sudo. On start they
+  hand any root-owned files an earlier version left in `data_user/` and in the notes database's volume to that user.
+- `partition_dataset` defaults `--api` and `--portal` to the ports in `MAGNIDATA_API_PORT` and
+  `MAGNIDATA_PORTAL_PORT`, read from the environment or the `.env` in the working directory, instead of always 5051
+  and 5175.
 
 ### Fixed
 
@@ -65,6 +76,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README's quickstart clones over HTTPS, so it works without a GitHub SSH key.
 - `/api/dataset/embeddings/variants` no longer lists a dataset's projections sidecar (`<stem>_projections.json`) as a
   comparison model.
+
+### Security
+
+- The API answers cross-origin browser requests only from its portal (`MAGNIDATA_PORTAL_URL`, and the Vite dev server
+  on `http://localhost:5174`), or from the origins listed in `MAGNIDATA_CORS_ORIGINS`; it was open to every origin.
+  A request that could change data, sent by a browser from any other site, is refused with 403 even when it needs no
+  CORS preflight, such as a form upload to `/api/datasets/build`. A demo deployment still allows any origin. The
+  compose nginx forwards the `Host` header with its port, so the portal's own requests are recognised.
+- Every path a request names is confined to `data/`, `data_user/` and `image_sets/` under the data root:
+  `/api/dataset/csv` and the other `source` parameters, and the image endpoints' `path`, `img` and `mask`. Before,
+  `/api/dataset/csv?source=db/notes.db` returned the notes database, `source=confi.yaml` the catalog, and
+  `/api/image?path=` opened any absolute path in the container. An image endpoint still takes an absolute path under
+  the configured datalake (`DATALAKE_ROOT`) or a URL on an allowlisted host, except in demo mode.
+- MLflow answers only the Host names it is reached by (`mlflow:5000`, `localhost`, `127.0.0.1`) instead of
+  `--allowed-hosts "*"`; `MAGNIDATA_MLFLOW_ALLOWED_HOSTS` adds others.
+- In demo mode `/api/mask/debug` is refused for every method. A `HEAD` request ran the handler, which reads any path
+  into memory, because the refusal list named only `GET`; a `HEAD` to any refused `GET` route is now refused too.
+- Pillow's decompression-bomb guard is on again in the API. Importing `tools/features.py` switched it off for the
+  whole process (`Image.MAX_IMAGE_PIXELS = None`), so a small upload with enormous dimensions could exhaust memory.
+  An image over Pillow's limit (about 179 megapixels) is now reported as that image's error.
 
 ## [0.1.1] - 2026-10-27
 

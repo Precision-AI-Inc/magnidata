@@ -160,7 +160,6 @@ def test_read_source_refuses_two_images_with_the_same_name(data_root: Path) -> N
 
 class _Api(BaseHTTPRequestHandler):
     calls: ClassVar[list[tuple[str, str, bytes]]] = []
-    datasets: ClassVar[list[dict[str, object]]] = []
 
     def _reply(self, payload: object, code: int = 200) -> None:
         body = json.dumps(payload).encode()
@@ -171,10 +170,8 @@ class _Api(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         _Api.calls.append(("GET", self.path, b""))
-        if self.path == "/api/datasets/build/local-folders":
+        if self.path == "/api/datasets/build/local-folders" or self.path == "/api/datasets":
             self._reply([])
-        elif self.path == "/api/datasets":
-            self._reply(_Api.datasets)
         elif self.path.startswith("/api/datasets/build/job"):
             index = self.path.rsplit("job", 1)[1]
             record = {"id": int(index), "source": f"data_user/part{index}.csv", "name": f"part {index}"}
@@ -200,7 +197,6 @@ class _Api(BaseHTTPRequestHandler):
 @pytest.fixture
 def api_url() -> Iterator[str]:
     _Api.calls = []
-    _Api.datasets = []
     server = HTTPServer(("127.0.0.1", 0), _Api)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

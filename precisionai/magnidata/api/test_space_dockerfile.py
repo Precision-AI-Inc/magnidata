@@ -1,7 +1,7 @@
 # Copyright 2026 Precision AI
 # SPDX-License-Identifier: Apache-2.0
 
-"""Guard the order of steps in the Hugging Face Space Dockerfile.
+"""Guard the order of steps and the files shipped in the Hugging Face Space Dockerfile.
 
 The image build loads the datasets through the same endpoint demo mode refuses, so demo mode may only
 be switched on after that step; set earlier, the build fails with "Disabled for the Demo".
@@ -48,3 +48,11 @@ def test_gunicorn_runs_a_single_worker_because_analysis_jobs_live_in_process_mem
     start = _first(lines, "CMD [")
     command = " ".join(line.strip() for line in lines[start:])
     assert '"--workers", "1"' in command
+
+
+def test_the_image_ships_the_openapi_document(lines):
+    # COPY api/*.py misses it, and without it GET /api/openapi.json cannot serve the contract.
+    assert any(
+        line.startswith("COPY ") and line.rstrip().endswith("precisionai/magnidata/api/openapi.yaml ./")
+        for line in lines
+    )

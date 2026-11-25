@@ -154,8 +154,10 @@ function Partition() {
   part 2: 4 images, 878 tiles
   part 1: writing 875 tiles to image_sets/agristress-500_tiles-part1
   part 2: writing 878 tiles to image_sets/agristress-500_tiles-part2
+  AgriStress-500 tiles part 1: staging 10% Indexing 875 images…
   AgriStress-500 tiles part 1: extracting_features 30% Extracting features…
   AgriStress-500 tiles part 1: done 100% Done
+  AgriStress-500 tiles part 2: staging 10% Indexing 878 images…
   AgriStress-500 tiles part 2: extracting_features 30% Extracting features…
   AgriStress-500 tiles part 2: done 100% Done
 Done. Open http://localhost:5175 to see the sub-datasets under data_user/agristress500.csv in the lineage graph.`}</Output>
@@ -167,10 +169,10 @@ Done. Open http://localhost:5175 to see the sub-datasets under data_user/agristr
           <strong> Complement</strong> draws similar images from (chapter 6). It is protected, so it has no trash icon.</p>
       </Expect>
       <Shot name="workspace-lineage" callouts={[
-        { x: 22, y: 50, text: 'The source dataset' },
-        { x: 70, y: 36, text: 'A tiled sub-dataset (part 1)' },
-        { x: 70, y: 70, text: 'A tiled sub-dataset (part 2)' },
-        { x: 22, y: 80, text: 'Cloud Dataset, the union of both parts' },
+        { x: 40, y: 51, text: 'The source dataset' },
+        { x: 62, y: 51, text: 'A tiled sub-dataset (part 1)' },
+        { x: 62, y: 67, text: 'A tiled sub-dataset (part 2)' },
+        { x: 40, y: 67, text: 'Cloud Dataset, the union of both parts and their second parent' },
       ]} />
       <h3>What it did</h3>
       <ul>

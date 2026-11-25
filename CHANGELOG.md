@@ -77,8 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and other modes PNG cannot store are converted instead of crashing the run, and two source images with the same
   file name are refused, since their tiles would overwrite each other.
 - The User Guide's partition chapter shows the output and cards a real run produces: 1,753 tiles (875 + 878), and a
-  third card, Cloud Dataset, drawn as a second parent of each part. The first training run's CPU time now reads
-  around ten minutes rather than a few. `scripts/capture-guide.mjs` finds Playwright's Chromium on linux arm64 and
+  third card, Cloud Dataset, drawn as a second parent of each part, with the lineage screenshot recaptured from a real
+  run to match. The first training run's CPU time now reads around ten minutes rather than a few. `scripts/capture-guide.mjs` finds Playwright's Chromium on linux arm64 and
   macOS as well as linux x64.
 
 ## [0.1.1] - 2026-10-27

@@ -432,7 +432,9 @@ def tile_parts(
     stale = stale_folders(args, plan, images)
     if stale and not args.rebuild:
         listing = ", ".join(str(folder) for folder in stale)
-        raise ValueError(f"{listing} hold(s) tiles from an earlier run with other options; {REBUILD_HINT}")
+        raise ValueError(
+            f"these part folders hold tiles from an earlier run with other options: {listing}; {REBUILD_HINT}"
+        )
     if stale:
         clear_stale(args, stale)
     by_name = {image.name: image for image in images}

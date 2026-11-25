@@ -236,6 +236,7 @@ MASK = "data_user/syn/masks/img_00.png"
         ("/api/datasets/demos", "/api/datasets/demos", 200),
         ("/api/datasets/build/limits", "/api/datasets/build/limits", 200),
         ("/api/datasets/build/local-folders", "/api/datasets/build/local-folders", 200),
+        ("/api/datasets/build/current", "/api/datasets/build/current", 200),
         ("/api/datasets/build/{job_id}", "/api/datasets/build/unknown", 404),
         ("/api/datasets/experiment-counts", "/api/datasets/experiment-counts", 200),
         ("/api/experiments", "/api/experiments", 200),

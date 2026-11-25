@@ -29,7 +29,8 @@ URL-encode both.
 | `GET /api/datasets/demos` | none | `[{key, name, description, enabled}]`, the one-click demo datasets. |
 | `GET /api/datasets/build/limits` | none | `{max_images, max_upload_bytes, max_embeddings_bytes, max_request_bytes}` for upload builds. |
 | `GET /api/datasets/build/local-folders` | none | `[{folder, image_count, label_count, built}]` for each folder under `image_sets/` that holds a non-empty `images/`. |
-| `GET /api/datasets/build/<job_id>` | none | `{status, percent, message, name, dataset, error}`. `status` ends as `done` (then `dataset` holds the new entry) or `error`. |
+| `GET /api/datasets/build/current` | none | `{"job": {...}}` for the build that is running now (same shape as below), or `{"job": null}`. Use it to pick up a build you did not start or lost track of. |
+| `GET /api/datasets/build/<job_id>` | none | `{job_id, kind, status, percent, message, name, dataset, error, skipped}`. `status` ends as `done` (then `dataset` holds the new entry) or `error`. `skipped` lists `{file, reason}` for images that could not be read and were left out. Jobs survive an API restart; one cut off by it ends as `error`. |
 | `GET /api/partitions` | `source` | `{"partitions": [...]}`, the committed cluster id per image. |
 | `GET /api/notes` | optional `stem` | Notes attached to images. |
 

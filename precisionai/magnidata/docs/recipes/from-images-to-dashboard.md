@@ -291,9 +291,10 @@ python -m precisionai.magnidata.tools.features \
   --skip-nima
 ```
 
-For arbitrary image folders, it is normal to see warnings such as
-`coco:label_not_found` or missing metadata. RGB-derived features and embeddings still
-work. If you provide COCO labels and metadata, the extractor will use them.
+For arbitrary image folders, it is normal to see an info line counting images with no
+label file, or warnings about missing metadata. RGB-derived features and embeddings still
+work. If you provide COCO labels and metadata, the extractor will use them. Files that
+cannot be decoded as images are listed as warnings.
 
 Optional COCO layout:
 

@@ -8,7 +8,9 @@ Run:  .venv-magnidata/bin/python -m pytest precisionai/magnidata/tools/test_feat
 """
 
 import csv
+import io
 import json
+import logging
 import os
 
 import numpy as np
@@ -16,7 +18,7 @@ import pytest
 from PIL import Image
 
 from . import coco_labels, image_source, pixel_features, quality_features
-from .features import process_row, run
+from .features import extract, process_row, run
 from .metadata_join import camera_angle_category
 from .schema import OUTPUT_COLUMNS
 
@@ -251,3 +253,73 @@ def test_parallel_run_matches_serial_run(tmp_path):
     run(str(source), str(parallel), skip_nima=True, workers=3)
 
     assert serial.read_text() == parallel.read_text()
+
+
+def _broken_inputs(tmp_path):
+    """Return an input CSV listing one good image (no label), a text file named .png, and a truncated JPEG."""
+    good = make_dataset(tmp_path, "good", np.full((24, 32, 3), 120, np.uint8), [], CATS, write_label=False)
+    images_dir = os.path.dirname(good)
+    fake = os.path.join(images_dir, "notes.png")
+    with open(fake, "w") as f:
+        f.write("this is not an image")
+    buf = io.BytesIO()
+    Image.fromarray(np.random.default_rng(0).integers(0, 255, (64, 64, 3), dtype=np.uint8)).save(buf, "JPEG")
+    truncated = os.path.join(images_dir, "cut.jpg")
+    with open(truncated, "wb") as f:
+        f.write(buf.getvalue()[: len(buf.getvalue()) // 2])
+    source = tmp_path / "in.csv"
+    with open(source, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["image_path"])
+        writer.writeheader()
+        writer.writerows({"image_path": p} for p in (good, fake, truncated))
+    return source, good, fake, truncated
+
+
+def test_extract_drops_and_reports_unreadable_images(tmp_path):
+    source, good, fake, truncated = _broken_inputs(tmp_path)
+    out = tmp_path / "out.csv"
+
+    report = extract(str(source), str(out), skip_nima=True, drop_unreadable=True)
+
+    with open(out, newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [r["image_path"] for r in rows] == [good]
+    assert report.rows == 1
+    assert report.unreadable[0] == (fake, "not a recognised image format")
+    assert report.unreadable[1][0] == truncated
+    assert "truncated" in report.unreadable[1][1]
+    assert report.errors == []
+    assert report.missing_labels == 1
+
+
+def test_run_keeps_unreadable_rows_by_default(tmp_path):
+    source, *_ = _broken_inputs(tmp_path)
+    out = tmp_path / "out.csv"
+
+    assert run(str(source), str(out), skip_nima=True) == 3
+
+
+def test_missing_labels_are_logged_as_information_not_errors(tmp_path, caplog):
+    rgb = np.full((40, 40, 3), 200, np.uint8)
+    img = make_dataset(tmp_path, "s", rgb, [], CATS, write_label=False)
+    source = tmp_path / "in.csv"
+    with open(source, "w", newline="") as f:
+        f.write(f"image_path\n{img}\n")
+
+    with caplog.at_level(logging.INFO, logger="precisionai.magnidata.tools.features"):
+        report = extract(str(source), str(tmp_path / "out.csv"), skip_nima=True)
+
+    assert report.missing_labels == 1
+    assert report.errors == []
+    assert [r.levelno for r in caplog.records] == [logging.INFO]
+    assert "no label file" in caplog.records[0].getMessage()
+
+
+def test_unreadable_images_are_logged_as_warnings(tmp_path, caplog):
+    source, *_ = _broken_inputs(tmp_path)
+
+    with caplog.at_level(logging.INFO, logger="precisionai.magnidata.tools.features"):
+        extract(str(source), str(tmp_path / "out.csv"), skip_nima=True)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings[0] == "2/3 images could not be read:"

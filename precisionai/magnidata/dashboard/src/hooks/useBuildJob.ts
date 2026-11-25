@@ -1,7 +1,7 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, errorText } from '../api'
 import type { BuildJobStatus, DatasetMeta } from '../api'
-import { lostBuildMessage, POLL_MS, pollRetryDelay } from '../lib/buildPoll'
+import { lostBuildMessage, POLL_MS, pollRetryDelay, resumableJobId } from '../lib/buildPoll'
 
 function isActive(job: BuildJobStatus | null): boolean {
   return !!job && job.status !== 'done' && job.status !== 'error'
@@ -17,12 +17,17 @@ function failedStart(message: string, e: unknown) {
 
 /** Tracks a dataset-build job at the App level so its progress stays visible (as a
  * badge in the Header) regardless of whether the dialog that started it is still open,
- * and survives navigating around the app while the build runs. */
+ * and survives navigating around the app while the build runs. On load it asks the API
+ * for a build already running — started before a reload, in another tab, or by a script —
+ * and picks up its progress. */
 export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
   const [job, setJob]     = useState<BuildJobStatus | null>(null)
   const [dismissed, setDismissed] = useState(false)
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const failures = useRef({ count: 0, since: 0 })
+  // Set once this page starts or resumes a build, so a late answer to the on-load check
+  // cannot replace a build the user started in the meantime.
+  const tracking = useRef(false)
 
   const poll = useCallback((jobId: string) => {
     api.getBuildJob(jobId).then(status => {
@@ -48,7 +53,23 @@ export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
     })
   }, [onDone])
 
+  useEffect(() => {
+    let alive = true
+    api.getCurrentBuild().then(({ job: running }) => {
+      const jobId = resumableJobId(running)
+      if (!alive || !running || !jobId || tracking.current) return
+      tracking.current = true
+      setJob(running)
+      poll(jobId)
+    }).catch(() => { /* no running build to show; nothing else depends on this check */ })
+    return () => {
+      alive = false
+      if (pollTimer.current) clearTimeout(pollTimer.current)
+    }
+  }, [poll])
+
   const start = useCallback((jobPromise: Promise<{ job_id: string }>) => {
+    tracking.current = true
     setDismissed(false)
     return jobPromise.then(({ job_id }) => {
       setJob({ status: 'queued', percent: 0, message: 'Queued…' })
@@ -61,6 +82,7 @@ export function useBuildJob(onDone: (dataset: DatasetMeta) => void) {
   }, [poll])
 
   const startUpload = useCallback((formData: FormData) => {
+    tracking.current = true
     setDismissed(false)
     setJob({ status: 'uploading', percent: 0, message: 'Uploading images…' })
     return api.buildDataset(formData, percent => {

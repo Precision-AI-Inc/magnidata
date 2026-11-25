@@ -16,6 +16,7 @@ import csv
 import io
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -38,10 +39,15 @@ def isolated_env(tmp_path, monkeypatch):
     os.makedirs(tmp_path / "data_user", exist_ok=True)
     monkeypatch.chdir(tmp_path)
     dataset_builder._jobs.clear()
+    dataset_builder._job_keys.clear()
     if dataset_builder._build_lock.locked():
         dataset_builder._build_lock.release()
     dataset_builder._active_build.clear()
-    return
+    yield
+    # Let a build started by this test finish before its database and data root go away.
+    for thread in threading.enumerate():
+        if thread.name.startswith("dataset-build-"):
+            thread.join(timeout=5)
 
 
 def _fake_features_run(input_csv, output_csv, **kwargs):
@@ -52,6 +58,13 @@ def _fake_features_run(input_csv, output_csv, **kwargs):
         w.writeheader()
         for r in rows:
             w.writerow({"image_path": r["image_path"]})
+    return dataset_builder.features_mod.FeatureReport(rows=len(rows))
+
+
+def _patch_features(monkeypatch, fake):
+    """Replace the feature tool's entry points: builds call extract(), the AgriStress demo calls run()."""
+    monkeypatch.setattr(dataset_builder.features_mod, "run", fake)
+    monkeypatch.setattr(dataset_builder.features_mod, "extract", fake)
 
 
 def _wait_for_job(job_id, timeout=2.0):
@@ -129,7 +142,7 @@ def test_start_upload_build_rejects_oversized_embeddings_file():
 
 
 def test_upload_build_end_to_end_without_embeddings(monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     images = [UploadedImage("weeds/a.png", b"AAAA"), UploadedImage("soil/b.png", b"BBBB")]
 
     job_id = dataset_builder.start_upload_build(images, [], None, "My Set", "a test set")
@@ -151,14 +164,14 @@ def test_upload_build_end_to_end_without_embeddings(monkeypatch):
 def _recording_features_run(calls):
     def run(input_csv, output_csv, **kwargs):
         calls.append(kwargs)
-        _fake_features_run(input_csv, output_csv, **kwargs)
+        return _fake_features_run(input_csv, output_csv, **kwargs)
 
     return run
 
 
 def test_upload_build_extracts_features_in_parallel(monkeypatch):
     calls = []
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _recording_features_run(calls))
+    _patch_features(monkeypatch, _recording_features_run(calls))
     monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 5)
 
     job = _wait_for_job(dataset_builder.start_upload_build([UploadedImage("a.png", b"AAAA")], [], None, "Set", ""))
@@ -177,7 +190,7 @@ def _wait_for_build_slot(timeout=2.0):
 
 
 def test_upload_build_with_source_backed_files_cleans_temp_dir(monkeypatch, tmp_path):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     incoming = tmp_path / "data_user" / dataset_builder.INCOMING_UPLOAD_DIRNAME / "req-1" / "images"
     incoming.mkdir(parents=True)
     source = incoming / "000000.upload"
@@ -193,7 +206,7 @@ def test_upload_build_with_source_backed_files_cleans_temp_dir(monkeypatch, tmp_
 
 
 def test_upload_build_stages_provided_embeddings_file(monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     images = [UploadedImage("a.png", b"AAAA")]
 
     job_id = dataset_builder.start_upload_build(images, [], FAKE_EMBEDDINGS, "Embedded Set", "")
@@ -210,7 +223,7 @@ def test_upload_build_stages_provided_embeddings_file(monkeypatch):
 
 
 def test_upload_build_with_annotations_stages_matching_labels(monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     images = [UploadedImage("weeds/a.png", b"AAAA"), UploadedImage("soil/b.png", b"BBBB")]
     annotations = [UploadedImage("weeds/a.json", b'{"ok": true}')]
 
@@ -231,7 +244,7 @@ def test_upload_build_with_annotations_stages_matching_labels(monkeypatch):
 
 
 def test_upload_build_rejects_concurrent_build(monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     images = [UploadedImage("a.png", b"AAAA")]
     dataset_builder.start_upload_build(images, [], None, "First", "")
 
@@ -243,7 +256,7 @@ def test_upload_build_failure_cleans_up_and_reports_error(monkeypatch):
     def failing_features_run(*a, **k):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(dataset_builder.features_mod, "run", failing_features_run)
+    _patch_features(monkeypatch, failing_features_run)
     images = [UploadedImage("a.png", b"AAAA")]
 
     job_id = dataset_builder.start_upload_build(images, [], None, "Broken Set", "")
@@ -393,7 +406,7 @@ def test_start_demo_build_replaces_record_whose_csv_is_gone(monkeypatch, demo_ke
 
 def test_start_demo_build_rejects_concurrent_build(monkeypatch, tmp_path):
     _patch_fake_coco128_pipeline(monkeypatch, tmp_path)
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     images = [UploadedImage("a.png", b"AAAA")]
     dataset_builder.start_upload_build(images, [], None, "First", "")
 
@@ -476,7 +489,7 @@ def test_agristress_file_pairs_matches_images_to_masks_and_skips_instances(monke
 
 def test_start_agristress_build_end_to_end(monkeypatch):
     image_bytes, mask_bytes, emb_bytes = _fake_urlopen_agristress(monkeypatch)
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
 
     job_id = dataset_builder.start_demo_build("agristress500")
     job = _wait_for_job(job_id)
@@ -595,7 +608,7 @@ def test_start_local_build_rejects_folder_with_no_images(tmp_path):
 
 
 def test_local_build_defaults_dataset_name_to_folder_name(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
 
     job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "  ", ""))
@@ -605,7 +618,7 @@ def test_local_build_defaults_dataset_name_to_folder_name(tmp_path, monkeypatch)
 
 def test_local_build_extracts_features_in_parallel(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _recording_features_run(calls))
+    _patch_features(monkeypatch, _recording_features_run(calls))
     monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 5)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
 
@@ -616,7 +629,7 @@ def test_local_build_extracts_features_in_parallel(tmp_path, monkeypatch):
 
 
 def test_local_build_manifest_points_at_image_sets_without_copying(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png", "b.png"], ["a.json", "b.json"])
 
     job_id = dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "soybeans")
@@ -629,21 +642,30 @@ def test_local_build_manifest_points_at_image_sets_without_copying(tmp_path, mon
 
 
 def test_local_build_writes_manifest_with_cluster_columns(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    manifests = []
+
+    def capture(input_csv, output_csv, **kwargs):
+        with open(input_csv, newline="") as f:
+            manifests.append((input_csv, list(csv.DictReader(f))))
+        return _fake_features_run(input_csv, output_csv, **kwargs)
+
+    _patch_features(monkeypatch, capture)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
 
     job_id = dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
     _wait_for_job(job_id)
 
-    manifest = tmp_path / "data_user" / "mmde-poc_input.csv"
-    with open(manifest, newline="") as f:
-        rows = list(csv.DictReader(f))
+    manifest_path, rows = manifests[0]
     assert rows[0]["cluster"] == "uncategorized"
     assert rows[0]["cluster_l2"] == "uncategorized"
+    # The manifest is scratch: never beside the dataset CSVs, and gone once the build ends.
+    assert "_incoming" in manifest_path
+    assert not os.path.exists(manifest_path)
+    assert not (tmp_path / "data_user" / "mmde-poc_input.csv").exists()
 
 
 def test_local_build_leaves_source_images_in_place(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     folder = _make_local_folder(tmp_path, "MMDE-POC", ["a.png"], ["a.json"])
 
     job_id = dataset_builder.start_local_build("MMDE-POC", "MMDE POC", "")
@@ -655,7 +677,7 @@ def test_local_build_leaves_source_images_in_place(tmp_path, monkeypatch):
 
 
 def test_local_build_ignores_the_upload_image_count_cap(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     monkeypatch.setattr(dataset_builder, "MAX_IMAGES", 1)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png", "b.png", "c.png"])
 
@@ -667,7 +689,7 @@ def test_local_build_ignores_the_upload_image_count_cap(tmp_path, monkeypatch):
 
 
 def test_local_build_marks_folder_built_in_listing(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
 
     _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
@@ -676,7 +698,7 @@ def test_local_build_marks_folder_built_in_listing(tmp_path, monkeypatch):
 
 
 def test_local_build_rejects_concurrent_build(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
     dataset_builder._build_lock.acquire()
 
@@ -685,7 +707,7 @@ def test_local_build_rejects_concurrent_build(tmp_path, monkeypatch):
 
 
 def test_concurrent_build_error_names_the_running_build(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
     dataset_builder._acquire_build_slot("AgriStress-500")
 
@@ -694,7 +716,7 @@ def test_concurrent_build_error_names_the_running_build(tmp_path, monkeypatch):
 
 
 def test_build_job_reports_the_dataset_name(tmp_path, monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     _make_local_folder(tmp_path, "MMDE-POC", ["a.png"])
 
     job = _wait_for_job(dataset_builder.start_local_build("MMDE-POC", "MMDE POC", ""))
@@ -703,7 +725,7 @@ def test_build_job_reports_the_dataset_name(tmp_path, monkeypatch):
 
 
 def test_upload_build_rekeys_embeddings_to_the_staged_image_names(monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     images = [UploadedImage("weeds/a.png", b"AAAA"), UploadedImage("soil/b.png", b"BBBB")]
     embeddings = json.dumps({"embeddings": {"a.png": [0.1, 0.2], "b.png": [0.3, 0.4]}}).encode()
 
@@ -719,7 +741,7 @@ def test_upload_build_rekeys_embeddings_to_the_staged_image_names(monkeypatch):
 
 
 def test_upload_build_rejects_embeddings_that_match_no_image(monkeypatch):
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     images = [UploadedImage("a.png", b"AAAA")]
     embeddings = json.dumps({"embeddings": {"unrelated.png": [0.1]}}).encode()
 
@@ -731,7 +753,7 @@ def test_upload_build_rejects_embeddings_that_match_no_image(monkeypatch):
 
 def test_agristress_build_reuses_staged_files_on_retry(monkeypatch):
     _fake_urlopen_agristress(monkeypatch)
-    monkeypatch.setattr(dataset_builder.features_mod, "run", _fake_features_run)
+    _patch_features(monkeypatch, _fake_features_run)
     first = dataset_builder._agristress_file_pairs()
     stage = Path(dataset_builder.DATA_ROOT) / dataset_builder.USER_DATA_REL / "retry_images"
     images_dir, masks_dir, thumbs_dir = (stage / d for d in ("images", "masks", "thumbnails"))
@@ -750,3 +772,240 @@ def test_agristress_build_reuses_staged_files_on_retry(monkeypatch):
 
     assert row["cluster"] == "L0"
     assert not list(stage.rglob("*.part"))
+
+
+# ── Job persistence, the current build, and restart recovery ────────────────────
+
+
+def _blocking_features(monkeypatch):
+    """Patch feature extraction to wait for the returned event, so a test can look at a running build."""
+    release = threading.Event()
+    started = threading.Event()
+
+    def run(input_csv, output_csv, **kwargs):
+        started.set()
+        assert release.wait(timeout=5)
+        return _fake_features_run(input_csv, output_csv, **kwargs)
+
+    _patch_features(monkeypatch, run)
+    return started, release
+
+
+def test_build_job_is_stored_and_readable_after_the_process_forgets_it(monkeypatch):
+    _patch_features(monkeypatch, _fake_features_run)
+
+    job_id = dataset_builder.start_upload_build([UploadedImage("a.png", b"AAAA")], [], None, "Kept", "")
+    _wait_for_job(job_id)
+    _wait_for_build_slot()
+    dataset_builder._jobs.clear()  # what an API restart does to the in-memory registry
+
+    stored = dataset_builder.get_job(job_id)
+    assert stored is not None
+    assert stored["status"] == "done"
+    assert stored["job_id"] == job_id
+    assert stored["kind"] == "upload"
+    assert stored["dataset"]["name"] == "Kept"
+
+
+def test_current_job_reports_the_running_build_until_it_ends(monkeypatch):
+    started, release = _blocking_features(monkeypatch)
+    assert dataset_builder.current_job() is None
+
+    job_id = dataset_builder.start_upload_build([UploadedImage("a.png", b"AAAA")], [], None, "Long One", "")
+    assert started.wait(timeout=5)
+
+    current = dataset_builder.current_job()
+    assert current is not None
+    assert current["job_id"] == job_id
+    assert current["name"] == "Long One"
+    assert current["status"] == "extracting_features"
+
+    release.set()
+    _wait_for_job(job_id)
+    _wait_for_build_slot()
+    assert dataset_builder.current_job() is None
+
+
+def _store_unfinished(job_id, kind, stem):
+    state = {"job_id": job_id, "kind": kind, "status": "staging", "percent": 29, "message": "Downloading…"}
+    db.save_build_job(job_id, kind, stem, {**state, "name": stem, "dataset": None, "error": None, "skipped": []})
+
+
+def test_recover_interrupted_builds_reports_them_and_removes_partial_output(tmp_path):
+    user_data = tmp_path / "data_user"
+    (user_data / "half.csv").write_text("")
+    (user_data / "half_images" / "images").mkdir(parents=True)
+    incoming = user_data / dataset_builder.INCOMING_UPLOAD_DIRNAME / "req-1"
+    incoming.mkdir(parents=True)
+    _store_unfinished("cut-off", "upload", "half")
+
+    assert dataset_builder.recover_interrupted_builds() == ["cut-off"]
+
+    job = dataset_builder.get_job("cut-off")
+    assert job is not None
+    assert job["status"] == "error"
+    assert "API restarted" in job["error"]
+    assert not (user_data / "half.csv").exists()
+    assert not (user_data / "half_images").exists()
+    assert not incoming.exists()
+    assert db.list_unfinished_build_jobs() == []
+
+
+def test_recover_interrupted_agristress_build_keeps_the_download_for_a_resume(tmp_path):
+    stage = tmp_path / "data_user" / "agristress500_images" / "images"
+    stage.mkdir(parents=True)
+    (stage / "a.png").write_bytes(b"x")
+    (tmp_path / "data_user" / "agristress500.csv").write_text("")
+    _store_unfinished("demo", f"demo:{dataset_builder.AGRISTRESS_KEY}", dataset_builder.AGRISTRESS_STEM)
+
+    dataset_builder.recover_interrupted_builds()
+
+    assert (stage / "a.png").is_file()
+    assert not (tmp_path / "data_user" / "agristress500.csv").exists()
+    job = dataset_builder.get_job("demo")
+    assert job is not None
+    assert "download resumes" in job["message"]
+
+
+def test_recover_leaves_a_build_running_in_this_process_alone(monkeypatch):
+    started, release = _blocking_features(monkeypatch)
+    job_id = dataset_builder.start_upload_build([UploadedImage("a.png", b"AAAA")], [], None, "Running", "")
+    assert started.wait(timeout=5)
+
+    assert dataset_builder.recover_interrupted_builds() == []
+
+    release.set()
+    assert _wait_for_job(job_id)["status"] == "done"
+
+
+# ── Output names: reservation and ownership ────────────────────────────────────
+
+
+def test_a_running_build_holds_its_name_against_a_saved_selection(monkeypatch, tmp_path):
+    started, release = _blocking_features(monkeypatch)
+    job_id = dataset_builder.start_upload_build([UploadedImage("a.png", b"AAAA")], [], None, "My Set", "")
+    assert started.wait(timeout=5)
+
+    assert dataset_builder.reserve_stem("my_set") == "my_set_2"
+
+    release.set()
+    job = _wait_for_job(job_id)
+    assert job["dataset"]["source"] == "data_user/my_set.csv"
+    assert (tmp_path / "data_user" / "my_set_2.csv").read_text() == ""  # the selection's claim is untouched
+
+
+def test_reserve_stem_skips_names_with_leftover_files_and_demo_names(tmp_path):
+    user_data = tmp_path / "data_user"
+    (user_data / "old.json").write_text("{}")
+    (user_data / "gone_images").mkdir()
+    db.create_dataset_record("Registered", "", "data_user/taken.csv", None, None, 0)
+
+    assert dataset_builder.reserve_stem("old") == "old_2"
+    assert dataset_builder.reserve_stem("gone") == "gone_2"
+    assert dataset_builder.reserve_stem("taken") == "taken_2"
+    assert dataset_builder.reserve_stem("coco128") == "coco128_2"
+    assert (user_data / "old_2.csv").is_file()
+
+
+def test_reserve_stem_never_hands_out_the_same_name_twice():
+    assert dataset_builder.reserve_stem("twin") == "twin"
+    assert dataset_builder.reserve_stem("twin") == "twin_2"
+
+
+def test_failed_build_releases_its_name(monkeypatch):
+    def failing(*a, **k):
+        raise RuntimeError("boom")
+
+    _patch_features(monkeypatch, failing)
+    _wait_for_job(dataset_builder.start_upload_build([UploadedImage("a.png", b"AAAA")], [], None, "Again", ""))
+    _wait_for_build_slot()
+
+    assert dataset_builder.reserve_stem("again") == "again"
+
+
+def test_remove_dataset_files_removes_everything_under_the_stem(tmp_path):
+    user_data = tmp_path / "data_user"
+    for name in ("tiles.csv", "tiles.csv.provenance.json", "tiles.json", "tiles_projections.json", "tiles_input.csv"):
+        (user_data / name).write_text("x")
+    (user_data / "tiles_images" / "images").mkdir(parents=True)
+    (user_data / "other.csv").write_text("x")
+
+    dataset_builder.remove_dataset_files("data_user/tiles.csv")
+
+    assert sorted(p.name for p in user_data.iterdir()) == ["other.csv"]
+
+
+def test_remove_dataset_files_keeps_a_manifest_name_that_is_another_dataset(tmp_path):
+    user_data = tmp_path / "data_user"
+    (user_data / "a.csv").write_text("x")
+    (user_data / "a_input.csv").write_text("x")
+    db.create_dataset_record("A input", "", "data_user/a_input.csv", None, None, 1)
+
+    dataset_builder.remove_dataset_files("data_user/a.csv")
+
+    assert (user_data / "a_input.csv").is_file()
+
+
+@pytest.mark.parametrize("source", ["data/a.csv", "data_user/../a.csv", "data_user/sub/a.csv", "data_user/a.json"])
+def test_remove_dataset_files_refuses_anything_but_a_data_user_csv(source):
+    with pytest.raises(ValueError, match="not a dataset CSV"):
+        dataset_builder.remove_dataset_files(source)
+
+
+# ── Unreadable images ────────────────────────────────────────────────────────
+
+
+def _png_bytes(color=(10, 120, 10), size=(12, 8)):
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _truncated_jpeg():
+    buf = io.BytesIO()
+    Image.fromarray(np.random.default_rng(1).integers(0, 255, (48, 48, 3), dtype=np.uint8)).save(buf, "JPEG")
+    return buf.getvalue()[: len(buf.getvalue()) // 2]
+
+
+def test_upload_build_leaves_out_unreadable_files_and_says_so(monkeypatch):
+    monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 1)
+    images = [
+        UploadedImage("field/good.png", _png_bytes()),
+        UploadedImage("field/notes.png", b"this is a text file"),
+        UploadedImage("field/cut.jpg", _truncated_jpeg()),
+    ]
+
+    job = _wait_for_job(dataset_builder.start_upload_build(images, [], None, "Mixed", ""), timeout=30)
+
+    assert job["status"] == "done"
+    assert job["dataset"]["row_count"] == 1
+    assert sorted(s["file"] for s in job["skipped"]) == ["field/cut.jpg", "field/notes.png"]
+    assert job["message"] == "Done — 2 unreadable files left out"
+    staged = os.listdir(os.path.join("data_user", "mixed_images", "images"))
+    assert [name.split("-")[0] for name in staged] == ["good"]
+
+
+def test_upload_build_of_only_unreadable_files_fails(monkeypatch):
+    monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 1)
+    images = [UploadedImage("notes.png", b"text"), UploadedImage("more.png", b"text")]
+
+    job = _wait_for_job(dataset_builder.start_upload_build(images, [], None, "Nothing", ""), timeout=30)
+
+    assert job["status"] == "error"
+    assert "none of the 2 images could be read" in job["error"]
+    assert db.get_created_dataset_by_source("data_user/nothing.csv") is None
+    assert not os.path.exists("data_user/nothing.csv")
+
+
+def test_local_build_leaves_out_unreadable_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(dataset_builder, "_feature_workers", lambda: 1)
+    folder = _make_local_folder(tmp_path, "Field", ["a.png"])
+    (folder / "images" / "site").mkdir()
+    (folder / "images" / "site" / "b.png").write_text("not an image")
+
+    job = _wait_for_job(dataset_builder.start_local_build("Field", "", ""), timeout=30)
+
+    assert job["status"] == "done"
+    assert job["dataset"]["row_count"] == 1
+    assert [s["file"] for s in job["skipped"]] == ["images/site/b.png"]
+    assert job["message"] == "Done — 1 unreadable file left out"

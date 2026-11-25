@@ -2,6 +2,7 @@ import { CheckCircle2, ChevronRight, Home, AlertTriangle, Loader2, X } from 'luc
 import type { CSVData } from '../types'
 import type { BuildJobStatus } from '../api'
 import { useTheme } from '../hooks/useTheme'
+import { skippedFilesTitle } from '../lib/buildPoll'
 
 interface Props {
   pageTitle: string
@@ -42,7 +43,7 @@ export function Header({ pageTitle, pageSubtitle, data, filteredCount, buildJob,
       {/* Global dataset-build progress — stays visible across the whole app, even once the
           dialog that started it is closed, until dismissed or the build finishes/fails. */}
       {buildJob && (
-        <div className="flex items-center gap-2" style={{
+        <div className="flex items-center gap-2" title={skippedFilesTitle(buildJob)} style={{
           padding: '4px 10px', borderRadius: 'var(--radius-sm)', fontSize: 11.5, fontWeight: 600,
           background: buildJob.status === 'error' ? 'var(--color-danger-bg)' : 'var(--color-success-bg)',
           border: `1px solid ${buildJob.status === 'error' ? 'var(--color-danger)' : 'var(--color-success)'}`,

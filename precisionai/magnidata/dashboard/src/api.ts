@@ -186,13 +186,20 @@ export interface LocalFolder {
   built: boolean
 }
 
+export interface SkippedBuildFile {
+  file: string              // as uploaded, or the path inside the image_sets folder
+  reason: string
+}
+
 export interface BuildJobStatus {
-  status: 'uploading' | 'queued' | 'staging' | 'extracting_features' | 'registering' | 'done' | 'error'
-  percent: number
+  job_id?: string
+  status: 'uploading' | 'queued' | 'staging' | 'extracting_features' | 'projecting' | 'registering' | 'done' | 'error'
+  percent: number | null
   message: string
   name?: string             // dataset being built, e.g. "AgriStress-500"
-  dataset?: DatasetMeta
-  error?: string
+  dataset?: DatasetMeta | null
+  error?: string | null
+  skipped?: SkippedBuildFile[]  // images that could not be read and were left out
 }
 
 export interface EmbeddingAnalysisStatus {
@@ -347,6 +354,7 @@ export const api = {
     return postForm<{ job_id: string }>(`${BASE}/datasets/build`, fd)
   },
   getBuildJob: (jobId: string) => get<BuildJobStatus>(`${BASE}/datasets/build/${jobId}`),
+  getCurrentBuild: () => get<{ job: BuildJobStatus | null }>(`${BASE}/datasets/build/current`),
   datasetCsvUrl: (source: string) => `${BASE}/dataset/csv?source=${encodeURIComponent(source)}`,
   datasetEmbeddingsUrl: (source: string, variant?: string) =>
     `${BASE}/dataset/embeddings?source=${encodeURIComponent(source)}${variant ? `&variant=${encodeURIComponent(variant)}` : ''}`,

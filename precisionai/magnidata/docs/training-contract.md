@@ -21,12 +21,14 @@ Schema version: `magnidata-training/1.0.0`.
 | `magnidata.scored_epochs` | Comma-separated epochs whose per-sample file is logged |
 | `magnidata.cancel_requested` | `true` when the UI asks to cancel |
 | `magnidata.parent_run_id` | Lineage for retraining |
-| `magnidata.worker` | Id of the worker that claimed the run |
+| `magnidata.worker` | Id of the worker that claimed the run, `host:pid:token`. A worker that finds a run claimed by a dead worker on its host fails it if it is `RUNNING`, and removes this tag if it is still `SCHEDULED`, so the run is queued again |
 | `magnidata.has_split` | `true` once `magnidata/split.csv` is logged (before any epoch is scored) |
 | `magnidata.device` | Device the trainer used, e.g. `cuda:0 (NVIDIA GeForce RTX 5070 Laptop GPU)` or `cpu` |
 | `magnidata.eta_seconds` | Trainer's estimate of the remaining time, updated each epoch |
 
 Run statuses: `SCHEDULED`, `RUNNING`, `FINISHED`, `FAILED`, `KILLED`.
+
+Runs launched from MagniData record their user in MLflow's `mlflow.user` tag: `MAGNIDATA_RUN_USER` if set (Docker Compose passes the host's `$USER`), else the account the API runs as.
 
 ## Metric keys
 

@@ -9,6 +9,8 @@ would be another `TrainerBackend` whose ``submit`` creates the same SCHEDULED ru
 dispatches a job that runs the trainer on it; the API and dashboard would not change.
 """
 
+import getpass
+import json
 import os
 import re
 import threading
@@ -25,6 +27,9 @@ HEARTBEAT_FILENAME = ".trainer_heartbeat"
 HEARTBEAT_MAX_AGE_S = 30
 DEFAULT_EXPERIMENT_PREFIX = "magnidata"
 ACTIVE_STATUSES = (contract.RunStatus.SCHEDULED.value, contract.RunStatus.RUNNING.value)
+# MLflow's own run attribute for who started a run; a run created without it records the user "unknown".
+MLFLOW_USER_TAG = "mlflow.user"
+FALLBACK_USER = "magnidata"
 
 
 class RunNotCancellableError(Exception):
@@ -47,7 +52,11 @@ class TrainerBackend(Protocol):
         ...
 
     def available(self) -> dict[str, Any]:
-        """Return ``{"available", "reason", "worker_heartbeat"}``."""
+        """Return ``{"available", "reason", "worker_heartbeat", "engines"}``.
+
+        ``engines`` lists the training engines the trainer can run, or is None when it has not said; it may be left
+        out, which means the same.
+        """
         ...
 
 
@@ -59,6 +68,32 @@ def slugify(text: str) -> str:
 def heartbeat_path() -> Path:
     """Return the file the trainer worker touches while alive."""
     return Path(os.environ.get("DATA_ROOT", ".")) / "data_user" / HEARTBEAT_FILENAME
+
+
+def reported_engines(path: Path) -> list[str] | None:
+    """Return the engines the worker wrote into its heartbeat file, or None if it wrote none (an older worker)."""
+    try:
+        body = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    engines = body.get("engines") if isinstance(body, dict) else None
+    if not isinstance(engines, list) or not all(isinstance(engine, str) for engine in engines):
+        return None
+    return engines
+
+
+def launch_user() -> str:
+    """Return the user to record on launched runs.
+
+    ``MAGNIDATA_RUN_USER`` if set (Docker Compose passes the host's ``$USER``), else the account the API runs as.
+    """
+    configured = os.environ.get("MAGNIDATA_RUN_USER", "").strip()
+    if configured:
+        return configured
+    try:
+        return getpass.getuser() or FALLBACK_USER
+    except (OSError, KeyError):
+        return FALLBACK_USER
 
 
 class MlflowQueueBackend:
@@ -109,6 +144,7 @@ class MlflowQueueBackend:
                 contract.TAG_PRESET: spec.preset,
                 contract.TAG_ENGINE: spec.engine,
                 contract.TAG_LOSS_TERMS: ",".join(spec.loss_terms),
+                MLFLOW_USER_TAG: launch_user(),
             }
             if spec.parent_run_id:
                 tags[contract.TAG_PARENT_RUN_ID] = spec.parent_run_id
@@ -133,19 +169,25 @@ class MlflowQueueBackend:
         raise RunNotCancellableError(f"run already {status}")
 
     def available(self) -> dict[str, Any]:
-        """Report whether a worker heartbeat younger than 30 s exists."""
+        """Report whether a worker heartbeat younger than 30 s exists, and the engines that worker can run."""
         path = heartbeat_path()
         try:
             age = time.time() - path.stat().st_mtime
         except OSError:
-            return {"available": False, "reason": "no trainer worker has reported in", "worker_heartbeat": None}
+            return {
+                "available": False,
+                "reason": "no trainer worker has reported in",
+                "worker_heartbeat": None,
+                "engines": None,
+            }
         if age > HEARTBEAT_MAX_AGE_S:
             return {
                 "available": False,
                 "reason": f"trainer worker last seen {int(age)} s ago",
                 "worker_heartbeat": age,
+                "engines": None,
             }
-        return {"available": True, "reason": None, "worker_heartbeat": age}
+        return {"available": True, "reason": None, "worker_heartbeat": age, "engines": reported_engines(path)}
 
 
 _state: dict[str, TrainerBackend | None] = {"backend": None}

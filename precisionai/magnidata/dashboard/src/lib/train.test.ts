@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isActive, launchParams, paramsFromRun, progressLabel, trainDisabledReason, validateParams } from './train'
+import { isActive, launchParams, paramsFromRun, presetUnavailableReason, progressLabel, startingPreset, trainDisabledReason, trainerCard, validateParams } from './train'
 import type { Bound, TrainParams } from './train'
 
 const bounds: Record<string, Bound> = {
@@ -37,6 +37,11 @@ describe('validateParams', () => {
   it('keeps score_every within epochs', () => {
     expect(validateParams({ ...valid, epochs: 5, score_every: 6 }, bounds).score_every).toMatch(/between 1 and 5/)
     expect(validateParams({ ...valid, epochs: 5, score_every: 5 }, bounds).score_every).toBeUndefined()
+  })
+  it('leaves score_every alone while epochs itself is out of range', () => {
+    const errors = validateParams({ ...valid, epochs: 0, score_every: 1 }, bounds)
+    expect(errors.epochs).toMatch(/between 1 and 200/)
+    expect(errors.score_every).toBeUndefined()
   })
   it('rejects non-integers and NaN', () => {
     expect(validateParams({ ...valid, epochs: 2.5 }, bounds).epochs).toMatch(/whole number/)
@@ -189,5 +194,58 @@ describe('launchParams', () => {
   it('sends preload only with cached features', () => {
     expect(launchParams({ ...full, feature_provider: 'cached', feature_preload: 'host' }, 'agritune').feature_preload).toBe('host')
     expect(launchParams({ ...full, feature_provider: 'hybrid', feature_preload: 'host' }, 'agritune')).not.toHaveProperty('feature_preload')
+  })
+})
+
+describe('presetUnavailableReason', () => {
+  it('offers every preset until the trainer reports its engines', () => {
+    expect(presetUnavailableReason('agritune', null)).toBeNull()
+    expect(presetUnavailableReason('agritune', undefined)).toBeNull()
+  })
+  it('names an engine the trainer does not have', () => {
+    expect(presetUnavailableReason('reference', ['reference'])).toBeNull()
+    expect(presetUnavailableReason('agritune', ['reference'])).toBe('AgriTune is not installed in the trainer')
+    expect(presetUnavailableReason('agritune', ['reference', 'agritune'])).toBeNull()
+  })
+})
+
+describe('startingPreset', () => {
+  const presets = [
+    { key: 'tiny_unet', engine: 'reference' },
+    { key: 'agritune_mlp_probe', engine: 'agritune' },
+  ]
+  it('opens on the wanted preset when the trainer can run it', () => {
+    expect(startingPreset(presets, 'agritune_mlp_probe', ['reference', 'agritune']).key).toBe('agritune_mlp_probe')
+    expect(startingPreset(presets, 'agritune_mlp_probe', null).key).toBe('agritune_mlp_probe')
+  })
+  it('falls back to a preset the trainer can run', () => {
+    expect(startingPreset(presets, 'agritune_mlp_probe', ['reference']).key).toBe('tiny_unet')
+    expect(startingPreset([...presets].reverse(), undefined, ['reference']).key).toBe('tiny_unet')
+  })
+})
+
+describe('trainerCard', () => {
+  const backend = { available: true, reason: null }
+  const ui = { 'magnidata.origin': 'ui' }
+  it('is busy while a run launched from MagniData is queued or training', () => {
+    expect(trainerCard({ loading: false, mlflowReachable: true, backend, runs: [{ status: 'RUNNING', magnidata: ui }] }))
+      .toEqual({ value: 'Busy', detail: 'training a run', ready: true })
+    expect(trainerCard({ loading: false, mlflowReachable: true, backend, runs: [{ status: 'SCHEDULED', magnidata: ui }] }).value)
+      .toBe('Busy')
+  })
+  it('is ready when idle, even while an external run is in progress', () => {
+    const runs = [{ status: 'FINISHED', magnidata: ui }, { status: 'RUNNING', magnidata: { 'magnidata.origin': 'external' } }]
+    expect(trainerCard({ loading: false, mlflowReachable: true, backend, runs }))
+      .toEqual({ value: 'Ready', detail: 'worker idle', ready: true })
+  })
+  it('is offline without MLflow or a worker heartbeat', () => {
+    expect(trainerCard({ loading: false, mlflowReachable: false, backend, runs: [] }))
+      .toEqual({ value: 'Offline', detail: 'MLflow unavailable', ready: false })
+    expect(trainerCard({ loading: false, mlflowReachable: true, backend: { available: false, reason: 'trainer worker last seen 90 s ago' }, runs: [] }))
+      .toEqual({ value: 'Offline', detail: 'trainer worker last seen 90 s ago', ready: false })
+    expect(trainerCard({ loading: false, mlflowReachable: true, backend: null, runs: [] }).detail).toBe('no worker heartbeat')
+  })
+  it('says nothing while loading', () => {
+    expect(trainerCard({ loading: true, mlflowReachable: false, runs: [] }).value).toBe('…')
   })
 })
